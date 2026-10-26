@@ -8,6 +8,7 @@ Schemat (dla trybu lokalnego, czyli punkt + promień):
   4. wynik = D / (S + 1), percentyle i ranking top-N — tylko dla heksagonów w obszarze.
 """
 import datetime
+import functools
 import math
 from dataclasses import dataclass
 from typing import Literal
@@ -21,7 +22,7 @@ from backend.app.analysis.kernel import kernel_sums, to_metric
 from backend.app.analysis.resolution import HEX_SPACING_KM, choose_resolution, effective_bandwidth_km
 from backend.app.analysis.scoring import percentile_rank, pick_top, quantile_breaks, score
 from backend.app.catalog import DEMANDS, POOR_WARNING, TYPES
-from backend.app.db import DatabaseMissing
+from backend.app.db import DatabaseMissing, cursor, on_reset
 from etl.aggregate import table_exists
 
 NO_DEMAND_WARNING = "Brak danych o popycie w tym obszarze."
@@ -149,19 +150,19 @@ def _round1(x) -> float:
 
 
 def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
-    if p.scope == "poland":
-        raise NotImplementedError("Tryb całej Polski — Task 17")
+    poland = p.scope == "poland"
     btype = TYPES[p.type_id]
     warnings: list[str] = []
     if btype.osm_quality == "poor":
         warnings.append(POOR_WARNING)
 
-    res = choose_resolution(p.radius_km)
+    res = choose_resolution(None if poland else p.radius_km)   # cała Polska → res 6
     if not table_exists(con, f"hex_pop_r{res}"):
         raise DatabaseMissing(f"brak tabeli hex_pop_r{res}")
     h_km = effective_bandwidth_km(p.bandwidth_km or btype.bandwidth_km, res)
-    radius_m = p.radius_km * 1000
-    reach_m = radius_m + 3 * h_km * 1000   # obszar + bufor 3h (jądro jest obcięte dla d > 3h)
+    if not poland:
+        radius_m = p.radius_km * 1000
+        reach_m = radius_m + 3 * h_km * 1000   # obszar + bufor 3h (jądro jest obcięte dla d > 3h)
 
     window = None
     if DEMANDS[p.demand_id].source == "permits":
@@ -170,11 +171,20 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
             warnings.append(PERMITS_MISSING_WARNING)
             return _empty_result(res, h_km, warnings)
 
-    # Heksagony w pobliżu punktu. Pierścienie H3 leżą w odległości od 0,87·k·odstęp do k·odstęp
-    # od środka, stąd współczynnik 1,16 — żeby zasięg na pewno objął cały okrąg buforu.
-    center = h3.latlng_to_cell(p.lat, p.lng, res)
-    k = math.ceil(1.16 * reach_m / 1000 / HEX_SPACING_KM[res]) + 1
-    candidates = list(h3.grid_disk(center, k))
+    if poland:
+        # Cała Polska: obszar = bufor = wszystkie heksagony res 6, w których coś mamy (brak krawędzi do uwzględniania).
+        union = [f"SELECT h3 FROM hex_pop_r{res}"]
+        if table_exists(con, f"poi_counts_r{res}"):
+            union.append(f"SELECT h3 FROM poi_counts_r{res}")
+        if window is not None:
+            union.append(f"SELECT h3 FROM permits_r{res}")
+        candidates = [r[0] for r in con.execute(" UNION ".join(union)).fetchall()]
+    else:
+        # Heksagony w pobliżu punktu. Pierścienie H3 leżą w odległości od 0,87·k·odstęp do k·odstęp
+        # od środka, stąd współczynnik 1,16 — żeby zasięg na pewno objął cały okrąg buforu.
+        center = h3.latlng_to_cell(p.lat, p.lng, res)
+        k = math.ceil(1.16 * reach_m / 1000 / HEX_SPACING_KM[res]) + 1
+        candidates = list(h3.grid_disk(center, k))
 
     # „Ląd” = heksagony, w których cokolwiek mamy (ludność, popyt, konkurencja). Tylko one
     # są punktami źródłowymi i kandydatami do wyświetlenia — dzięki temu morze i teren
@@ -194,12 +204,14 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
 
     latlng = np.array([h3.cell_to_latlng(c) for c in cells["h3"]])
     xy = to_metric(latlng[:, 0], latlng[:, 1])
-    center_xy = to_metric(np.array([p.lat]), np.array([p.lng]))[0]
-    dist = np.hypot(xy[:, 0] - center_xy[0], xy[:, 1] - center_xy[1])
-    in_buffer = dist <= reach_m
-    in_area = dist <= radius_m
-    cells, latlng, xy, dist = cells[in_buffer], latlng[in_buffer], xy[in_buffer], dist[in_buffer]
-    in_area = in_area[in_buffer]
+    if poland:
+        in_area = np.ones(len(cells), dtype=bool)
+    else:
+        center_xy = to_metric(np.array([p.lat]), np.array([p.lng]))[0]
+        dist = np.hypot(xy[:, 0] - center_xy[0], xy[:, 1] - center_xy[1])
+        in_buffer = dist <= reach_m
+        cells, latlng, xy = cells[in_buffer], latlng[in_buffer], xy[in_buffer]
+        in_area = (dist <= radius_m)[in_buffer]
 
     d = cells["d"].to_numpy(float)
     s = cells["s"].to_numpy(float)
@@ -225,7 +237,8 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
              for i in np.flatnonzero(keep)]
 
     top = []
-    for i in pick_top(sc, D, area_xy, min_sep_m=2 * h_km * 1000):
+    min_sep_km = max(2 * h_km, 20) if poland else 2 * h_km    # w skali kraju miejsca z top-5 mają być od siebie daleko
+    for i in pick_top(sc, D, area_xy, min_sep_m=min_sep_km * 1000):
         lat, lng = float(area_latlng[i][0]), float(area_latlng[i][1])
         name = nearest_place_name(con, lat, lng) or f"okolice {lat:.3f}, {lng:.3f}"
         top.append({"h3": area_h3[i], "lat": lat, "lng": lng, "name": name,
@@ -249,3 +262,31 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
     if window is not None:
         result["permits_period"] = _period(window)
     return result
+
+
+@functools.lru_cache(maxsize=128)
+def _cached(key: AnalysisParams) -> dict:
+    return run_analysis(cursor(), key)
+
+
+def cached_analysis(p: AnalysisParams) -> dict:
+    """run_analysis z pamięcią podręczną (LRU, 128 wyników).
+
+    Klucz to parametry zaokrąglone: położenie do 3 miejsc po przecinku (~100 m), promień do 0,5 km,
+    zasięg klienta do 0,1 km — drobne różnice (np. przesunięcie pinezki o kilka metrów) trafiają
+    w ten sam wynik. W trybie „cała Polska” położenie i promień nie mają znaczenia. Błędy nie są cache'owane.
+    """
+    if p.scope == "poland":
+        key = AnalysisParams(p.type_id, p.demand_id, scope="poland",
+                             bandwidth_km=_round_to(p.bandwidth_km, 0.1), months=p.months)
+    else:
+        key = AnalysisParams(p.type_id, p.demand_id, round(p.lat, 3), round(p.lng, 3), _round_to(p.radius_km, 0.5),
+                             "local", _round_to(p.bandwidth_km, 0.1), p.months)
+    return _cached(key)
+
+
+def _round_to(value: float | None, step: float) -> float | None:
+    return None if value is None else round(round(value / step) * step, 6)
+
+
+on_reset(_cached.cache_clear)   # zmiana/ponowne otwarcie bazy unieważnia wyniki

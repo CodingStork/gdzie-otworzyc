@@ -1,7 +1,7 @@
 """Endpointy REST aplikacji (prefiks /api)."""
 from fastapi import APIRouter, HTTPException, Query
 
-from backend.app.analysis.service import AnalysisParams, run_analysis
+from backend.app.analysis.service import AnalysisParams, cached_analysis
 from backend.app.config import ATTRIBUTION
 from backend.app.catalog import DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
 from backend.app.db import DatabaseMissing, cursor
@@ -59,7 +59,7 @@ def analyze(
             raise _bad_request("Punkt poza Polską")
     params = AnalysisParams(type_id, demand, lat, lng, radius_km, scope, bandwidth_km, months)
     try:
-        return run_analysis(cursor(), params)
+        return cached_analysis(params)
     except DatabaseMissing:
         raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
 
