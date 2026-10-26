@@ -1,5 +1,5 @@
 // Punkt startowy frontendu: spina mapę, panel boczny i API.
-import { analyze, getCatalog, getPoi } from './api.js';
+import { analyze, getCatalog, getMeta, getPoi } from './api.js';
 import { initMap } from './map.js';
 import * as ui from './ui.js';
 
@@ -15,12 +15,25 @@ const LAYERS = {
 };
 
 const radiusKm = () => Number($('radius-input').value);
+const isPoland = () => $('poland-checkbox').checked;
 const currentLayer = () => document.querySelector('input[name=layer]:checked').value;
+const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 
+// Pinezka i okrąg obszaru; w trybie „cała Polska” ich nie ma.
 function redrawArea() {
-  if (state.lat == null) return;
+  if (isPoland() || state.lat == null) {
+    view.clearPin();
+    view.setAreaCircle(0, 0, null);
+    return;
+  }
   view.setPin(state.lat, state.lng);
   view.setAreaCircle(state.lat, state.lng, radiusKm());
+}
+
+function setPoint(lat, lng) {
+  state.lat = lat;
+  state.lng = lng;
+  redrawArea();
 }
 
 // Rysuje wybraną warstwę z ostatniego wyniku — bez ponownego zapytania do serwera.
@@ -45,24 +58,65 @@ function popupHtml(row) {
     `Percentyl: <b>${pct}</b>`;
 }
 
+// ---- Stan widoku w adresie URL (#type=beauty&demand=pop_f&lat=…) — link można komuś wysłać ----
+
+function writeHash() {
+  const params = ui.selectedParams();
+  const hash = new URLSearchParams({
+    type: params.type, demand: params.demand, bw: params.bandwidth_km, m: params.months || '',
+    pl: isPoland() ? 1 : 0, layer: currentLayer(),
+  });
+  if (!isPoland()) {
+    hash.set('lat', state.lat.toFixed(5));
+    hash.set('lng', state.lng.toFixed(5));
+    hash.set('r', params.radius_km);
+  }
+  history.replaceState(null, '', '#' + hash);
+}
+
+// Odtwarza ustawienia z adresu i zwraca true, jeśli wystarcza do automatycznej analizy.
+function applyHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (!h.get('type')) return false;
+  ui.setSelection({ type: h.get('type'), demand: h.get('demand'), bandwidth: h.get('bw'), months: h.get('m') });
+  if (h.get('r')) { $('radius-input').value = h.get('r'); $('radius-value').textContent = h.get('r'); }
+  const layer = document.querySelector(`input[name=layer][value="${h.get('layer')}"]`);
+  if (layer) layer.checked = true;
+  $('poland-checkbox').checked = h.get('pl') === '1';
+  syncPolandMode();
+  if (h.get('lat') && h.get('lng')) setPoint(Number(h.get('lat')), Number(h.get('lng')));
+  return isPoland() || state.lat != null;
+}
+
+// Tryb „cała Polska” wyłącza promień i pinezkę.
+function syncPolandMode() {
+  $('radius-input').disabled = isPoland();
+  redrawArea();
+}
+
 async function runAnalysis() {
   ui.showError('');
-  if (state.lat == null) {
+  if (!isPoland() && state.lat == null) {
     ui.showError('Wybierz punkt na mapie albo wyszukaj adres');
     return;
   }
   ui.setLoading(true);
   try {
-    const result = await analyze({ ...ui.selectedParams(), lat: state.lat, lng: state.lng });
+    const params = ui.selectedParams();
+    if (!isPoland()) { params.lat = state.lat; params.lng = state.lng; }
+    const result = await analyze(params);
     state.result = result;
-    view.fitArea();
+    if (isPoland()) view.fitPoland(); else view.fitArea();
     drawLayer();
     ui.renderWarnings(result.warnings);
     ui.renderTop(result.top, (place) => {
       view.flyTo(place.lat, place.lng, 14);
       view.highlightHex(place.h3);
+      if (isMobile()) $('sidebar').classList.add('collapsed');   // na telefonie odsłoń mapę
     });
     if (!result.hexes.length) ui.hideLegend();
+    writeHash();
+    if (isMobile()) $('sidebar').classList.add('collapsed');
   } catch (e) {
     ui.showError(e.message);
   } finally {
@@ -70,7 +124,7 @@ async function runAnalysis() {
   }
 }
 
-// Punkty firm: pobieramy tylko dla widocznego fragmentu mapy i tylko przy dużym przybliżeniu.
+// ---- Punkty firm: pobieramy tylko dla widocznego fragmentu mapy i tylko przy dużym przybliżeniu ----
 const POI_MIN_ZOOM = 11;
 let poiTimer = null;
 let poiRequest = 0;
@@ -101,21 +155,37 @@ async function loadPoi() {
   }
 }
 
-view.onClick((lat, lng) => { state.lat = lat; state.lng = lng; redrawArea(); });
+// ---- Podłączenie zdarzeń ----
+view.onClick((lat, lng) => { if (!isPoland()) setPoint(lat, lng); });
 view.onHexClick((row, latlng) => view.showPopup(latlng, popupHtml(row)));
+view.onMoveEnd(refreshPoi);
 
 $('radius-input').addEventListener('input', () => {
   $('radius-value').textContent = radiusKm();
   redrawArea();
 });
+$('poland-checkbox').addEventListener('change', syncPolandMode);
 $('poi-checkbox').addEventListener('change', loadPoi);
 $('type-select').addEventListener('change', loadPoi);
-view.onMoveEnd(refreshPoi);
 $('analyze-btn').addEventListener('click', runAnalysis);
-document.querySelectorAll('input[name=layer]').forEach((el) => el.addEventListener('change', drawLayer));
+document.querySelectorAll('input[name=layer]').forEach((el) => el.addEventListener('change', () => {
+  drawLayer();
+  if (state.result) writeHash();
+}));
 $('opacity-input').addEventListener('input', () => view.setHexOpacity(Number($('opacity-input').value)));
 
 // Mobile: uchwyt zwija i rozwija arkusz.
 $('sheet-handle').addEventListener('click', () => $('sidebar').classList.toggle('collapsed'));
 
-getCatalog().then(ui.renderCatalog).catch((e) => ui.showError(e.message));
+ui.initSearch((place) => {
+  setPoint(place.lat, place.lng);
+  view.flyTo(place.lat, place.lng, 12);
+});
+
+getMeta().then(ui.renderFooter).catch(() => { /* stopka jest dodatkiem — brak metadanych nie przeszkadza */ });
+getCatalog()
+  .then((catalog) => {
+    ui.renderCatalog(catalog);
+    if (applyHash()) runAnalysis();   // link z zapisanym widokiem otwiera się od razu z wynikiem
+  })
+  .catch((e) => ui.showError(e.message));

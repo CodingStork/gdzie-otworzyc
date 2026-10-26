@@ -58,7 +58,9 @@ export function initMap(elementId) {
         radius: radiusKm * 1000, color: '#253494', weight: 1.5, fillOpacity: 0.03, interactive: false,
       }).addTo(map);
     },
+    clearPin() { if (pin) { pin.remove(); pin = null; } },
     fitArea() { if (circle) map.fitBounds(circle.getBounds()); },
+    fitPoland() { map.fitBounds([[49.0, 14.1], [54.85, 24.15]]); },
     // rows: wiersze z API [h3, score, D, S, d, s, pct]; valueIndex wskazuje, którą kolumnę kolorować.
     setHexes(rows, valueIndex, breaks, colors) {
       hexLayer.clearLayers();

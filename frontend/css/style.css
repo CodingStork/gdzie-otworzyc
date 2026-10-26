@@ -36,7 +36,14 @@ summary { cursor: pointer; font-weight: 600; }
   width: 100%; margin-top: 14px; padding: 10px; border: 0; border-radius: 8px;
   background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
 }
-#analyze-btn:disabled { opacity: .6; cursor: progress; }
+#analyze-btn:disabled { opacity: .7; cursor: progress; }
+#analyze-btn.loading::after {   /* spinner na przycisku podczas analizy */
+  content: ''; display: inline-block; width: 12px; height: 12px; margin-left: 8px; vertical-align: -1px;
+  border: 2px solid #fff6; border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#search-results li.muted { color: var(--muted); cursor: default; }
+#radius-input:disabled { opacity: .4; }
 #error { margin-top: 8px; padding: 8px; border-radius: 6px; background: #fde8e8; color: #9b1c1c; }
 #warnings { margin-top: 12px; padding: 8px 10px; border: 1px solid var(--warn-line); background: var(--warn-bg); border-radius: 6px; }
 #warnings p { margin: 4px 0; }

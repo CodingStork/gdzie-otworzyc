@@ -1,4 +1,5 @@
 // Panel boczny: wypełnianie formularza danymi z katalogu i wyświetlanie wyników.
+import { geocode } from './api.js';
 import { classColors } from './colors.js';
 
 const $ = (id) => document.getElementById(id);
@@ -77,6 +78,7 @@ export function selectedParams() {
     bandwidth_km: $('bandwidth-input').value,
   };
   if (demand.needs_months) params.months = $('months-select').value;
+  if ($('poland-checkbox').checked) { params.scope = 'poland'; delete params.radius_km; }
   return params;
 }
 
@@ -119,7 +121,7 @@ export function renderTop(list, onClick) {
   const ol = $('top-list');
   ol.innerHTML = '';
   if (!list.length) {
-    ol.innerHTML = '<li class="muted">Brak wyników w tym obszarze.</li>';
+    ol.innerHTML = '<li class="muted">Brak danych w tym obszarze.</li>';
     return;
   }
   list.forEach((place, i) => {
@@ -133,11 +135,86 @@ export function renderTop(list, onClick) {
 export function setLoading(loading) {
   const btn = $('analyze-btn');
   btn.disabled = loading;
-  btn.textContent = loading ? 'Analizuję…' : 'Analizuj';
+  btn.textContent = loading ? 'Analizuję' : 'Analizuj';
+  btn.classList.toggle('loading', loading);
 }
 
 export function showError(message) {
   const el = $('error');
   el.textContent = message || '';
   el.hidden = !message;
+}
+
+// ---- Wyszukiwarka adresów: podpowiedzi z opóźnieniem 400 ms, obsługa klawiatury ----
+
+export function initSearch(onPick) {
+  const input = $('search-input');
+  const list = $('search-results');
+  let results = [];
+  let active = -1;
+  let timer = null;
+  let request = 0;
+
+  const hide = () => { list.hidden = true; active = -1; };
+  const highlight = () => [...list.children].forEach((li, i) => li.classList.toggle('active', i === active));
+  const pick = (place) => {
+    input.value = place.name;
+    hide();
+    onPick(place);
+  };
+  const show = (items) => {
+    results = items;
+    list.replaceChildren(...items.map((place) => {
+      const li = document.createElement('li');
+      li.textContent = place.name;
+      li.addEventListener('mousedown', (e) => { e.preventDefault(); pick(place); });
+      return li;
+    }));
+    if (!items.length) {
+      const li = document.createElement('li');
+      li.className = 'muted';
+      li.textContent = 'Brak wyników';
+      list.replaceChildren(li);
+    }
+    list.hidden = false;
+    active = -1;
+  };
+
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 3) { hide(); return; }
+    timer = setTimeout(async () => {
+      const mine = ++request;
+      try {
+        const items = await geocode(q);
+        if (mine === request) show(items);
+      } catch (e) {
+        if (mine === request) showError(e.message);
+      }
+    }, 400);
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { hide(); return; }
+    if (list.hidden || !results.length) return;
+    if (e.key === 'ArrowDown') { active = Math.min(active + 1, results.length - 1); highlight(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { active = Math.max(active - 1, 0); highlight(); e.preventDefault(); }
+    else if (e.key === 'Enter') { pick(results[Math.max(active, 0)]); e.preventDefault(); }
+  });
+  input.addEventListener('blur', hide);
+}
+
+// ---- Stopka: świeżość danych ----
+
+export function renderFooter(meta) {
+  const date = (source) => {
+    const s = meta.sources.find((x) => x.source === source);
+    return s ? new Date(s.downloaded_at).toLocaleDateString('pl-PL') : null;
+  };
+  const parts = [];
+  if (date('osm')) parts.push(`OSM ${date('osm')}`);
+  if (date('gunb')) parts.push(`GUNB ${date('gunb')}`);
+  if (date('census')) parts.push('Spis 2021');
+  $('meta-footer').textContent = parts.length ? `Dane: ${parts.join(', ')}` : '';
 }
