@@ -33,9 +33,9 @@ def make_db(
 
     if pois:
         con.execute("CREATE TABLE poi (osm_id VARCHAR, type_id VARCHAR, name VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR)")
-        for i, (type_id, lat, lng) in enumerate(pois):
-            con.execute("INSERT INTO poi VALUES (?, ?, ?, ?, ?, ?)",
-                        [f"n{i}", type_id, f"Firma {i}", lat, lng, h3.latlng_to_cell(lat, lng, 8)])
+        con.executemany("INSERT INTO poi VALUES (?, ?, ?, ?, ?, ?)",
+                        [[f"n{i}", type_id, f"Firma {i}", lat, lng, h3.latlng_to_cell(lat, lng, 8)]
+                         for i, (type_id, lat, lng) in enumerate(pois)])
 
     if permits:
         con.execute("CREATE TABLE permits_r8 (h3 VARCHAR, month DATE, kind VARCHAR, n INTEGER)")

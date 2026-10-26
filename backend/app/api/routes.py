@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 from backend.app.analysis.service import AnalysisParams, run_analysis
 from backend.app.catalog import DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
 from backend.app.db import DatabaseMissing, cursor
+from etl.aggregate import table_exists
 
 router = APIRouter(prefix="/api")
 
@@ -60,3 +61,30 @@ def analyze(
         return run_analysis(cursor(), params)
     except DatabaseMissing:
         raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
+
+
+POI_LIMIT = 5000
+
+
+@router.get("/poi")
+def poi(type_id: str = Query(alias="type"), bbox: str = Query()) -> dict:
+    """Punkty firm danego typu w widocznym fragmencie mapy (bbox = minLng,minLat,maxLng,maxLat)."""
+    if type_id not in TYPES:
+        raise _bad_request("Nieznany typ działalności")
+    try:
+        min_lng, min_lat, max_lng, max_lat = (float(x) for x in bbox.split(","))
+    except ValueError:
+        raise _bad_request("Nieprawidłowy bbox")
+    if not (min_lng < max_lng and min_lat < max_lat):
+        raise _bad_request("Nieprawidłowy bbox")
+    try:
+        con = cursor()
+    except DatabaseMissing:
+        raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
+    if not table_exists(con, "poi"):
+        return {"items": [], "truncated": False}
+    rows = con.execute(
+        "SELECT lat, lng, name FROM poi WHERE type_id = ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT ?",
+        [type_id, min_lat, max_lat, min_lng, max_lng, POI_LIMIT + 1]).fetchall()
+    return {"items": [{"lat": lat, "lng": lng, "name": name} for lat, lng, name in rows[:POI_LIMIT]],
+            "truncated": len(rows) > POI_LIMIT}

@@ -75,6 +75,41 @@ def _empty(value_column: str) -> pd.DataFrame:
     return pd.DataFrame({"h3": pd.Series([], dtype=object), value_column: pd.Series([], dtype=float)})
 
 
+# Im niższy numer, tym ważniejszy rodzaj miejsca przy nazywaniu lokalizacji: osiedle/wieś jest
+# bardziej precyzyjne niż nazwa całego miasta, więc wygrywa nawet jeśli leży nieco dalej.
+PLACE_PRIORITY = {"suburb": 0, "neighbourhood": 0, "quarter": 0, "village": 0, "hamlet": 0, "town": 1, "city": 2}
+
+
+def nearest_place_name(con: duckdb.DuckDBPyConnection, lat: float, lng: float, max_km: float = 3.0) -> str | None:
+    """Nazwa najlepszej miejscowości/osiedla w promieniu max_km od punktu (albo None).
+
+    Kolejność: najpierw priorytet rodzaju (osiedle/wieś < miasteczko < miasto), w obrębie
+    priorytetu — najbliższe. Wstępnie wybieramy prostokąt ±0,05° (~5 km), dokładną
+    odległość liczymy wzorem haversine (odległość na kuli ziemskiej).
+    """
+    if not table_exists(con, "places"):
+        return None
+    rows = con.execute(
+        "SELECT name, kind, lat, lng FROM places WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+        [lat - 0.05, lat + 0.05, lng - 0.05, lng + 0.05]).fetchall()
+    best = None
+    for name, kind, plat, plng in rows:
+        dist_km = _haversine_km(lat, lng, plat, plng)
+        if dist_km > max_km:
+            continue
+        key = (PLACE_PRIORITY[kind], dist_km)
+        if best is None or key < best[0]:
+            best = (key, name)
+    return best[1] if best else None
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Odległość po powierzchni kuli (promień Ziemi 6371 km) między dwoma punktami."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lng2 - lng1) / 2) ** 2
+    return 2 * 6371 * math.asin(math.sqrt(a))
+
+
 def _round1(x) -> float:
     return round(float(x), 1)
 
@@ -154,7 +189,8 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
     top = []
     for i in pick_top(sc, D, area_xy, min_sep_m=2 * h_km * 1000):
         lat, lng = float(area_latlng[i][0]), float(area_latlng[i][1])
-        top.append({"h3": area_h3[i], "lat": lat, "lng": lng, "name": f"okolice {lat:.3f}, {lng:.3f}",
+        name = nearest_place_name(con, lat, lng) or f"okolice {lat:.3f}, {lng:.3f}"
+        top.append({"h3": area_h3[i], "lat": lat, "lng": lng, "name": name,
                     "score": _round1(sc[i]), "D": _round1(D[i]), "S": _round1(S[i])})
 
     return {
