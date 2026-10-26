@@ -75,9 +75,13 @@ def extract_member(zip_path: Path, member_suffix: str, dest: Path) -> Path:
             raise FileNotFoundError(f"W {zip_path} nie ma pliku *{member_suffix}")
         dest = Path(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with z.open(names[0]) as src, open(dest, "wb") as out:
+        # Najpierw plik tymczasowy, potem zmiana nazwy — przerwane wypakowywanie nie zostawi
+        # uciętego pliku, który kolejne uruchomienie uznałoby za gotowy.
+        part = dest.with_suffix(dest.suffix + ".part")
+        with z.open(names[0]) as src, open(part, "wb") as out:
             while chunk := src.read(CHUNK):
                 out.write(chunk)
+        part.replace(dest)
     return dest
 
 

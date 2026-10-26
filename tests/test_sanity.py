@@ -71,3 +71,13 @@ def test_default_thresholds_match_plan():
     assert (THRESHOLDS["pop_min"], THRESHOLDS["pop_max"]) == (36_900_000, 37_200_000)
     assert THRESHOLDS["hairdressers_min"] == 8000 and THRESHOLDS["places_min"] == 40_000
     assert THRESHOLDS["missing_geom_max_share"] == 0.05 and THRESHOLDS["permits_sf_12m_min"] == 50_000
+
+
+def test_permits_without_geocoding_are_reported():
+    con = _good_db()
+    con.execute("CREATE TABLE permits_raw (source_id VARCHAR, source VARCHAR, kind VARCHAR, date DATE, obreb_id VARCHAR, terc VARCHAR)")
+    con.execute("INSERT INTO permits_raw VALUES ('a','p','sf',DATE '2026-01-01','1',''), ('b','p','sf',DATE '2026-01-01','2',''), "
+                "('c','p','sf',DATE '2026-01-01','3',''), ('d','p','sf',DATE '2026-01-01','4',''), ('e','p','sf',DATE '2026-01-01','5','')")   # obręby 3–5 bez geokodowania
+    assert any("geokodowan" in p for p in check(con, SMALL))
+    con.execute("INSERT INTO obreb_geom VALUES ('3',NULL,0,0,'region'), ('4',NULL,0,0,'region'), ('5',NULL,0,0,'region')")
+    assert not any("geokodowan" in p for p in check(con, SMALL))

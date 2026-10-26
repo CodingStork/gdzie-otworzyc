@@ -62,3 +62,16 @@ def test_analyze_no_permits_in_area_warns_about_demand(make_client):
                          permits=[(50.0, 19.9, "2026-09-01", "sf", 4)])
     j = client.get("/api/analyze", params=dict(PARAMS, demand="new_sf")).json()
     assert any("popycie" in w for w in j["warnings"])
+
+
+def test_percentile_is_computed_over_shown_hexes(make_client):
+    """Najgorszy pokazany heksagon ma percentyl 0 — heksagony bez popytu i konkurencji nie zawyżają rang."""
+    east = (LAT, LNG + 0.12)      # pozwolenia tylko na wschodnim skraju danych (~8 km od środka)
+    client = make_client(pop={c: 1000.0 for c in disk()}, permits=[(*east, "2026-09-01", "sf", 50)])
+    j = client.get("/api/analyze", params=dict(type="kindergarten", demand="new_sf", lat=LAT, lng=LNG, radius_km=8)).json()
+    assert j["hexes"] and min(r[6] for r in j["hexes"]) == 0 and max(r[6] for r in j["hexes"]) == 100
+
+
+def test_bandwidth_above_slider_limit_is_rejected(api_client):
+    r = api_client.get("/api/analyze", params=dict(type="beauty", demand="pop_f", lat=LAT, lng=LNG, radius_km=3, bandwidth_km=50))
+    assert r.status_code == 422

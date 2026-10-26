@@ -231,8 +231,11 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
         warnings.append(NO_DEMAND_WARNING)
 
     sc = score(D, S)
-    pct = percentile_rank(sc)
     keep = (D > 0) | (S > 0)
+    # Percentyl liczymy tylko wśród pokazywanych heksagonów (tak samo jak klasy kolorów); puste
+    # heksagony zaniżałyby rangi i najgorsze miejsce na mapie nie miałoby percentyla 0.
+    pct = np.zeros(len(sc), dtype=int)
+    pct[keep] = percentile_rank(sc[keep])
     hexes = [[area_h3[i], _round1(sc[i]), _round1(D[i]), _round1(S[i]), _round1(a_d[i]), _round1(a_s[i]), int(pct[i])]
              for i in np.flatnonzero(keep)]
 

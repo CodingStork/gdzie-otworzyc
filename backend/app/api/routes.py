@@ -41,7 +41,7 @@ def analyze(
     lat: float | None = None,
     lng: float | None = None,
     radius_km: float | None = None,
-    bandwidth_km: float | None = Query(default=None, gt=0, le=50),
+    bandwidth_km: float | None = Query(default=None, gt=0, le=20),  # le=20: tyle co suwak w interfejsie
     months: int = 24,
     scope: str = "local",
 ) -> dict:

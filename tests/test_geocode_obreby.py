@@ -227,3 +227,18 @@ def test_geocode_missing_stops_when_server_blocks():
     counts = geocode_missing(con, UldkClient(_client(handler)), workers=1, batch=4)
     assert counts["error"] == 4 and counts["missing"] == 0        # po pierwszej porcji z samymi błędami przerywamy
     assert con.execute("SELECT COUNT(*) FROM obreb_geom").fetchall()[0][0] == 0
+
+
+def test_geocode_missing_visits_ids_in_scattered_order():
+    """Przerwany przebieg ma obejmować cały kraj, a nie kilka pierwszych województw (kolejność = hash id)."""
+    ids = [f"{woj}0101_1.0001" for woj in ("02", "04", "06", "08", "10", "12", "14", "16", "18", "20", "22", "24")]
+    con = _con_with_permits(ids)
+    visited = []
+
+    def handler(req):
+        visited.append(req.url.params["id"])
+        return httpx.Response(200, text=NOT_FOUND)
+
+    geocode_missing(con, UldkClient(_client(handler)), workers=1, batch=100)
+    regions = [i for i in visited if "." in i]
+    assert sorted(regions) == sorted(ids) and regions != sorted(ids)      # nie alfabetycznie

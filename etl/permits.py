@@ -30,6 +30,7 @@ NOTIF_COLUMNS = [
 KIND_BY_CATEGORY = {"I": "sf", "XIII": "mf"}
 OUTPUT_COLUMNS = ["source_id", "source", "kind", "date", "obreb_id", "terc"]
 CHUNK_ROWS = 300_000
+MIN_DATE = pd.Timestamp("2016-01-01")   # rejestr RWDZ obejmuje dane od 2016 r.
 
 
 class UnexpectedHeader(ValueError):
@@ -87,7 +88,12 @@ def _finish(df: pd.DataFrame, source: str) -> pd.DataFrame:
     """Typy wyjściowe: data jako datetime (nieczytelne daty → wiersz odrzucony), kind z kategorii."""
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d %H:%M:%S", errors="coerce")
-    df = df.dropna(subset=["date"])
+    # Daty spoza 2016–dziś to literówki w rejestrze. Zostawione, przesunęłyby okno czasowe analizy
+    # (liczone od najnowszej daty w danych) i wyzerowały wszystkie wyniki z pozwoleń.
+    in_range = df["date"].between(MIN_DATE, pd.Timestamp.today().normalize())
+    if (~in_range).any():
+        print(f"pozwolenia: odrzucono {int((~in_range).sum())} wierszy z nieprawidłową datą", flush=True)
+    df = df[in_range]
     df["kind"] = df["kategoria"].map(KIND_BY_CATEGORY)
     df["source"] = source
     df["obreb_id"] = [normalize_obreb_id(j, o) for j, o in zip(df["jednostka"], df["obreb"])]

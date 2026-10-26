@@ -19,7 +19,7 @@ import httpx
 from backend.app.config import DATA_DIR, USER_AGENT
 from etl import download as dl
 from etl.aggregate import build_aggregates, table_exists
-from etl.geocode_obreby import ULDK_URL, UldkClient, build_permits_hex, geocode_missing
+from etl.geocode_obreby import ULDK_URL, UldkClient, build_permits_hex, count_ungeocoded, geocode_missing
 from etl.osm_poi import build_poi_tables
 from etl.permits import build_permits_raw
 from etl.population import build_hex_pop
@@ -98,6 +98,12 @@ def _run_step(step: str, con, raw: dict, force: bool, data_dir: Path) -> object:
         with httpx.Client(timeout=httpx.Timeout(60.0, connect=30.0), follow_redirects=True,
                           headers={"User-Agent": USER_AGENT}) as client:
             counts = geocode_missing(con, UldkClient(client))
+        remaining = count_ungeocoded(con)
+        if remaining:
+            # Nie udajemy sukcesu: z niepełnych danych powstałyby mapy z „dziurami” bez żadnego ostrzeżenia.
+            raise RuntimeError(
+                f"Geokodowanie nie zostało ukończone: pozostało {remaining} obrębów (ULDK mógł zablokować "
+                "połączenie — odczekaj i uruchom ponownie: uv run python -m etl.run_all --only geocode,permits_hex,aggregate)")
         _record_meta(con, "uldk", ULDK_URL, _count(con, "obreb_geom"))
         return counts
 

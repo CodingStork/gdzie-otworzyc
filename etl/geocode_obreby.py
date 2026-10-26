@@ -116,17 +116,30 @@ def _resolve(uldk: UldkClient, obreb_id: str) -> tuple[str, str | None, float | 
         return None
 
 
+def ensure_obreb_table(con: duckdb.DuckDBPyConnection) -> None:
+    con.execute("""CREATE TABLE IF NOT EXISTS obreb_geom (
+        obreb_id VARCHAR PRIMARY KEY, name VARCHAR, lat DOUBLE, lng DOUBLE, status VARCHAR)""")
+
+
+def count_ungeocoded(con: duckdb.DuckDBPyConnection) -> int:
+    """Ile obrębów z permits_raw nie ma jeszcze wpisu w obreb_geom (do dokończenia geokodowania)."""
+    ensure_obreb_table(con)
+    return con.execute("""SELECT COUNT(DISTINCT obreb_id) FROM permits_raw
+                          WHERE obreb_id NOT IN (SELECT obreb_id FROM obreb_geom)""").fetchall()[0][0]
+
+
 def geocode_missing(con: duckdb.DuckDBPyConnection, uldk: UldkClient, workers: int = 3, batch: int = 200) -> dict[str, int]:
     """Geokoduje obręby z `permits_raw`, których nie ma jeszcze w `obreb_geom`.
 
     Zapytania HTTP idą równolegle (workers wątków), ale do bazy pisze tylko wątek główny, po każdej
     porcji `batch` obrębów — przerwanie programu traci najwyżej jedną porcję.
     """
-    con.execute("""CREATE TABLE IF NOT EXISTS obreb_geom (
-        obreb_id VARCHAR PRIMARY KEY, name VARCHAR, lat DOUBLE, lng DOUBLE, status VARCHAR)""")
+    ensure_obreb_table(con)
+    # Kolejność pseudolosowa (hash id), a nie alfabetyczna: przerwany przebieg (np. blokada ULDK)
+    # obejmuje wtedy równomiernie cały kraj, zamiast zostawić całe województwa bez danych.
     todo = [r[0] for r in con.execute(
         """SELECT DISTINCT obreb_id FROM permits_raw
-           WHERE obreb_id NOT IN (SELECT obreb_id FROM obreb_geom) ORDER BY 1""").fetchall()]
+           WHERE obreb_id NOT IN (SELECT obreb_id FROM obreb_geom) ORDER BY hash(obreb_id)""").fetchall()]
     counts = {"region": 0, "commune": 0, "missing": 0, "error": 0}
     started = time.time()
     with ThreadPoolExecutor(max_workers=workers) as pool:

@@ -1,6 +1,7 @@
 import zipfile
 
 import httpx
+import pytest
 
 from backend.app.config import USER_AGENT
 from etl.download import download, extract_member
@@ -64,3 +65,34 @@ def test_extract_member(tmp_path):
         z.writestr("a/ESTAT_Census_2021_V3.parquet", b"PQ")
     out = extract_member(zip_path, "V3.parquet", tmp_path / "out.parquet")
     assert out.read_bytes() == b"PQ"
+
+
+def test_extract_member_is_atomic(tmp_path, monkeypatch):
+    """Przerwane wypakowywanie nie może zostawić kompletnie wyglądającego, ale ucięte pliku."""
+    zip_path = tmp_path / "a.zip"
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("x.csv", b"1234567890")
+    dest = tmp_path / "out.csv"
+
+    class Boom(Exception):
+        pass
+
+    real_open = zipfile.ZipFile.open
+
+    def broken_open(self, *a, **kw):
+        f = real_open(self, *a, **kw)
+        original_read = f.read
+        state = {"n": 0}
+
+        def read(n=-1):
+            state["n"] += 1
+            if state["n"] > 1:
+                raise Boom()
+            return original_read(4)
+        f.read = read
+        return f
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", broken_open)
+    with pytest.raises(Boom):
+        extract_member(zip_path, ".csv", dest)
+    assert not dest.exists()

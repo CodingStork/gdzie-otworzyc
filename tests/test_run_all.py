@@ -83,3 +83,19 @@ def test_api_meta_db_missing(tmp_path, monkeypatch):
     reset_connection()
     r = TestClient(app).get("/api/meta")
     assert r.status_code == 503 and "etl.run_all" in r.text
+
+
+def test_incomplete_geocoding_fails_loudly(tmp_path, monkeypatch):
+    """Przerwane geokodowanie (np. blokada ULDK) nie może wyglądać jak sukces ani zasilać permits_r8 połową danych."""
+    from etl import run_all as run_all_module
+    _db_with_hex_pop_only(tmp_path)
+    con = duckdb.connect(str(tmp_path / "app.duckdb"))
+    con.execute("CREATE TABLE permits_raw (source_id VARCHAR, source VARCHAR, kind VARCHAR, date DATE, obreb_id VARCHAR, terc VARCHAR)")
+    con.execute("INSERT INTO permits_raw VALUES ('a','pozwolenie','sf',DATE '2026-01-05','160602_4.0001','')")
+    con.close()
+    monkeypatch.setattr(run_all_module, "geocode_missing",
+                        lambda con, uldk, **kw: {"region": 0, "commune": 0, "missing": 0, "error": 1})
+    with pytest.raises(RuntimeError, match="(?i)geokodowanie"):
+        run(["geocode"], data_dir=tmp_path)
+    con = duckdb.connect(str(tmp_path / "app.duckdb"))
+    assert not table_exists(con, "meta") or con.execute("SELECT COUNT(*) FROM meta WHERE source='uldk'").fetchall()[0][0] == 0

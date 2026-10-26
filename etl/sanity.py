@@ -57,6 +57,13 @@ def check(con: duckdb.DuckDBPyConnection, thresholds: dict = THRESHOLDS) -> list
         if total == 0 or bad / total > thresholds["missing_geom_max_share"]:
             problems.append(f"Zbyt wiele niezgeokodowanych obrębów: {bad} z {total} "
                             f"(próg {thresholds['missing_geom_max_share']:.0%})")
+    if has("obreb_geom") and table_exists(con, "permits_raw"):
+        # pokrycie geokodowania: obręby z pozwoleń, których nie ma w obreb_geom (np. przerwane przez blokadę ULDK)
+        total = _scalar(con, "SELECT COUNT(DISTINCT obreb_id) FROM permits_raw")
+        todo = _scalar(con, """SELECT COUNT(DISTINCT obreb_id) FROM permits_raw
+                               WHERE obreb_id NOT IN (SELECT obreb_id FROM obreb_geom)""")
+        if total and todo / total > thresholds["missing_geom_max_share"]:
+            problems.append(f"Niedokończone geokodowanie: {todo} z {total} obrębów z pozwoleń bez wpisu w obreb_geom")
     if has("permits_r8"):
         # „ostatnie 12 miesięcy” liczone od najnowszych danych w tabeli, nie od dzisiaj
         n = _scalar(con, """SELECT COALESCE(SUM(n), 0) FROM permits_r8 WHERE kind = 'sf'

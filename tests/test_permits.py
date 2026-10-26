@@ -103,3 +103,16 @@ def test_build_permits_raw_is_replaceable():
     con = duckdb.connect()
     build_permits_raw([PERMITS], [NOTIFS], con)
     assert build_permits_raw([PERMITS], [], con) == 4      # drugie wywołanie nadpisuje tabelę
+
+
+def test_implausible_dates_are_dropped(tmp_path):
+    """Literówki w datach (rok 2096, 1999) nie mogą przesunąć okna czasowego analizy ani trafić do bazy."""
+    text = PERMITS.read_text(encoding="utf-8-sig")
+    rows = text.splitlines()
+    good = rows[1]
+    future = good.replace("ST-OP-TE/WNIOSEK/1/2024", "ST-OP-TE/WNIOSEK/F/2096").replace("2024-03-15", "2096-05-01")
+    past = good.replace("ST-OP-TE/WNIOSEK/1/2024", "ST-OP-TE/WNIOSEK/P/1999").replace("2024-03-15", "1999-05-01")
+    path = tmp_path / "dates.csv"
+    path.write_text("\n".join([rows[0], good, future, past]) + "\n", encoding="utf-8-sig")
+    df = parse_permits(path)
+    assert list(df["source_id"]) == ["ST-OP-TE/WNIOSEK/1/2024"]
