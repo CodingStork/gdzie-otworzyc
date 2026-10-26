@@ -5,7 +5,7 @@ import * as ui from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 const view = initMap('map');
-const state = { lat: null, lng: null, result: null };
+const state = { lat: null, lng: null, result: null, request: null };   // request = parametry wyniku widocznego na mapie
 
 // Warstwy mapy: indeks kolumny w wierszu heksagonu, klucz granic w stats i nagłówek legendy.
 const LAYERS = {
@@ -49,27 +49,48 @@ function drawLayer() {
   ui.renderLegend(layer.title, breaks, note);
 }
 
-function popupHtml(row) {
+// Treść dymka heksagonu + przycisk ustawiający tu punkt analizy (kliknięcie w heksagon nie stawia pinezki).
+function popupContent(row, latlng) {
   const [, score, D, S, , , pct] = row;
-  return `<div class="title">Szczegóły okolicy</div>` +
+  const box = document.createElement('div');
+  box.innerHTML = `<div class="title">Szczegóły okolicy</div>` +
     `Popyt w zasięgu: <b>${ui.fmt(D)}</b><br>` +
     `Konkurenci w zasięgu: <b>${ui.fmt(S, 1)}</b><br>` +
     `Na 1 konkurenta: <b>${ui.fmt(score)}</b><br>` +
-    `Percentyl: <b>${pct}</b>`;
+    `Percentyl: <b>${pct}</b><br>`;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'popup-btn';
+  button.textContent = 'Ustaw tu punkt analizy';
+  button.addEventListener('click', () => {
+    $('poland-checkbox').checked = false;
+    syncPolandMode();
+    setPoint(latlng.lat, latlng.lng);
+    view.closePopup();
+  });
+  box.append(button);
+  return box;
+}
+
+// Na telefonie zwijamy panel, żeby odsłonić mapę; po zmianie rozmiaru Leaflet musi przeliczyć widok.
+function collapseSheetOnMobile() {
+  if (!isMobile()) return;
+  $('sidebar').classList.add('collapsed');
+  view.invalidateSize();
 }
 
 // ---- Stan widoku w adresie URL (#type=beauty&demand=pop_f&lat=…) — link można komuś wysłać ----
 
 function writeHash() {
-  const params = ui.selectedParams();
+  const req = state.request;   // parametry wyniku widocznego na mapie (formularz mógł się od tego czasu zmienić)
   const hash = new URLSearchParams({
-    type: params.type, demand: params.demand, bw: params.bandwidth_km, m: params.months || '',
-    pl: isPoland() ? 1 : 0, layer: currentLayer(),
+    type: req.type, demand: req.demand, bw: req.bandwidth_km, m: req.months || '',
+    pl: req.scope === 'poland' ? 1 : 0, layer: currentLayer(),
   });
-  if (!isPoland()) {
-    hash.set('lat', state.lat.toFixed(5));
-    hash.set('lng', state.lng.toFixed(5));
-    hash.set('r', params.radius_km);
+  if (req.scope !== 'poland') {
+    hash.set('lat', Number(req.lat).toFixed(5));
+    hash.set('lng', Number(req.lng).toFixed(5));
+    hash.set('r', req.radius_km);
   }
   history.replaceState(null, '', '#' + hash);
 }
@@ -106,17 +127,18 @@ async function runAnalysis() {
     if (!isPoland()) { params.lat = state.lat; params.lng = state.lng; }
     const result = await analyze(params);
     state.result = result;
+    state.request = params;
+    collapseSheetOnMobile();   // najpierw zwinięcie panelu, potem dopasowanie widoku do obszaru
     if (isPoland()) view.fitPoland(); else view.fitArea();
     drawLayer();
     ui.renderWarnings(result.warnings);
     ui.renderTop(result.top, (place) => {
       view.flyTo(place.lat, place.lng, 14);
       view.highlightHex(place.h3);
-      if (isMobile()) $('sidebar').classList.add('collapsed');   // na telefonie odsłoń mapę
+      collapseSheetOnMobile();
     });
     if (!result.hexes.length) ui.hideLegend();
     writeHash();
-    if (isMobile()) $('sidebar').classList.add('collapsed');
   } catch (e) {
     ui.showError(e.message);
   } finally {
@@ -157,7 +179,7 @@ async function loadPoi() {
 
 // ---- Podłączenie zdarzeń ----
 view.onClick((lat, lng) => { if (!isPoland()) setPoint(lat, lng); });
-view.onHexClick((row, latlng) => view.showPopup(latlng, popupHtml(row)));
+view.onHexClick((row, latlng) => view.showPopup(latlng, popupContent(row, latlng)));
 view.onMoveEnd(refreshPoi);
 
 $('radius-input').addEventListener('input', () => {
@@ -170,7 +192,7 @@ $('type-select').addEventListener('change', loadPoi);
 $('analyze-btn').addEventListener('click', runAnalysis);
 document.querySelectorAll('input[name=layer]').forEach((el) => el.addEventListener('change', () => {
   drawLayer();
-  if (state.result) writeHash();
+  if (state.request) writeHash();
 }));
 $('opacity-input').addEventListener('input', () => view.setHexOpacity(Number($('opacity-input').value)));
 

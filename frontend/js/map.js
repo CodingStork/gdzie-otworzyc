@@ -10,6 +10,14 @@ const ATTRIBUTION =
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/';
 const MAX_ZOOM = 16; // Esri Light Gray ma kafelki do poziomu 16
 
+// Leaflet wstawia tekst podpowiedzi jako HTML — nazwy firm z OSM (edytowane przez wolontariuszy)
+// przekazujemy więc jako element z textContent, żeby znaczniki w nazwie nie były wykonywane.
+function plainText(text) {
+  const span = document.createElement('span');
+  span.textContent = text;
+  return span;
+}
+
 export function initMap(elementId) {
   const map = L.map(elementId, { preferCanvas: true, maxZoom: MAX_ZOOM }).setView([52.07, 19.48], 6);
 
@@ -35,6 +43,9 @@ export function initMap(elementId) {
   const poiRenderer = L.canvas({ pane: 'poi' });
   const poiLayer = L.layerGroup().addTo(map);
 
+  // Gdy zmieni się rozmiar kontenera mapy (np. zwinięcie panelu na telefonie), Leaflet musi przeliczyć rozmiar.
+  new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById(elementId));
+
   let pin = null;
   let circle = null;
   let clickCb = null;
@@ -59,6 +70,7 @@ export function initMap(elementId) {
       }).addTo(map);
     },
     clearPin() { if (pin) { pin.remove(); pin = null; } },
+    invalidateSize() { map.invalidateSize(); },
     fitArea() { if (circle) map.fitBounds(circle.getBounds()); },
     fitPoland() { map.fitBounds([[49.0, 14.1], [54.85, 24.15]]); },
     // rows: wiersze z API [h3, score, D, S, d, s, pct]; valueIndex wskazuje, którą kolumnę kolorować.
@@ -82,7 +94,8 @@ export function initMap(elementId) {
       opacity = value;
       hexPolygons.forEach((p) => p.setStyle({ fillOpacity: value }));
     },
-    showPopup(latlng, html) { L.popup({ className: 'hex-popup' }).setLatLng(latlng).setContent(html).openOn(map); },
+    showPopup(latlng, content) { L.popup({ className: 'hex-popup' }).setLatLng(latlng).setContent(content).openOn(map); },
+    closePopup() { map.closePopup(); },
     // Czerwony obrys wskazanego heksagonu (np. po kliknięciu w liście najlepszych miejsc).
     highlightHex(h3Id) {
       highlightLayer.clearLayers();
@@ -98,7 +111,7 @@ export function initMap(elementId) {
         L.circleMarker([p.lat, p.lng], {
           pane: 'poi', renderer: poiRenderer, radius: 4, color: '#fff', weight: 1,
           fillColor: '#D85A30', fillOpacity: 0.95,
-        }).bindTooltip(p.name || 'bez nazwy').addTo(poiLayer);
+        }).bindTooltip(plainText(p.name || 'bez nazwy')).addTo(poiLayer);
       }
     },
     onMoveEnd(cb) { map.on('moveend', cb); },

@@ -71,6 +71,7 @@ summary { cursor: pointer; font-weight: 600; }
 #legend .sw { width: 22px; height: 12px; border-radius: 2px; border: 1px solid #0002; flex: none; }
 #legend .note { margin-top: 6px; color: var(--muted); }
 .hex-popup .title { font-weight: 700; margin-bottom: 4px; }
+.popup-btn { margin-top: 8px; width: 100%; padding: 6px; border: 1px solid #253494; border-radius: 6px; background: #fff; color: #253494; cursor: pointer; }
 
 @media (max-width: 767px) {
   body { flex-direction: column-reverse; }

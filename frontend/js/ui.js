@@ -82,9 +82,12 @@ export function selectedParams() {
   return params;
 }
 
+const hasOption = (select, value) => [...select.options].some((o) => o.value === value);
+
+// Ustawia formularz z wartości zapisanych w adresie; nieznane wartości (np. ze starego linku) pomijamy.
 export function setSelection({ type, demand, bandwidth, months }) {
-  if (type) { $('type-select').value = type; onTypeChange(); }
-  if (demand) { $('demand-select').value = demand; syncMonthsRow(); }
+  if (type && hasOption($('type-select'), type)) { $('type-select').value = type; onTypeChange(); }
+  if (demand && hasOption($('demand-select'), demand)) { $('demand-select').value = demand; syncMonthsRow(); }
   if (bandwidth) setBandwidth(bandwidth);
   if (months) $('months-select').value = String(months);
 }
