@@ -1,5 +1,6 @@
 // Mapa Leaflet: jasny podkład (Esri Light Gray) + warstwy na heksagony, etykiety i punkty firm.
-// Moduł zwraca obiekt MapView; pozostałe metody (heksagony, punkty) dochodzą w kolejnych taskach.
+// Moduł zwraca obiekt MapView — jedyny sposób, w jaki reszta aplikacji dotyka mapy.
+import { colorFor } from './colors.js';
 
 const ATTRIBUTION =
   '© OpenStreetMap contributors © Esri | Ludność: © EU, Eurostat GISCO (Census 2021, zmodyfikowane) | ' +
@@ -27,14 +28,23 @@ export function initMap(elementId) {
     pane: 'labels', maxZoom: MAX_ZOOM,
   }).addTo(map);
 
+  // Każdy pane z własnym rendererem canvas (domyślny renderer rysuje tylko w overlayPane).
+  const hexRenderer = L.canvas({ pane: 'hexes' });
+  const hexLayer = L.layerGroup().addTo(map);
+  const highlightLayer = L.layerGroup().addTo(map);
+
   let pin = null;
   let circle = null;
   let clickCb = null;
+  let hexClickCb = null;
+  let opacity = 0.7;
+  let hexPolygons = [];
   map.on('click', (e) => clickCb && clickCb(e.latlng.lat, e.latlng.lng));
 
   return {
     leaflet: map,
     onClick(cb) { clickCb = cb; },
+    onHexClick(cb) { hexClickCb = cb; },
     setPin(lat, lng) {
       if (pin) pin.setLatLng([lat, lng]); else pin = L.marker([lat, lng]).addTo(map);
     },
@@ -45,6 +55,37 @@ export function initMap(elementId) {
       circle = L.circle([lat, lng], {
         radius: radiusKm * 1000, color: '#253494', weight: 1.5, fillOpacity: 0.03, interactive: false,
       }).addTo(map);
+    },
+    fitArea() { if (circle) map.fitBounds(circle.getBounds()); },
+    // rows: wiersze z API [h3, score, D, S, d, s, pct]; valueIndex wskazuje, którą kolumnę kolorować.
+    setHexes(rows, valueIndex, breaks, colors) {
+      hexLayer.clearLayers();
+      highlightLayer.clearLayers();
+      // Kształt heksagonu liczy przeglądarka z identyfikatora H3 (serwer nie wysyła geometrii).
+      hexPolygons = rows.map((row) => {
+        const polygon = L.polygon(h3.cellToBoundary(row[0]), {
+          pane: 'hexes', renderer: hexRenderer, weight: 0.6, color: '#fff', opacity: 0.8,
+          fillColor: colorFor(row[valueIndex], breaks, colors), fillOpacity: opacity,
+          bubblingMouseEvents: false,   // klik w heksagon nie stawia nowej pinezki
+        });
+        polygon.on('click', () => hexClickCb && hexClickCb(row, polygon.getBounds().getCenter()));
+        polygon.addTo(hexLayer);
+        return polygon;
+      });
+    },
+    clearHexes() { hexLayer.clearLayers(); highlightLayer.clearLayers(); hexPolygons = []; },
+    setHexOpacity(value) {
+      opacity = value;
+      hexPolygons.forEach((p) => p.setStyle({ fillOpacity: value }));
+    },
+    showPopup(latlng, html) { L.popup({ className: 'hex-popup' }).setLatLng(latlng).setContent(html).openOn(map); },
+    // Czerwony obrys wskazanego heksagonu (np. po kliknięciu w liście najlepszych miejsc).
+    highlightHex(h3Id) {
+      highlightLayer.clearLayers();
+      if (!h3Id) return;
+      L.polygon(h3.cellToBoundary(h3Id), {
+        pane: 'poi', fill: false, color: '#d62728', weight: 3, interactive: false,
+      }).addTo(highlightLayer);
     },
     flyTo(lat, lng, zoom) { map.flyTo([lat, lng], zoom); },
     getBbox() { const b = map.getBounds(); return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]; },
