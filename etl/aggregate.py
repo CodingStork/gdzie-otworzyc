@@ -13,7 +13,7 @@ COARSE_RESOLUTIONS = (7, 6)
 
 
 def table_exists(con: duckdb.DuckDBPyConnection, name: str) -> bool:
-    n = con.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", [name]).fetchone()[0]
+    n = con.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", [name]).fetchall()[0][0]
     return n > 0
 
 
