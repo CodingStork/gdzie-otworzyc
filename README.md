@@ -94,6 +94,7 @@ Uwagi:
 - Używamy Pythona 3.13 zarządzanego przez `uv` (`.python-version`); systemowego Pythona nie trzeba instalować.
 - ETL można przerwać i wznowić — pobieranie i geokodowanie są wznawialne. `--only population,aggregate` uruchamia wybrane kroki, `--force` wymusza ponowne wykonanie.
 - Serwer i ETL nie mogą działać jednocześnie (blokada pliku DuckDB).
+- Serwer ULDK (GUGiK) może po godzinie intensywnych zapytań zablokować połączenie (przekierowanie na stronę-pułapkę). Geokodowanie przerywa się wtedy z komunikatem; odczekaj i dokończ: `uv run python -m etl.run_all --only geocode,permits_hex,aggregate --force` (szczegóły i aktualny stan: [docs/raport-etl.md](docs/raport-etl.md)).
 - Testy: `uv run pytest -v`.
 
 ## Dostęp z innego urządzenia przez Tailscale

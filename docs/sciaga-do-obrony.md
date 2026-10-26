@@ -30,6 +30,7 @@ Wynik analizy zależy od tego, jak potniemy mapę na jednostki: te same dane w g
 ## 4. Interpolacja powierzchniowa (areal interpolation)
 
 Spis podaje ludność w kwadratach 1 km, a my potrzebujemy jej w heksagonach, które z kwadratami się nie pokrywają. Każdy kwadrat dzielimy na siatkę 5 × 5 punktów (co 200 m), każdy punkt dostaje 1/25 ludności kwadratu i trafia do heksagonu, w którym leży. Zakładamy więc, że ludność jest w kwadracie rozłożona równomiernie — to uproszczenie (w rzeczywistości ludzie mieszkają w zabudowie, nie w lesie). Suma ludności jest zachowana — sprawdzamy to w kodzie (kontrola ±0,1%). W ETL wartości ukryte przez Eurostat (−9999, ochrona prywatności) w podkategoriach (kobiety, mężczyźni, wiek) uzupełniamy proporcjonalnie do łącznej liczby ludności.
+Ograniczenie widoczne na wybrzeżu (np. Hel, Świnoujście): kwadrat spisu obejmujący i ląd, i wodę rozkłada ludność równomiernie, więc niewielka jej część trafia do heksagonów na wodzie. Naprawić można maską lądu (granice PRG) albo metodą dasymetryczną (wagi z budynków OSM) — to naturalne rozszerzenie.
 - `etl/population.py:cells_to_hex`, `impute_subcategories`, `build_hex_pop`.
 
 ## 5. KDE (estymacja jądrowa) i szerokość pasma
