@@ -1,0 +1,41 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="test">
+  <!-- pasuje: salon kosmetyczny -->
+  <node id="1" version="1" lat="50.0000000" lon="17.0000000">
+    <tag k="shop" v="beauty"/>
+    <tag k="name" v="Salon A"/>
+  </node>
+  <!-- pasuje: fryzjer, który jest też barberem (dwa typy) -->
+  <node id="2" version="1" lat="50.0100000" lon="17.0100000">
+    <tag k="shop" v="hairdresser"/>
+    <tag k="hairdresser" v="barber"/>
+  </node>
+  <!-- cztery węzły BEZ tagów — wierzchołki budynku (kwadrat) -->
+  <node id="10" version="1" lat="50.0200000" lon="17.0200000"/>
+  <node id="11" version="1" lat="50.0200000" lon="17.0204000"/>
+  <node id="12" version="1" lat="50.0204000" lon="17.0204000"/>
+  <node id="13" version="1" lat="50.0204000" lon="17.0200000"/>
+  <!-- pasuje: market budowlany jako obszar (way) -->
+  <way id="100" version="1">
+    <nd ref="10"/>
+    <nd ref="11"/>
+    <nd ref="12"/>
+    <nd ref="13"/>
+    <tag k="shop" v="doityourself"/>
+    <tag k="name" v="Market Dom"/>
+  </way>
+  <!-- pasuje do places: osiedle -->
+  <node id="3" version="1" lat="50.0300000" lon="17.0300000">
+    <tag k="place" v="suburb"/>
+    <tag k="name" v="Zaodrze"/>
+  </node>
+  <!-- nie pasuje: ławka -->
+  <node id="4" version="1" lat="50.0400000" lon="17.0400000">
+    <tag k="amenity" v="bench"/>
+  </node>
+  <!-- nie pasuje: powiat -->
+  <node id="5" version="1" lat="50.0500000" lon="17.0500000">
+    <tag k="place" v="county"/>
+    <tag k="name" v="Powiat"/>
+  </node>
+</osm>
