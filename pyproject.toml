@@ -1,0 +1,30 @@
+[project]
+name = "gdzie-otworzyc"
+version = "0.1.0"
+description = "Mapa okazji biznesowych: gdzie otworzyć działalność (klienci na 1 konkurenta)"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "duckdb",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "scipy",
+    "pyproj",
+    "shapely",
+    "h3>=4",
+    "osmium>=4",
+    "httpx",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = ["ignore:Using `httpx` with"]
+
+[tool.uv]
+package = false
