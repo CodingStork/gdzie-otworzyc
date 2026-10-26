@@ -1,5 +1,5 @@
 // Punkt startowy frontendu: spina mapę, panel boczny i API.
-import { analyze, getCatalog } from './api.js';
+import { analyze, getCatalog, getPoi } from './api.js';
 import { initMap } from './map.js';
 import * as ui from './ui.js';
 
@@ -66,6 +66,37 @@ async function runAnalysis() {
   }
 }
 
+// Punkty firm: pobieramy tylko dla widocznego fragmentu mapy i tylko przy dużym przybliżeniu.
+const POI_MIN_ZOOM = 11;
+let poiTimer = null;
+let poiRequest = 0;
+
+function refreshPoi() {
+  clearTimeout(poiTimer);
+  poiTimer = setTimeout(loadPoi, 300);   // debounce: czekamy, aż użytkownik przestanie przesuwać mapę
+}
+
+async function loadPoi() {
+  const note = $('poi-note');
+  const request = ++poiRequest;          // odpowiedzi spóźnione względem nowszego zapytania ignorujemy
+  if (!$('poi-checkbox').checked) { view.setPoi([]); note.hidden = true; return; }
+  if (view.getZoom() < POI_MIN_ZOOM) {
+    view.setPoi([]);
+    note.textContent = 'Przybliż mapę, aby zobaczyć firmy';
+    note.hidden = false;
+    return;
+  }
+  try {
+    const data = await getPoi($('type-select').value, view.getBbox());
+    if (request !== poiRequest) return;
+    view.setPoi(data.items);
+    note.textContent = data.truncated ? 'Pokazano 5000 pierwszych firm' : '';
+    note.hidden = !data.truncated;
+  } catch (e) {
+    if (request === poiRequest) { note.textContent = e.message; note.hidden = false; }
+  }
+}
+
 view.onClick((lat, lng) => { state.lat = lat; state.lng = lng; redrawArea(); });
 view.onHexClick((row, latlng) => view.showPopup(latlng, popupHtml(row)));
 
@@ -73,6 +104,9 @@ $('radius-input').addEventListener('input', () => {
   $('radius-value').textContent = radiusKm();
   redrawArea();
 });
+$('poi-checkbox').addEventListener('change', loadPoi);
+$('type-select').addEventListener('change', loadPoi);
+view.onMoveEnd(refreshPoi);
 $('analyze-btn').addEventListener('click', runAnalysis);
 document.querySelectorAll('input[name=layer]').forEach((el) => el.addEventListener('change', drawLayer));
 $('opacity-input').addEventListener('input', () => view.setHexOpacity(Number($('opacity-input').value)));

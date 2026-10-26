@@ -32,6 +32,8 @@ export function initMap(elementId) {
   const hexRenderer = L.canvas({ pane: 'hexes' });
   const hexLayer = L.layerGroup().addTo(map);
   const highlightLayer = L.layerGroup().addTo(map);
+  const poiRenderer = L.canvas({ pane: 'poi' });
+  const poiLayer = L.layerGroup().addTo(map);
 
   let pin = null;
   let circle = null;
@@ -87,6 +89,17 @@ export function initMap(elementId) {
         pane: 'poi', fill: false, color: '#d62728', weight: 3, interactive: false,
       }).addTo(highlightLayer);
     },
+    // Punkty firm (konkurencja): małe, kontrastowe kółka nad heksagonami.
+    setPoi(points) {
+      poiLayer.clearLayers();
+      for (const p of points) {
+        L.circleMarker([p.lat, p.lng], {
+          pane: 'poi', renderer: poiRenderer, radius: 4, color: '#fff', weight: 1,
+          fillColor: '#D85A30', fillOpacity: 0.95,
+        }).bindTooltip(p.name || 'bez nazwy').addTo(poiLayer);
+      }
+    },
+    onMoveEnd(cb) { map.on('moveend', cb); },
     flyTo(lat, lng, zoom) { map.flyTo([lat, lng], zoom); },
     getBbox() { const b = map.getBounds(); return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]; },
     getZoom() { return map.getZoom(); },
