@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.app.analysis.service import AnalysisParams, run_analysis
+from backend.app.config import ATTRIBUTION
 from backend.app.catalog import DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
 from backend.app.db import DatabaseMissing, cursor
 from etl.aggregate import table_exists
@@ -88,3 +89,18 @@ def poi(type_id: str = Query(alias="type"), bbox: str = Query()) -> dict:
         [type_id, min_lat, max_lat, min_lng, max_lng, POI_LIMIT + 1]).fetchall()
     return {"items": [{"lat": lat, "lng": lng, "name": name} for lat, lng, name in rows[:POI_LIMIT]],
             "truncated": len(rows) > POI_LIMIT}
+
+
+@router.get("/meta")
+def meta() -> dict:
+    """Skąd i kiedy pochodzą dane (stopka aplikacji) oraz tekst atrybucji."""
+    try:
+        con = cursor()
+    except DatabaseMissing:
+        raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
+    sources = []
+    if table_exists(con, "meta"):
+        for source, url, downloaded_at, rows in con.execute(
+                "SELECT source, url, downloaded_at, rows FROM meta ORDER BY source").fetchall():
+            sources.append({"source": source, "url": url, "downloaded_at": downloaded_at.isoformat(), "rows": rows})
+    return {"sources": sources, "attribution": ATTRIBUTION}

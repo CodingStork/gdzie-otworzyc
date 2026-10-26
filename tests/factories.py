@@ -20,9 +20,10 @@ def make_db(
     pois: list[tuple[str, float, float]] = (),
     permits: list[tuple[float, float, str, str, int]] = (),
     places: list[tuple[str, str, float, float]] = (),
+    meta: list[tuple[str, str, str, int]] = (),
 ) -> Path:
     """pop: h3 (res 8) → pop_total; pois: (type_id, lat, lng); permits: (lat, lng, 'YYYY-MM-01', kind, n);
-    places: (name, kind, lat, lng)."""
+    places: (name, kind, lat, lng); meta: (source, url, 'YYYY-MM-DD HH:MM:SS', rows)."""
     con = duckdb.connect(str(path))
 
     cols = ", ".join(f"{c} DOUBLE" for c in ["pop_total", *POP_SHARES])
@@ -46,6 +47,10 @@ def make_db(
         con.execute("CREATE TABLE places (name VARCHAR, kind VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR)")
         for name, kind, lat, lng in places:
             con.execute("INSERT INTO places VALUES (?, ?, ?, ?, ?)", [name, kind, lat, lng, h3.latlng_to_cell(lat, lng, 8)])
+
+    if meta:
+        con.execute("CREATE TABLE meta (source VARCHAR PRIMARY KEY, url VARCHAR, downloaded_at TIMESTAMP, rows BIGINT)")
+        con.executemany("INSERT INTO meta VALUES (?, ?, CAST(? AS TIMESTAMP), ?)", [list(m) for m in meta])
 
     build_aggregates(con)
     con.close()

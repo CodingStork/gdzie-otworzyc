@@ -115,3 +115,15 @@ def download_all(raw_dir: Path = RAW_DIR, force: bool = False) -> dict[str, Path
         "gunb_permits": permits,
         "gunb_notifications": notifications,
     }
+
+
+def raw_paths(raw_dir: Path = RAW_DIR) -> dict:
+    """Ścieżki plików po wypakowaniu (bez pobierania) — te same, które zwraca download_all."""
+    raw_dir = Path(raw_dir)
+    return {
+        "census_zip": raw_dir / "census.zip",
+        "census_parquet": raw_dir / "census.parquet",
+        "osm_pbf": raw_dir / "poland-latest.osm.pbf",
+        "gunb_permits": [raw_dir / "gunb" / f"wynik_{woj}.csv" for woj in GUNB_VOIVODESHIPS],
+        "gunb_notifications": [raw_dir / "gunb" / name.replace(".zip", ".csv") for name in GUNB_NOTIFICATION_FILES],
+    }
