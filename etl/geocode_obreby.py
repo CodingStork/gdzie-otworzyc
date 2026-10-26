@@ -116,7 +116,7 @@ def _resolve(uldk: UldkClient, obreb_id: str) -> tuple[str, str | None, float | 
         return None
 
 
-def geocode_missing(con: duckdb.DuckDBPyConnection, uldk: UldkClient, workers: int = 5, batch: int = 200) -> dict[str, int]:
+def geocode_missing(con: duckdb.DuckDBPyConnection, uldk: UldkClient, workers: int = 3, batch: int = 200) -> dict[str, int]:
     """Geokoduje obręby z `permits_raw`, których nie ma jeszcze w `obreb_geom`.
 
     Zapytania HTTP idą równolegle (workers wątków), ale do bazy pisze tylko wątek główny, po każdej
