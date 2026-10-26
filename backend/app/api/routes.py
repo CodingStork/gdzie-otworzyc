@@ -1,10 +1,14 @@
 """Endpointy REST aplikacji (prefiks /api)."""
-from fastapi import APIRouter, HTTPException, Query
+from functools import lru_cache
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.app.analysis.service import AnalysisParams, cached_analysis
-from backend.app.config import ATTRIBUTION
 from backend.app.catalog import DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
+from backend.app.config import ATTRIBUTION, USER_AGENT
 from backend.app.db import DatabaseMissing, cursor
+from backend.app.services.geocode import Geocoder, GeocoderUnavailable
 from etl.aggregate import table_exists
 
 router = APIRouter(prefix="/api")
@@ -104,3 +108,18 @@ def meta() -> dict:
                 "SELECT source, url, downloaded_at, rows FROM meta ORDER BY source").fetchall():
             sources.append({"source": source, "url": url, "downloaded_at": downloaded_at.isoformat(), "rows": rows})
     return {"sources": sources, "attribution": ATTRIBUTION}
+
+
+@lru_cache(maxsize=1)
+def get_geocoder() -> Geocoder:
+    """Jeden wspólny geokoder (z pamięcią podręczną i limitem zapytań) dla całej aplikacji."""
+    return Geocoder(httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=10.0))
+
+
+@router.get("/geocode")
+def geocode(q: str = "", geocoder: Geocoder = Depends(get_geocoder)) -> list[dict]:
+    """Podpowiedzi adresów: [{name, lat, lng}]."""
+    try:
+        return geocoder.search(q)
+    except GeocoderUnavailable:
+        raise HTTPException(status_code=502, detail="Wyszukiwarka adresów chwilowo niedostępna")
