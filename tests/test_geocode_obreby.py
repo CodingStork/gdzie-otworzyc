@@ -188,3 +188,42 @@ def test_build_permits_hex_aggregates_by_month_and_kind():
     rows = con.execute("SELECT CAST(month AS VARCHAR), kind, n FROM permits_r8 ORDER BY 1, 2").fetchall()
     assert rows == [("2026-01-01", "mf", 1), ("2026-01-01", "sf", 2), ("2026-02-01", "sf", 1)]
     assert n == 3
+
+
+# ---- Odporność na blokadę/śmieciowe odpowiedzi (ULDK potrafi przekierować na stronę-pułapkę) ----
+
+def test_redirect_is_an_error_not_missing(no_sleep):
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        return httpx.Response(302, headers={"Location": "https://integracja01.gugik.gov.pl/resp/uldk.php"})
+
+    with pytest.raises(UldkError):
+        UldkClient(_client(handler)).region("160602_4.0038")
+    assert len(calls) == 4                      # przekierowania nie śledzimy, ponawiamy jak błąd serwera
+
+
+def test_garbage_success_reply_is_an_error():
+    garbage = "0\n0101000020E6100000000000000080564000000000008056400101010101010101"
+    with pytest.raises(UldkError):
+        UldkClient(_client(lambda req: httpx.Response(200, text=garbage))).region("160602_4.0038")
+    with pytest.raises(UldkError):
+        UldkClient(_client(lambda req: httpx.Response(200, text="0"))).region("160602_4.0038")
+    with pytest.raises(UldkError):
+        UldkClient(_client(lambda req: httpx.Response(200, text="-1 Błąd serwera"))).region("160602_4.0038")
+    with pytest.raises(UldkError):
+        UldkClient(_client(lambda req: httpx.Response(200, text=""))).region("160602_4.0038")
+
+
+def test_geocode_missing_stops_when_server_blocks():
+    con = _con_with_permits([f"160602_4.{i:04d}" for i in range(1, 9)])
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        return httpx.Response(302, headers={"Location": "https://x/"})
+
+    counts = geocode_missing(con, UldkClient(_client(handler)), workers=1, batch=4)
+    assert counts["error"] == 4 and counts["missing"] == 0        # po pierwszej porcji z samymi błędami przerywamy
+    assert con.execute("SELECT COUNT(*) FROM obreb_geom").fetchall()[0][0] == 0

@@ -64,7 +64,10 @@ class UldkClient:
         params = {"request": request, "id": object_id, "result": result, "srid": "4326"}
         for attempt in range(len(RETRY_SLEEPS) + 1):
             try:
-                resp = self.client.get(self.base_url, params=params, headers={"User-Agent": USER_AGENT})
+                # Przekierowań NIE śledzimy: ULDK przekierowuje zablokowanych klientów na stronę-pułapkę
+                # ze śmieciową odpowiedzią — to ma być błąd (do ponowienia później), a nie „brak wyniku”.
+                resp = self.client.get(self.base_url, params=params, headers={"User-Agent": USER_AGENT},
+                                       follow_redirects=False)
                 if resp.status_code >= 500:
                     raise httpx.HTTPError(f"HTTP {resp.status_code}")
                 resp.raise_for_status()
@@ -74,15 +77,18 @@ class UldkClient:
                     raise UldkError(f"{request} {object_id}: {e}") from e
                 time.sleep(RETRY_SLEEPS[attempt])
         parsed = parse_uldk_response(resp.text)
-        if parsed is None:
-            if resp.text.lstrip().startswith("0"):
-                return None
-            if "brak wynik" not in resp.text.lower():
-                raise UldkError(f"{request} {object_id}: nieoczekiwana odpowiedź: {resp.text[:100]!r}")
+        if parsed is not None:
+            _, name, wkt = parsed
+            try:
+                lat, lng = wkt_to_latlng(wkt)
+            except Exception as e:   # śmieciowa geometria
+                raise UldkError(f"{request} {object_id}: nieczytelna geometria") from e
+            return name, lat, lng
+        # Za "brak wyniku" uznajemy tylko wyraźną odpowiedź „-1 brak wyników”; wszystko inne to błąd.
+        first_line = resp.text.strip().splitlines()[0] if resp.text.strip() else ""
+        if first_line.startswith("-1") and "brak wynik" in first_line.lower():
             return None
-        _, name, wkt = parsed
-        lat, lng = wkt_to_latlng(wkt)
-        return name, lat, lng
+        raise UldkError(f"{request} {object_id}: nieoczekiwana odpowiedź: {resp.text[:80]!r}")
 
     def region(self, obreb_id: str) -> tuple[str, float, float] | None:
         """Obręb ewidencyjny, np. '160602_4.0038' → (nazwa, lat, lng)."""
@@ -135,6 +141,11 @@ def geocode_missing(con: duckdb.DuckDBPyConnection, uldk: UldkClient, workers: i
                 rows.append((obreb_id, res[1], res[2], res[3], res[0]))
             if rows:
                 con.executemany("INSERT INTO obreb_geom VALUES (?, ?, ?, ?, ?)", rows)
+            if not rows:
+                # Cała porcja zakończyła się błędem: serwer prawdopodobnie nas blokuje. Przerywamy, żeby
+                # go nie męczyć i niczego nie zapisać błędnie — kolejne uruchomienie dokończy pracę.
+                print("ULDK nie odpowiada poprawnie (możliwa blokada) — przerywam; spróbuj ponownie za jakiś czas", flush=True)
+                break
             done = start + len(ids)
             elapsed = time.time() - started
             print(f"geokodowanie obrębów: {done}/{len(todo)} ({counts}), pozostało ~{elapsed / done * (len(todo) - done) / 60:.0f} min",

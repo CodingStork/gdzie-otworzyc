@@ -1,0 +1,73 @@
+import duckdb
+import pytest
+
+from etl.aggregate import build_aggregates
+from etl.sanity import THRESHOLDS, check
+
+SMALL = dict(THRESHOLDS, pop_min=100, pop_max=200, hairdressers_min=2, places_min=2, permits_sf_12m_min=3,
+             missing_geom_max_share=0.5)
+
+
+def _good_db():
+    con = duckdb.connect()
+    con.execute("CREATE TABLE hex_pop_r8 (h3 VARCHAR, pop_total DOUBLE, pop_f DOUBLE, pop_m DOUBLE, pop_lt15 DOUBLE, pop_1564 DOUBLE, pop_ge65 DOUBLE)")
+    con.execute("INSERT INTO hex_pop_r8 VALUES ('881e23c459fffff', 150, 1, 1, 1, 1, 1)")
+    con.execute("CREATE TABLE poi (osm_id VARCHAR, type_id VARCHAR, name VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR)")
+    con.execute("INSERT INTO poi VALUES ('n1','hairdresser','a',0,0,'881e23c459fffff'), ('n2','hairdresser','b',0,0,'881e23c459fffff')")
+    con.execute("CREATE TABLE places (name VARCHAR, kind VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR)")
+    con.execute("INSERT INTO places VALUES ('A','city',0,0,'x'), ('B','city',0,0,'x')")
+    con.execute("CREATE TABLE obreb_geom (obreb_id VARCHAR, name VARCHAR, lat DOUBLE, lng DOUBLE, status VARCHAR)")
+    con.execute("INSERT INTO obreb_geom VALUES ('1',NULL,0,0,'region'), ('2',NULL,0,0,'missing')")
+    con.execute("CREATE TABLE permits_r8 (h3 VARCHAR, month DATE, kind VARCHAR, n INTEGER)")
+    con.execute("INSERT INTO permits_r8 VALUES ('881e23c459fffff', DATE '2026-09-01', 'sf', 3), "
+                "('881e23c459fffff', DATE '2024-01-01', 'sf', 100)")     # stare pozwolenia nie liczą się do 12 mies.
+    build_aggregates(con)
+    return con
+
+
+def test_good_database_has_no_problems():
+    assert check(_good_db(), SMALL) == []
+
+
+def test_population_total_out_of_range():
+    con = _good_db()
+    con.execute("UPDATE hex_pop_r8 SET pop_total = 500")
+    problems = check(con, SMALL)
+    assert len(problems) >= 1 and any("ludno" in p.lower() for p in problems)
+
+
+def test_too_few_hairdressers_and_places():
+    con = _good_db()
+    con.execute("DELETE FROM poi")
+    con.execute("DELETE FROM places")
+    problems = check(con, SMALL)
+    assert any("hairdresser" in p for p in problems) and any("places" in p for p in problems)
+
+
+def test_too_many_missing_obreby():
+    con = _good_db()
+    con.execute("INSERT INTO obreb_geom VALUES ('3',NULL,NULL,NULL,'missing'), ('4',NULL,NULL,NULL,'missing')")
+    assert any("obręb" in p for p in check(con, dict(SMALL, missing_geom_max_share=0.05)))
+
+
+def test_recent_permits_below_threshold():
+    con = _good_db()
+    assert any("sf" in p for p in check(con, dict(SMALL, permits_sf_12m_min=10)))
+
+
+def test_missing_tables_are_reported_not_raised():
+    con = duckdb.connect()
+    problems = check(con, SMALL)
+    assert any("hex_pop_r8" in p for p in problems) and any("poi" in p for p in problems)
+
+
+def test_empty_r6_table_reported():
+    con = _good_db()
+    con.execute("DELETE FROM hex_pop_r6")
+    assert any("hex_pop_r6" in p for p in check(con, SMALL))
+
+
+def test_default_thresholds_match_plan():
+    assert (THRESHOLDS["pop_min"], THRESHOLDS["pop_max"]) == (36_900_000, 37_200_000)
+    assert THRESHOLDS["hairdressers_min"] == 8000 and THRESHOLDS["places_min"] == 40_000
+    assert THRESHOLDS["missing_geom_max_share"] == 0.05 and THRESHOLDS["permits_sf_12m_min"] == 50_000
