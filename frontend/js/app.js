@@ -29,7 +29,11 @@ function drawLayer() {
   const layer = LAYERS[currentLayer()];
   const breaks = state.result.stats[layer.breaks];
   view.setHexes(state.result.hexes, layer.index, breaks);
-  ui.renderLegend(layer.title, breaks);
+  // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
+  const period = state.result.permits_period;
+  const note = period && currentLayer() !== 'S'
+    ? `Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.` : '';
+  ui.renderLegend(layer.title, breaks, note);
 }
 
 function popupHtml(row) {

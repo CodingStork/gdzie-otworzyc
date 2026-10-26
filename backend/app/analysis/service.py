@@ -7,6 +7,7 @@ Schemat (dla trybu lokalnego, czyli punkt + promień):
   3. sumy ważone jądrem Gaussa: D (popyt w zasięgu) i S (konkurencja w zasięgu),
   4. wynik = D / (S + 1), percentyle i ranking top-N — tylko dla heksagonów w obszarze.
 """
+import datetime
 import math
 from dataclasses import dataclass
 from typing import Literal
@@ -51,15 +52,33 @@ def _fetch(con: duckdb.DuckDBPyConnection, sql: str, cells: list[str], params: l
         con.unregister("cells_df")
 
 
-def _demand_values(con, res: int, p: AnalysisParams, cells: list[str], warnings: list[str]) -> pd.DataFrame:
-    """Wartość czynnika popytu d_j w heksagonach (kolumny h3, d). Czynniki z pozwoleń — Task 15."""
+def _permit_window(con, res: int, months: int) -> tuple[datetime.date, datetime.date] | None:
+    """Okno czasowe pozwoleń: `months` miesięcy liczone wstecz od NAJNOWSZYCH danych (nie od dziś).
+
+    Zwraca (pierwszy miesiąc okna, ostatni miesiąc danych) albo None, gdy brak tabeli/danych.
+    """
+    table = f"permits_r{res}"
+    if not table_exists(con, table):
+        return None
+    newest = con.execute(f"SELECT MAX(month) FROM {table}").fetchall()[0][0]
+    if newest is None:
+        return None
+    index = newest.year * 12 + newest.month - 1 - (months - 1)
+    return datetime.date(index // 12, index % 12 + 1, 1), newest
+
+
+def _demand_values(con, res: int, p: AnalysisParams, cells: list[str], window) -> pd.DataFrame:
+    """Wartość czynnika popytu d_j w heksagonach (kolumny h3, d)."""
     demand = DEMANDS[p.demand_id]
     if demand.source == "census":
         # nazwa kolumny pochodzi z katalogu (nie od użytkownika) — bezpieczne w SQL
         return _fetch(con, f"SELECT t.h3, t.{demand.column} AS d FROM hex_pop_r{res} t "
                            f"JOIN cells_df c ON t.h3 = c.h3", cells)
-    warnings.append(PERMITS_MISSING_WARNING)
-    return _empty("d")
+    # Pozwolenia: suma liczby pozwoleń wybranych rodzajów (sf/mf) w oknie czasowym.
+    kinds = ", ".join("?" for _ in demand.kinds)
+    return _fetch(con, f"SELECT t.h3, SUM(t.n) AS d FROM permits_r{res} t JOIN cells_df c ON t.h3 = c.h3 "
+                       f"WHERE t.kind IN ({kinds}) AND t.month >= ? GROUP BY t.h3",
+                  cells, [*demand.kinds, window[0]])
 
 
 def _competitor_counts(con, res: int, type_id: str, cells: list[str]) -> pd.DataFrame:
@@ -110,6 +129,21 @@ def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * 6371 * math.asin(math.sqrt(a))
 
 
+def _period(window) -> dict | None:
+    if window is None:
+        return None
+    return {"from": window[0].strftime("%Y-%m"), "to": window[1].strftime("%Y-%m")}
+
+
+def _empty_result(res: int, h_km: float, warnings: list[str], window=None) -> dict:
+    result = {"res": res, "bandwidth_km": h_km, "hexes": [], "top": [], "warnings": warnings,
+              "stats": {"n_hex": 0, "n_competitors": 0, "total_demand": 0.0,
+                        "score_breaks": [], "D_breaks": [], "S_breaks": []}}
+    if window is not None:
+        result["permits_period"] = _period(window)
+    return result
+
+
 def _round1(x) -> float:
     return round(float(x), 1)
 
@@ -129,6 +163,13 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
     radius_m = p.radius_km * 1000
     reach_m = radius_m + 3 * h_km * 1000   # obszar + bufor 3h (jądro jest obcięte dla d > 3h)
 
+    window = None
+    if DEMANDS[p.demand_id].source == "permits":
+        window = _permit_window(con, res, p.months)
+        if window is None:   # ETL pozwoleń jeszcze nie działał — czytelne ostrzeżenie zamiast błędu
+            warnings.append(PERMITS_MISSING_WARNING)
+            return _empty_result(res, h_km, warnings)
+
     # Heksagony w pobliżu punktu. Pierścienie H3 leżą w odległości od 0,87·k·odstęp do k·odstęp
     # od środka, stąd współczynnik 1,16 — żeby zasięg na pewno objął cały okrąg buforu.
     center = h3.latlng_to_cell(p.lat, p.lng, res)
@@ -139,7 +180,7 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
     # są punktami źródłowymi i kandydatami do wyświetlenia — dzięki temu morze i teren
     # za granicą nie dostają heksagonów.
     pop_cells = _fetch(con, f"SELECT t.h3 FROM hex_pop_r{res} t JOIN cells_df c ON t.h3 = c.h3", candidates)
-    demand = _demand_values(con, res, p, candidates, warnings)
+    demand = _demand_values(con, res, p, candidates, window)
     comp = _competitor_counts(con, res, p.type_id, candidates)
 
     cells = (pop_cells[["h3"]].merge(demand[["h3"]], how="outer", on="h3")
@@ -147,12 +188,9 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
     cells = cells.merge(demand, how="left", on="h3").merge(comp, how="left", on="h3").fillna({"d": 0.0, "s": 0.0})
     cells = cells.reset_index(drop=True)
 
-    empty = {"res": res, "bandwidth_km": h_km, "hexes": [], "top": [], "warnings": warnings,
-             "stats": {"n_hex": 0, "n_competitors": 0, "total_demand": 0.0,
-                       "score_breaks": [], "D_breaks": [], "S_breaks": []}}
     if cells.empty:
         warnings.append(NO_DEMAND_WARNING)
-        return empty
+        return _empty_result(res, h_km, warnings, window)
 
     latlng = np.array([h3.cell_to_latlng(c) for c in cells["h3"]])
     xy = to_metric(latlng[:, 0], latlng[:, 1])
@@ -193,7 +231,7 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
         top.append({"h3": area_h3[i], "lat": lat, "lng": lng, "name": name,
                     "score": _round1(sc[i]), "D": _round1(D[i]), "S": _round1(S[i])})
 
-    return {
+    result = {
         "res": res,
         "bandwidth_km": h_km,
         "hexes": hexes,
@@ -208,3 +246,6 @@ def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
         },
         "warnings": warnings,
     }
+    if window is not None:
+        result["permits_period"] = _period(window)
+    return result
