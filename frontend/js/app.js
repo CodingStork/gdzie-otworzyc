@@ -84,9 +84,10 @@ function collapseSheetOnMobile() {
 function writeHash() {
   const req = state.request;   // parametry wyniku widocznego na mapie (formularz mógł się od tego czasu zmienić)
   const hash = new URLSearchParams({
-    type: req.type, demand: req.demand, bw: req.bandwidth_km, m: req.months || '',
+    type: req.type, demand: req.demand, bw: req.bandwidth_km,
     pl: req.scope === 'poland' ? 1 : 0, layer: currentLayer(),
   });
+  if (req.months) hash.set('m', req.months);   // okres tylko dla czynników z pozwoleń
   if (req.scope !== 'poland') {
     hash.set('lat', Number(req.lat).toFixed(5));
     hash.set('lng', Number(req.lng).toFixed(5));
@@ -203,6 +204,9 @@ ui.initSearch((place) => {
   setPoint(place.lat, place.lng);
   view.flyTo(place.lat, place.lng, 12);
 });
+
+// Wklejenie innego linku w tej samej karcie zmienia tylko hash (bez przeładowania) — odtwórz widok.
+window.addEventListener('hashchange', () => { if (applyHash()) runAnalysis(); });
 
 getMeta().then(ui.renderFooter).catch(() => { /* stopka jest dodatkiem — brak metadanych nie przeszkadza */ });
 getCatalog()

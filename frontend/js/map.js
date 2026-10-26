@@ -71,8 +71,10 @@ export function initMap(elementId) {
     },
     clearPin() { if (pin) { pin.remove(); pin = null; } },
     invalidateSize() { map.invalidateSize(); },
-    fitArea() { if (circle) map.fitBounds(circle.getBounds()); },
-    fitPoland() { map.fitBounds([[49.0, 14.1], [54.85, 24.15]]); },
+    // Dopasowanie widoku bez animacji: animowany zoom opiera się na zdarzeniu końca przejścia CSS, które nie
+    // dochodzi, gdy strona jest w tle lub rozmiar mapy zmienia się w trakcie — mapa zostawała wtedy w stanie pośrednim.
+    fitArea() { if (circle) map.fitBounds(circle.getBounds(), { animate: false }); },
+    fitPoland() { map.fitBounds([[49.0, 14.1], [54.85, 24.15]], { animate: false }); },
     // rows: wiersze z API [h3, score, D, S, d, s, pct]; valueIndex wskazuje, którą kolumnę kolorować.
     setHexes(rows, valueIndex, breaks, colors) {
       hexLayer.clearLayers();
