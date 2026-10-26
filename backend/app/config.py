@@ -13,7 +13,7 @@ FRONTEND_DIR = ROOT / "frontend"
 USER_AGENT = "GdzieOtworzyc/0.1 (projekt studencki)"
 
 ATTRIBUTION = (
-    "© OpenStreetMap contributors © CARTO | "
+    "© OpenStreetMap contributors © Esri | "
     "Ludność: © EU, Eurostat GISCO (Census 2021, zmodyfikowane) | "
     "Pozwolenia: GUNB RWDZ | Geokodowanie: GUGiK ULDK"
 )

@@ -1,3 +1,79 @@
 <!doctype html>
-<html lang="pl"><head><meta charset="utf-8"><title>Gdzie otworzyć?</title></head>
-<body><h1>Gdzie otworzyć?</h1></body></html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gdzie otworzyć?</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Panel boczny: na telefonie staje się arkuszem na dole ekranu -->
+  <aside id="sidebar">
+    <button id="sheet-handle" type="button" aria-label="Zwiń lub rozwiń panel"></button>
+    <h1>Gdzie otworzyć?</h1>
+
+    <label for="type-select">Typ działalności</label>
+    <select id="type-select"></select>
+
+    <label for="demand-select">Porównaj z</label>
+    <select id="demand-select"></select>
+
+    <div id="months-row" hidden>
+      <label for="months-select">Okres pozwoleń</label>
+      <select id="months-select">
+        <option value="12">ostatnie 12 miesięcy</option>
+        <option value="24" selected>ostatnie 24 miesiące</option>
+        <option value="36">ostatnie 36 miesięcy</option>
+      </select>
+    </div>
+
+    <fieldset id="area-box">
+      <legend>Obszar</legend>
+      <div id="search-wrap">
+        <input id="search-input" type="search" placeholder="Wpisz adres lub miejscowość" autocomplete="off">
+        <ul id="search-results" hidden></ul>
+      </div>
+      <p class="hint">…albo kliknij punkt na mapie.</p>
+      <label for="radius-input">Promień: <b id="radius-value">10</b> km</label>
+      <input id="radius-input" type="range" min="1" max="50" step="1" value="10">
+      <label class="check"><input id="poland-checkbox" type="checkbox"> Cała Polska</label>
+    </fieldset>
+
+    <details id="advanced">
+      <summary>Zaawansowane</summary>
+      <label for="bandwidth-input">Zasięg klienta: <b id="bandwidth-value">1,5</b> km</label>
+      <input id="bandwidth-input" type="range" min="0.5" max="20" step="0.5" value="1.5">
+    </details>
+
+    <button id="analyze-btn" type="button">Analizuj</button>
+    <div id="error" role="alert" hidden></div>
+
+    <h2>Najlepsze miejsca</h2>
+    <ol id="top-list"><li class="muted">Wybierz punkt i kliknij „Analizuj”.</li></ol>
+
+    <div id="warnings" hidden></div>
+    <footer id="meta-footer"></footer>
+  </aside>
+
+  <main id="map"></main>
+
+  <!-- Przełącznik warstw i legenda (kontrolki nad mapą) -->
+  <div id="map-controls">
+    <div id="layer-switch">
+      <label><input type="radio" name="layer" value="score" checked> Okazja</label>
+      <label><input type="radio" name="layer" value="D"> Popyt</label>
+      <label><input type="radio" name="layer" value="S"> Konkurencja</label>
+    </div>
+    <label class="check"><input id="poi-checkbox" type="checkbox"> Punkty firm</label>
+    <label class="opacity">Przezroczystość
+      <input id="opacity-input" type="range" min="0.2" max="1" step="0.05" value="0.7">
+    </label>
+    <div id="legend" hidden></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
