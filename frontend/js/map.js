@@ -5,7 +5,6 @@
 // w SAMĄ MAPĘ (→ dymek z liczbami). Leaflet rysuje warstwy canvas jako osobny <canvas> na całą mapę dla
 // każdego pane'u — taki canvas przechwytuje kliknięcia, więc: heksagony (canvas) mają pointer-events: none
 // (patrz style.css), a punkty firm i znaczniki to elementy SVG/DOM, które reagują tylko na siebie.
-import { gradientColor } from './colors.js';
 
 const ATTRIBUTION =
   '© OpenStreetMap contributors © Esri | Ludność: © EU, Eurostat GISCO (Census 2021, zmodyfikowane) | ' +
@@ -47,6 +46,7 @@ export function initMap(elementId) {
   const labels = map.createPane('labels');
   labels.style.zIndex = 450;
   labels.style.pointerEvents = 'none';
+  map.createPane('area').style.zIndex = 430;   // okrąg obszaru: nad heksagonami, pod etykietami
   map.createPane('poi').style.zIndex = 460;
   map.createPane('top').style.zIndex = 470;
   L.tileLayer(ESRI + 'World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
@@ -69,6 +69,9 @@ export function initMap(elementId) {
   // Punkty firm: renderer SVG (nie canvas!) — reaguje tylko na kliknięcia w same kółka.
   const poiRenderer = L.svg({ pane: 'poi' });
   const poiLayer = L.layerGroup().addTo(map);
+  // Okrąg obszaru analizy: też SVG (nie canvas) i nieinteraktywny, żeby nie przechwytywał kliknięć w mapę.
+  const areaRenderer = L.svg({ pane: 'area' });
+  let areaCircle = null;
 
   // Gdy zmieni się rozmiar kontenera mapy (np. zwinięcie panelu na telefonie), Leaflet musi przeliczyć rozmiar.
   new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById(elementId));
@@ -109,9 +112,9 @@ export function initMap(elementId) {
       return { bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], zoom: Math.round(map.getZoom()), center: [c.lat, c.lng] };
     },
 
-    // rows: wiersze z API [h3, score, D, S, pct_score, pct_D, pct_S]; pctIndex wskazuje kolumnę percentyla do kolorowania.
+    // rows: wiersze z API [h3, score, D, S, ...]; colorOf(row) zwraca kolor wypełnienia heksagonu.
     // fade: true przy zmianie rozdzielczości (dłuższe przejście), false przy samym przesunięciu.
-    setHexes(rows, pctIndex, { fade = false } = {}) {
+    setHexes(rows, colorOf, { fade = false } = {}) {
       const ms = fade ? FADE_LOD_MS : FADE_PAN_MS;
       const old = slots[active];
       const next = slots[1 - active];
@@ -121,7 +124,7 @@ export function initMap(elementId) {
         // Kształt heksagonu liczy przeglądarka z identyfikatora H3 (serwer nie wysyła geometrii).
         L.polygon(h3.cellToBoundary(row[0]), {
           pane: next.paneName, renderer: next.renderer, interactive: false,
-          weight: 0.5, color: '#fff', opacity: 0.6, fillColor: gradientColor(row[pctIndex]), fillOpacity: 1,
+          weight: 0.5, color: '#fff', opacity: 0.6, fillColor: colorOf(row), fillOpacity: 1,
         }).addTo(next.group);
       }
       // Nowa siatka zaczyna od przezroczystości 0 i w następnej klatce płynnie rośnie do wartości suwaka,
@@ -145,6 +148,19 @@ export function initMap(elementId) {
     setHexOpacity(value) {
       opacity = value;
       if (hasHexes) slots[active].pane.style.opacity = value;
+    },
+
+    // Okrąg obszaru analizy (promień od wyszukanej miejscowości) i dopasowanie mapy do niego — bez animacji.
+    setArea(lat, lng, radiusKm, { fit = true } = {}) {
+      if (areaCircle) areaCircle.remove();
+      areaCircle = L.circle([lat, lng], {
+        radius: radiusKm * 1000, renderer: areaRenderer, interactive: false,
+        color: '#253494', weight: 1.5, fill: false,
+      }).addTo(map);
+      if (fit) map.fitBounds(areaCircle.getBounds(), { animate: false, padding: [20, 20] });
+    },
+    clearArea() {
+      if (areaCircle) { areaCircle.remove(); areaCircle = null; }
     },
 
     // Dymek z liczbami + okrąg zasięgu. Zamknięcie dymku usuwa okrąg.

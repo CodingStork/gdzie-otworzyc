@@ -142,3 +142,9 @@ Wbudowana przeglądarka, okno 1280×800 i emulacja telefonu 375×812; zrzuty w `
 - Zasięg < 1 km dla pozwoleń: suwak pokazuje wybraną wartość, a faktyczny zasięg (1 km) podaje notatka i dymek.
 - Eurostat przypisuje komórki graniczne (np. „DE-PL”) do Polski w całości — pojedyncze heksagony tuż za granicą (np. po niemieckiej stronie Nysy) mają więc ludność i mogą trafić do top-5; to ograniczenie danych z v1.
 - Top-5 jest liczone dla widocznego obszaru, więc po „przelocie” do wskazanego miejsca lista się zmienia.
+
+## v2.1 — skala kolorów i promień od miejscowości
+
+- Kolor heksagonu liczy teraz przeglądarka z **wartości w skali logarytmicznej** (zakres = 2.–98. percentyl dodatnich wartości rysowanych heksagonów), a nie z percentyla z API. Powód: dla dzieci w Warszawie (zasięg 2,5 km, zoom 10) punkt pod Pruszkowem (ok. 4 600) i centrum (ok. 19 000) miały percentyle 93 i 100, czyli prawie ten sam kolor. Pole `legend` i percentyle w odpowiedzi `/api/view` zostały (nic ich już nie koloruje; testy API bez zmian).
+- `/api/view` przyjmuje opcjonalne `area=lat,lng,promień_km` (promień 1–50 km, punkt w Polsce); działa wyłącznie przy wyborze top-5 (poza cache rdzenia), więc nie zmienia czasu odpowiedzi.
+- Weryfikacja w przeglądarce (okno 1024×768 — tyle ma panel podglądu): zrzuty `docs/screenshots/v21-*.png`. Rozkład wartości na kwartyle skali (dzieci, Warszawa, zasięg 2,5 km): z12 14/15/16/55%, z10 49/29/14/8%, z9 45/39/9/6%, z7 16/51/24/10% — na każdym poziomie widać zróżnicowanie.

@@ -13,12 +13,20 @@
     <button id="sheet-handle" type="button" aria-label="Zwiń lub rozwiń panel"></button>
     <h1>Gdzie otworzyć?</h1>
 
-    <!-- Obszar analizy = to, co widać na mapie; wyszukiwarka tylko przenosi mapę w wybrane miejsce -->
+    <!-- Obszar analizy = to, co widać na mapie; wyszukiwarka przenosi mapę w wybrane miejsce,
+         a opcjonalny promień ogranicza analizę do okręgu wokół niego -->
     <div id="search-wrap">
       <input id="search-input" type="search" placeholder="Przejdź do adresu lub miejscowości" autocomplete="off"
              aria-label="Przejdź do adresu lub miejscowości">
       <ul id="search-results" hidden></ul>
     </div>
+    <div class="area-row">
+      <span>Promień (opcjonalnie):</span>
+      <input id="area-radius" type="number" min="1" max="50" step="1" disabled aria-label="Promień od wybranego miejsca w km">
+      <span>km</span>
+      <button id="area-clear" type="button" disabled aria-label="Wyczyść promień">×</button>
+    </div>
+    <div id="area-hint" class="hint">Wybierz miejsce z wyszukiwarki, aby ograniczyć mapę do okręgu.</div>
 
     <label for="type-select">Typ działalności</label>
     <select id="type-select"></select>

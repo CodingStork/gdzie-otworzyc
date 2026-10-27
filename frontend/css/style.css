@@ -38,6 +38,14 @@ input[type=range] { width: 100%; }
 #meta-footer { margin-top: 18px; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
 
 #search-wrap { margin-bottom: 4px; }
+.area-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; }
+.area-row input { width: 64px; padding: 5px 6px; border: 1px solid #bbc; border-radius: 6px; font-size: 14px; }
+.area-row button {
+  width: 24px; height: 24px; padding: 0; border: 1px solid #bbc; border-radius: 50%; background: #fff;
+  font-size: 15px; line-height: 20px; cursor: pointer;
+}
+.area-row button:disabled, .area-row input:disabled { opacity: .5; cursor: default; }
+#area-hint { margin: 4px 0 0; }
 .info { margin-top: 8px; padding: 8px; border-radius: 6px; background: #eef1fb; color: #2a3470; }
 #notes { margin-top: 10px; color: var(--muted); font-size: 12.5px; }
 #notes p { margin: 4px 0; }
@@ -73,14 +81,13 @@ label.disabled { opacity: .4; }
   background: #d62728; color: #fff; font: 700 12px/1 system-ui, sans-serif; border: 2px solid #fff; box-shadow: 0 1px 4px #0006;
 }
 
-/* Legenda: pionowy gradient z podpisami przy odpowiednich percentylach */
+/* Legenda: pionowy gradient z podpisami „okrągłych” wartości (skala logarytmiczna) */
 #legend { margin-top: 8px; font-size: 12px; }
 #legend .legend-title { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
 #legend .legend-body { display: flex; gap: 8px; margin: 8px 0 6px; }
 #legend .bar { width: 14px; height: 150px; border-radius: 3px; border: 1px solid #0002; flex: none; }
 #legend .stops { position: relative; height: 150px; flex: 1; }
 #legend .stop { position: absolute; left: 0; transform: translateY(50%); white-space: nowrap; line-height: 1; }
-#legend .stop small { color: var(--muted); }
 #legend .tick { display: inline-block; width: 5px; height: 1px; background: #556; margin-right: 4px; vertical-align: middle; }
 #legend .note { margin-top: 6px; color: var(--muted); }
 
@@ -88,6 +95,10 @@ label.disabled { opacity: .4; }
 .hex-popup .strong { font-weight: 700; margin: 3px 0; }
 .hex-popup ul { margin: 2px 0 0; padding-left: 18px; }
 .hex-popup .note { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.hex-popup .link-button {
+  margin-top: 8px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit;
+  text-decoration: underline; cursor: pointer;
+}
 
 #search-wrap { position: relative; }
 #search-results {
@@ -120,7 +131,6 @@ label.disabled { opacity: .4; }
   #map-controls { top: 8px; right: 8px; max-width: 170px; font-size: 12px; }
   #legend { margin-top: 4px; font-size: 11px; }
   #legend .bar, #legend .stops { height: 90px; }
-  #legend .stop:nth-child(2) { display: none; }   /* podpis 90% zlewa się z maksimum na niskim pasku */
   #legend .legend-body { margin: 4px 0 2px; }
   #map-controls .opacity { display: none; }   /* na telefonie oszczędzamy miejsce nad mapą */
   #layer-switch label { font-size: 12px; }

@@ -2,7 +2,7 @@
 
 Aplikacja webowa, która na mapie Polski pokazuje, **gdzie jest dużo potencjalnych klientów i mało konkurencji**. Projekt zaliczeniowy z przedmiotu „Analiza danych przestrzennych”.
 
-Wybierasz typ działalności (16 typów) i/lub czynnik popytu (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę), ustawiasz **zasięg klienta** (0,1–20 km) i oglądasz mapę. Obszar analizy to **widoczny fragment mapy** — wynik odświeża się sam po przesunięciu lub przybliżeniu. Heksagony są tym drobniejsze, im bardziej przybliżysz mapę. Kolor to płynny gradient wg pozycji miejsca w rankingu widocznego obszaru, a kliknięcie mapy pokazuje dymek z dokładnymi liczbami dla klikniętego punktu.
+Wybierasz typ działalności (16 typów) i/lub czynnik popytu (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę), ustawiasz **zasięg klienta** (0,1–20 km) i oglądasz mapę. Obszar analizy to **widoczny fragment mapy** — wynik odświeża się sam po przesunięciu lub przybliżeniu. Heksagony są tym drobniejsze, im bardziej przybliżysz mapę. Kolor to płynny gradient wg wartości w skali logarytmicznej (dopasowanej do widocznego obszaru), a kliknięcie mapy pokazuje dymek z dokładnymi liczbami dla klikniętego punktu.
 
 ![Warszawa — fryzjer i mieszkańcy, zasięg 0,5 km](docs/screenshots/v2-warszawa-fryzjer-z13.png)
 
@@ -11,6 +11,7 @@ Wybierasz typ działalności (16 typów) i/lub czynnik popytu (ludność ze spis
 - **Tryby jednego wyboru:** sam typ działalności → mapa **konkurencji** („gdzie są fryzjerzy”); sam czynnik popytu → mapa **popytu** („gdzie mieszka dużo seniorów”); oba → warstwy **Okazja / Popyt / Konkurencja**. Pytajniki „?” obok warstw, zasięgu i legendy wyjaśniają, co pokazują.
 - **Zasięg klienta:** suwak logarytmiczny 0,1–20 km (salon: ok. 1,5 km, market budowlany: 10–20 km). Małe wartości dają ostrą mapę pojedynczych ulic.
 - **Poruszanie się:** przeciągnij i przybliżaj mapę albo wpisz adres w polu na górze panelu (mapa przeskoczy w to miejsce). Link w pasku adresu zapisuje cały widok.
+- **Promień od miejscowości (opcjonalnie):** po wybraniu miejsca z wyszukiwarki (albo „Ustaw jako środek” w dymku punktu) wpisz promień 1–50 km — na mapie pojawi się okrąg, zobaczysz tylko heksagony w jego środku, kolory i top-5 będą liczone tylko z nich. Przycisk „×” czyści promień.
 - **Klik w mapę:** dymek z liczbą mieszkańców i firm w okręgu zasięgu, wynikiem „klienci na firmę po otwarciu Twojej” i 5 najbliższymi konkurentami; na mapie rysuje się okrąg zasięgu.
 - **Najlepsze miejsca:** 5 ponumerowanych miejsc w widocznym obszarze (klik w znacznik lub listę przybliża mapę).
 
@@ -45,7 +46,7 @@ Najważniejsze decyzje metodyczne (szczegółowo w [docs/sciaga-do-obrony.md](do
 
 - **Metoda dasymetryczna:** ludność ze spisu (kwadraty 1 km, EPSG:3035) rozkładamy na heksagony H3 **res 9** (~0,1 km²) proporcjonalnie do wagi budynków mieszkalnych z OpenStreetMap (powierzchnia × kondygnacje × współczynnik typu). Komórki bez budynków rozkładamy równomiernie.
 - **Poziomy szczegółowości (LOD):** siatka H3 res 9 → 5, rysowana w rozdzielczości zależnej od zoomu (zoom ≥ 12 → res 9, 10–11 → 8, 9 → 7, 7–8 → 6, ≤ 6 → 5). Liczymy na najdrobniejszej rozdzielczości, na jaką pozwala koszt, i agregujemy średnią ważoną liczbą mieszkańców; przy zmianie poziomu siatki płynnie się zamieniają.
-- **Gradient wg percentyla** (YlGnBu): kolor = pozycja w rankingu widocznego obszaru; legenda podaje wartości dla min / 25% / mediany / 75% / 90% / max.
+- **Gradient w skali logarytmicznej** (YlGnBu): kolor zależy od wartości (nie od rankingu), skala to 2.–98. percentyl dodatnich wartości widocznych heksagonów; każdy krok koloru ≈ podwojenie wartości. Legenda podaje „okrągłe” wartości (1–2–5 × 10^n). Percentyl ściskałby ogon rozkładu — miasto i przedmieścia dostawałyby ten sam kolor.
 - **Cache i przyciąganie bbox** do siatki: małe przesunięcie mapy nie liczy wyniku od nowa i nie zmienia kolorów.
 - **Odległości w EPSG:2180** (układ metryczny dla Polski), nie w stopniach; bufor *r* wokół widoku usuwa efekt krawędzi.
 - **Top-5** z odstępem ≥ max(2*r*, 1/6 przekątnej widoku) (non-maximum suppression) i z odrzuceniem terenów bez ludności.
@@ -127,7 +128,7 @@ Aplikacja działa na komputerze domowym; z laptopa (np. na uczelni) otwierasz j�
 - **Spis ludności jest z 2021 r.**; uzupełniają go pozwolenia na budowę.
 - **Pozwolenie na budowę ≠ wybudowany dom** (budowa trwa 1–3 lata, część nie rusza), a lokalizacja jest z dokładnością do obrębu ewidencyjnego (miasto: osiedle, wieś: cała wieś) — dlatego zasięg dla nowych domów wynosi co najmniej 1 km.
 - **Ludność w heksagonach to szacunek modelowy** (metoda dasymetryczna): spis podaje tylko kwadraty 1 km, a rozkład wewnątrz kwadratu wynika z wag budynków OSM (nie znamy liczby mieszkań w budynku).
-- **Kolory są względne dla widoku** (percentyl), a liczby „klientów na firmę” są zawyżone, bo OSM ma ok. 1/3–1/4 firm — mapę czytamy porównawczo.
+- **Kolory są względne dla widoku** (skala logarytmiczna dopasowana do widocznego obszaru), a liczby „klientów na firmę” są zawyżone, bo OSM ma ok. 1/3–1/4 firm — mapę czytamy porównawczo.
 - Liczba „nowych budynków wielorodzinnych” to liczba inwestycji, nie mieszkań (rejestr nie podaje liczby lokali).
 - Wynik jest rankingiem pomocniczym, nie prognozą zysku.
 

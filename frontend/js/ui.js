@@ -1,6 +1,6 @@
 // Panel boczny: formularz (typ, popyt, zasięg), pytajniki z wyjaśnieniami, legenda, lista najlepszych miejsc, dymek punktu.
 import { geocode } from './api.js';
-import { gradientCss } from './colors.js';
+import { gradientCss, niceTicks } from './colors.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -20,8 +20,8 @@ const HELP = {
   S: 'Ile firm wybranego typu jest w zasięgu od danego miejsca. Dane z OpenStreetMap — mogą być niepełne.',
   range: 'Z jak daleka przychodzą klienci. Fryzjer czy sklep spożywczy: kilkaset metrów do 2 km; market budowlany czy brukarz: 10–20 km. ' +
     'Mały zasięg daje ostrą mapę pokazującą pojedyncze ulice, duży — ogólny obraz okolicy.',
-  legend: 'Kolor pokazuje pozycję miejsca w rankingu widocznego obszaru: najjaśniejszy to najniższe wartości, najciemniejszy — najwyższe. ' +
-    'Dokładne liczby zobaczysz po kliknięciu mapy.',
+  legend: 'Kolor pokazuje wartość w skali logarytmicznej: każdy krok koloru to mniej więcej podwojenie wartości. ' +
+    'Skala dopasowuje się do widocznego obszaru (albo wybranego promienia). Dokładne liczby zobaczysz po kliknięciu mapy.',
 };
 
 // Pytajnik: przycisk .help[data-help]. Podpowiedź pokazuje się po najechaniu lub kliknięciu,
@@ -211,22 +211,26 @@ export function currentLayer() {
   return document.querySelector('input[name=layer]:checked').value;
 }
 
-// ---- Legenda: pionowy pasek gradientu z podpisami (min, 25%, mediana, 75%, 90%, max) ----
+// ---- Legenda: pionowy pasek gradientu w skali logarytmicznej z podpisami „okrągłych” wartości (1–2–5 × 10^n) ----
 
-const LEGEND_STOPS = [
-  { p: 100, label: 'maks.' }, { p: 90, label: '90%' }, { p: 75, label: '75%' },
-  { p: 50, label: 'mediana' }, { p: 25, label: '25%' }, { p: 0, label: 'min.' },
-];
+// Liczba miejsc po przecinku zależnie od wielkości (0,37 → „0,37”, 4,2 → „4,2”, 130 → „130”).
+const legendDigits = (v) => (v < 1 ? 2 : v < 10 ? 1 : 0);
+// Końce skali to percentyle 2 i 98 — podajemy je z dokładnością do 2 cyfr, żeby nie sugerować fałszywej precyzji.
+const twoDigits = (v) => Number(v.toPrecision(2));
 
-// values: legend[m] z API = wartości dla percentyli [0, 25, 50, 75, 90, 100].
-export function renderLegend(title, values, note = '') {
+// scale: { lo, hi } z logScale() — wartości, przy których kolor jest najjaśniejszy / najciemniejszy.
+export function renderLegend(title, scale, note = '') {
   const el = $('legend');
-  if (!values || !values.length) { el.hidden = true; return; }
-  const digits = (v) => (Math.abs(v) < 10 ? 1 : 0);
-  const rows = LEGEND_STOPS.map((s) => {
-    const v = values[[0, 25, 50, 75, 90, 100].indexOf(s.p)];
-    return `<div class="stop" style="bottom:${s.p}%"><span class="tick"></span>${fmt(v, digits(v))} <small>${s.label}</small></div>`;
-  }).join('');
+  if (!scale) { el.hidden = true; return; }
+  const label = (prefix, v) => `${prefix}${fmt(v, legendDigits(v))}`;
+  const stops = [{ t: 1, text: label('≥ ', twoDigits(scale.hi)) }, { t: 0, text: label('≤ ', twoDigits(scale.lo)) }];
+  if (scale.hi > scale.lo) {
+    // Na telefonie pasek jest niski: mniej podpisów i większy odstęp od końców, żeby się nie zlewały.
+    const narrow = window.innerWidth < 768;
+    for (const tick of niceTicks(scale, narrow ? 2 : 5, narrow ? 0.2 : 0.1)) stops.push({ t: tick.t, text: label('', tick.v) });
+  }
+  const rows = stops.map((s) =>
+    `<div class="stop" style="bottom:${(s.t * 100).toFixed(1)}%"><span class="tick"></span>${s.text}</div>`).join('');
   el.innerHTML = `<div class="legend-title"><b>${title}</b> <button type="button" class="help" data-help="legend" aria-label="Jak czytać kolory?">?</button></div>` +
     `<div class="legend-body"><div class="bar" style="background:${gradientCss('to top')}"></div><div class="stops">${rows}</div></div>` +
     (note ? `<div class="note"></div>` : '');
@@ -299,7 +303,8 @@ const dist = (m) => (m >= 1000 ? `${fmt(m / 1000, 1)} km` : `${fmt(m)} m`);
 const roundEstimate = (n) => (n >= 1000 ? Math.round(n / 100) * 100 : Math.round(n / 10) * 10);
 
 // Zwraca element DOM (tekst wstawiamy przez textContent — nazwy firm z OSM nie są HTML-em).
-export function pointPopup(d) {
+// onSetCenter: wywoływane po kliknięciu „Ustaw jako środek” (promień od tego punktu).
+export function pointPopup(d, onSetCenter) {
   const box = document.createElement('div');
   const add = (text, bold = false) => {
     const p = document.createElement('div');
@@ -328,6 +333,14 @@ export function pointPopup(d) {
     box.append(ul);
   }
   for (const note of d.notes || []) add(note).className = 'note';
+  if (onSetCenter) {
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'link-button';
+    link.textContent = 'Ustaw jako środek';
+    link.addEventListener('click', onSetCenter);
+    box.append(link);
+  }
   return box;
 }
 
@@ -390,6 +403,37 @@ export function initSearch(onPick) {
   });
   input.addEventListener('blur', hide);
 }
+
+// ---- Opcjonalny promień od wyszukanej miejscowości (1–50 km) ----
+
+const AREA_MIN = 1;
+const AREA_MAX = 50;
+
+// onChange(): wywoływane po zmianie albo wyczyszczeniu promienia (pole jest aktywne dopiero po wybraniu środka).
+export function initArea(onChange) {
+  $('area-radius').addEventListener('change', () => { $('area-radius').value = areaRadius() ?? ''; onChange(); });
+  $('area-clear').addEventListener('click', () => { $('area-radius').value = ''; onChange(); });
+}
+
+// Promień z pola jako liczba całkowita 1–50 albo null (puste lub błędne pole = brak obszaru).
+export function areaRadius() {
+  const value = Math.round(Number($('area-radius').value));
+  if (!$('area-radius').value || !Number.isFinite(value)) return null;
+  return Math.min(AREA_MAX, Math.max(AREA_MIN, value));
+}
+
+export function setAreaRadius(km) {
+  $('area-radius').value = km ? String(km) : '';
+}
+
+// Pole promienia jest aktywne, gdy jest wybrany środek (miejsce z wyszukiwarki albo punkt z dymku).
+export function setAreaCenter(name) {
+  $('area-radius').disabled = !name;
+  $('area-clear').disabled = !name;
+  $('area-hint').textContent = name ? `Środek: ${name}` : 'Wybierz miejsce z wyszukiwarki, aby ograniczyć mapę do okręgu.';
+}
+
+export const focusAreaRadius = () => $('area-radius').focus();
 
 // ---- Stopka: świeżość danych ----
 

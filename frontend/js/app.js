@@ -2,19 +2,20 @@
 // Obszar analizy to widoczny fragment mapy: wynik odświeża się sam po przesunięciu/przybliżeniu mapy
 // i po zmianie formularza. Kliknięcie mapy pokazuje dymek z dokładnymi liczbami dla klikniętego punktu.
 import { getCatalog, getMeta, getPoi, point, view as fetchView } from './api.js';
+import { logColor, logScale } from './colors.js';
 import { initMap } from './map.js';
 import * as ui from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 const map = initMap('map');
-const state = { result: null, displayRes: null, controller: null, requestId: 0 };
+// center: środek opcjonalnego obszaru (miejsce z wyszukiwarki albo punkt z dymku) — promień czytamy z pola w panelu.
+const state = { result: null, displayRes: null, controller: null, requestId: 0, center: null };
 
-// Warstwy mapy: indeks kolumny percentyla w wierszu heksagonu [h3, score, D, S, pct_score, pct_D, pct_S],
-// klucz w `legend` z odpowiedzi i nagłówek legendy.
+// Warstwy mapy: indeks wartości w wierszu heksagonu [h3, score, D, S, ...] i nagłówek legendy.
 const LAYERS = {
-  score: { pct: 4, legend: 'score', title: 'Klienci na firmę' },
-  D: { pct: 5, legend: 'D', title: 'Popyt w zasięgu' },
-  S: { pct: 6, legend: 'S', title: 'Konkurencja w zasięgu' },
+  score: { value: 1, title: 'Klienci na firmę' },
+  D: { value: 2, title: 'Popyt w zasięgu' },
+  S: { value: 3, title: 'Konkurencja w zasięgu' },
 };
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
@@ -27,20 +28,78 @@ function collapseSheetOnMobile() {
   map.invalidateSize();
 }
 
+// ---- Opcjonalny obszar: okrąg o podanym promieniu wokół wybranego środka ----
+
+// { lat, lng, radius } albo null, gdy nie ma środka lub promień jest pusty.
+function activeArea() {
+  const radius = ui.areaRadius();
+  return state.center && radius ? { lat: state.center.lat, lng: state.center.lng, radius } : null;
+}
+
+// Odległość po kuli w km (haversine) — tak samo liczy serwer przy wyborze top-5 w okręgu.
+function distanceKm(lat1, lng1, lat2, lng2) {
+  const rad = Math.PI / 180;
+  const a = Math.sin((lat2 - lat1) * rad / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin((lng2 - lng1) * rad / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(a));
+}
+
+// Heksagony, których środek leży w okręgu (bez obszaru — wszystkie).
+function rowsInArea(rows, area) {
+  if (!area) return rows;
+  return rows.filter((row) => {
+    const [lat, lng] = h3.cellToLatLng(row[0]);
+    return distanceKm(area.lat, area.lng, lat, lng) <= area.radius;
+  });
+}
+
+// Rysuje okrąg (albo go usuwa) i, gdy `fit`, dopasowuje do niego mapę. Wynik rysujemy od razu z nowym filtrem,
+// a odświeżenie z serwera dociągnie top-5 dla okręgu.
+function applyArea(fit) {
+  const area = activeArea();
+  if (area) map.setArea(area.lat, area.lng, area.radius, { fit }); else map.clearArea();
+  drawLayer();
+  if (fit) scheduleRefresh();
+  writeHash();
+}
+
+function setCenter(lat, lng, name) {
+  state.center = { lat, lng, name };
+  ui.setAreaCenter(name);
+}
+
+// Miejsce z wyszukiwarki: z promieniem — mapa dopasowuje się do okręgu, bez — jak dotąd przelatuje do miejsca.
+function pickPlace(place) {
+  setCenter(place.lat, place.lng, place.name.split(',')[0]);
+  if (ui.areaRadius()) applyArea(true);
+  else { applyArea(false); map.safeFlyTo(place.lat, place.lng, 14); }
+}
+
+// „Ustaw jako środek” w dymku: ten punkt staje się środkiem, a użytkownik wpisuje promień.
+function useAsCenter(lat, lng) {
+  setCenter(lat, lng, 'wybrany punkt');
+  map.closePoint();
+  $('sidebar').classList.remove('collapsed');
+  if (ui.areaRadius()) applyArea(true); else { applyArea(false); ui.focusAreaRadius(); }
+}
+
 // ---- Rysowanie wyniku ----
 
 // Rysuje wybraną warstwę z ostatniego wyniku — bez ponownego zapytania do serwera.
+// Skala kolorów (logarytmiczna) wynika z heksagonów, które faktycznie rysujemy.
 function drawLayer(fade = false) {
   const result = state.result;
-  if (!result || !result.hexes.length) { map.clearHexes(); ui.hideLegend(); return; }
+  const rows = result ? rowsInArea(result.hexes, activeArea()) : [];
+  if (!rows.length) { map.clearHexes(); ui.hideLegend(); return; }
   const layer = LAYERS[ui.currentLayer()];
-  map.setHexes(result.hexes, layer.pct, { fade });
+  const scale = logScale(rows.map((row) => row[layer.value]));
+  map.setHexes(rows, (row) => logColor(row[layer.value], scale), { fade });
   // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
   const period = result.permits_period;
   const note = period && ui.currentLayer() !== 'S'
     ? `Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.` : '';
-  const title = layer.legend === 'score' && period ? 'Nowe budowy na firmę' : layer.title;
-  ui.renderLegend(title, result.legend[layer.legend], note);
+  const title = ui.currentLayer() === 'score' && period ? 'Nowe budowy na firmę' : layer.title;
+  ui.renderLegend(title, scale, note);
 }
 
 function showResult(result) {
@@ -95,7 +154,9 @@ async function refresh() {
   if (bbox[0] >= bbox[2] || bbox[1] >= bbox[3]) { ui.setLoading(false); return; }   // mapa jeszcze bez rozmiaru — poczekaj na moveend
   ui.setLoading(true);
   try {
-    const result = await fetchView({ ...params, bbox: bbox.join(','), zoom }, controller.signal);
+    const area = activeArea();
+    const areaParam = area ? `${area.lat.toFixed(5)},${area.lng.toFixed(5)},${area.radius}` : undefined;
+    const result = await fetchView({ ...params, bbox: bbox.join(','), zoom, area: areaParam }, controller.signal);
     if (mine !== state.requestId) return;
     showResult(result);
     writeHash();
@@ -125,7 +186,7 @@ async function showPointAt(lat, lng) {
   try {
     const data = await point({ ...params, lat, lng });
     if (mine !== pointRequest) return;
-    map.showPoint(lat, lng, data.radius_km, ui.pointPopup(data));
+    map.showPoint(lat, lng, data.radius_km, ui.pointPopup(data, () => useAsCenter(lat, lng)));
   } catch (e) {
     if (mine === pointRequest) ui.showError(e.message);
   }
@@ -148,7 +209,30 @@ function writeHash() {
     lat: center[0].toFixed(5), lng: center[1].toFixed(5), z: zoom,
   });
   if (params.months) hash.set('m', params.months);   // okres tylko dla czynników z pozwoleń
+  if (state.center) {                                  // środek obszaru (clat, clng, cn) i opcjonalny promień (cr)
+    hash.set('clat', state.center.lat.toFixed(5));
+    hash.set('clng', state.center.lng.toFixed(5));
+    hash.set('cn', state.center.name);
+    if (ui.areaRadius()) hash.set('cr', ui.areaRadius());
+  }
   history.replaceState(null, '', '#' + hash);
+}
+
+// Środek i promień obszaru z adresu (bez dopasowywania mapy: widok zapisany jest osobno w lat, lng, z).
+function restoreArea(h) {
+  const lat = Number(h.get('clat'));
+  const lng = Number(h.get('clng'));
+  if (h.get('clat') && h.get('clng') && Number.isFinite(lat) && Number.isFinite(lng)) {
+    setCenter(lat, lng, h.get('cn') || 'wybrane miejsce');
+    const radius = Number(h.get('cr'));
+    ui.setAreaRadius(Number.isFinite(radius) && radius > 0 ? Math.min(50, Math.round(radius)) : null);
+  } else {
+    state.center = null;
+    ui.setAreaCenter(null);
+    ui.setAreaRadius(null);
+  }
+  const area = activeArea();
+  if (area) map.setArea(area.lat, area.lng, area.radius, { fit: false }); else map.clearArea();
 }
 
 // Odtwarza ustawienia i widok z adresu; zwraca true, jeśli adres zawierał zapisany widok.
@@ -157,6 +241,7 @@ function applyHash() {
   const h = new URLSearchParams(location.hash.slice(1));
   if (!h.has('type') && !h.has('demand')) return false;
   ui.setSelection({ type: h.get('type'), demand: h.get('demand'), bandwidth: h.get('bw'), months: h.get('m') });
+  restoreArea(h);
   if (h.get('layer') in LAYERS) document.querySelector(`input[name=layer][value="${h.get('layer')}"]`).checked = true;
   const lat = Number(h.get('lat'));
   const lng = Number(h.get('lng'));
@@ -216,7 +301,8 @@ $('opacity-input').addEventListener('input', () => map.setHexOpacity(Number($('o
 $('sheet-handle').addEventListener('click', () => $('sidebar').classList.toggle('collapsed'));
 
 ui.renderHelp();
-ui.initSearch((place) => map.safeFlyTo(place.lat, place.lng, 14));
+ui.initSearch(pickPlace);
+ui.initArea(() => applyArea(true));
 
 // Wklejenie innego linku w tej samej karcie zmienia tylko hash (bez przeładowania) — odtwórz widok.
 window.addEventListener('hashchange', () => { if (applyHash()) { discardPoint(); scheduleRefresh(); } });
