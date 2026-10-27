@@ -14,15 +14,17 @@ from backend.app import config
 from etl.aggregate import table_exists
 
 THRESHOLDS = {
-    "pop_min": 36_900_000,            # suma hex_pop_r8.pop_total
+    "pop_min": 36_900_000,            # suma hex_pop_r9.pop_total
     "pop_max": 37_200_000,
     "hairdressers_min": 8000,         # liczba punktów OSM typu hairdresser
     "places_min": 40_000,             # liczba nazw miejscowości/osiedli
     "missing_geom_max_share": 0.05,   # maks. udział obrębów, których nie udało się geokodować
     "permits_sf_12m_min": 50_000,     # nowe domy jednorodzinne w ostatnich 12 miesiącach danych
+    "dasymetry_share_min": 0.85,      # udział ludności rozłożonej przez budynki OSM (reszta: równomiernie)
+    "building_weights_min": 1_000_000,  # wierszy w building_weights (komórka spisu × heksagon)
 }
-REQUIRED_TABLES = ["hex_pop_r8", "poi", "places", "obreb_geom", "permits_r8",
-                   "hex_pop_r6", "poi_counts_r6", "permits_r6"]
+REQUIRED_TABLES = ["hex_pop_r9", "poi", "places", "obreb_geom", "permits_r9", "building_weights",
+                   "poi_counts_r9", "hex_pop_r5", "poi_counts_r5", "permits_r5"]
 
 
 def _scalar(con, sql: str):
@@ -38,11 +40,25 @@ def check(con: duckdb.DuckDBPyConnection, thresholds: dict = THRESHOLDS) -> list
     def has(table):
         return table not in missing
 
-    if has("hex_pop_r8"):
-        total = _scalar(con, "SELECT COALESCE(SUM(pop_total), 0) FROM hex_pop_r8")
+    if has("hex_pop_r9"):
+        total = _scalar(con, "SELECT COALESCE(SUM(pop_total), 0) FROM hex_pop_r9")
         if not thresholds["pop_min"] <= total <= thresholds["pop_max"]:
             problems.append(f"Suma ludności {total:,.0f} poza zakresem "
                             f"[{thresholds['pop_min']:,}; {thresholds['pop_max']:,}]")
+    if has("building_weights"):
+        n = _scalar(con, "SELECT COUNT(*) FROM building_weights")
+        if n < thresholds["building_weights_min"]:
+            problems.append(f"Za mało wierszy w building_weights: {n} (próg {thresholds['building_weights_min']:,})")
+    if table_exists(con, "meta"):
+        row = con.execute("SELECT rows FROM meta WHERE source = 'dasymetria'").fetchall()
+        share = row[0][0] / 1000 if row else None
+        if share is None:
+            problems.append("Brak w meta udziału ludności rozłożonej przez budynki (dasymetria) — przelicz krok 'population'")
+        elif share < thresholds["dasymetry_share_min"]:
+            problems.append(f"Za mały udział dasymetrii: {share:.1%} ludności rozłożone przez budynki "
+                            f"(próg {thresholds['dasymetry_share_min']:.0%})")
+    elif has("hex_pop_r9"):
+        problems.append("Brak tabeli meta — nie wiadomo, jaka część ludności została rozłożona przez budynki")
     if has("poi"):
         n = _scalar(con, "SELECT COUNT(*) FROM poi WHERE type_id = 'hairdresser'")
         if n < thresholds["hairdressers_min"]:
@@ -64,13 +80,13 @@ def check(con: duckdb.DuckDBPyConnection, thresholds: dict = THRESHOLDS) -> list
                                WHERE obreb_id NOT IN (SELECT obreb_id FROM obreb_geom)""")
         if total and todo / total > thresholds["missing_geom_max_share"]:
             problems.append(f"Niedokończone geokodowanie: {todo} z {total} obrębów z pozwoleń bez wpisu w obreb_geom")
-    if has("permits_r8"):
+    if has("permits_r9"):
         # „ostatnie 12 miesięcy” liczone od najnowszych danych w tabeli, nie od dzisiaj
-        n = _scalar(con, """SELECT COALESCE(SUM(n), 0) FROM permits_r8 WHERE kind = 'sf'
-                            AND month > (SELECT MAX(month) FROM permits_r8) - INTERVAL 12 MONTH""")
+        n = _scalar(con, """SELECT COALESCE(SUM(n), 0) FROM permits_r9 WHERE kind = 'sf'
+                            AND month > (SELECT MAX(month) FROM permits_r9) - INTERVAL 12 MONTH""")
         if n < thresholds["permits_sf_12m_min"]:
             problems.append(f"Za mało nowych domów (sf) w ostatnich 12 miesiącach: {n} (próg {thresholds['permits_sf_12m_min']})")
-    for table in ("hex_pop_r6", "poi_counts_r6", "permits_r6"):
+    for table in ("hex_pop_r5", "poi_counts_r5", "permits_r5"):
         if has(table) and _scalar(con, f"SELECT COUNT(*) FROM {table}") == 0:
             problems.append(f"Tabela {table} jest pusta")
     return problems

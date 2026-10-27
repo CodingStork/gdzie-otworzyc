@@ -21,19 +21,13 @@ from etl import download as dl
 from etl.aggregate import build_aggregates, table_exists
 from etl.buildings import build_building_weights
 from etl.geocode_obreby import ULDK_URL, UldkClient, build_permits_hex, count_ungeocoded, geocode_missing
+from etl.meta import record_meta
 from etl.osm_poi import build_poi_tables
 from etl.permits import build_permits_raw
 from etl.population import build_hex_pop
 
 # „buildings” przed „population”: ludność jest rozkładana na budynki (metoda dasymetryczna).
 STEPS = ("download", "osm", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate")
-
-
-def _record_meta(con, source: str, url: str, rows: int, when: datetime.datetime | None = None) -> None:
-    """Zapisuje w tabeli meta, skąd i kiedy pochodzą dane (pokazywane w stopce aplikacji)."""
-    con.execute("""CREATE TABLE IF NOT EXISTS meta (
-        source VARCHAR PRIMARY KEY, url VARCHAR, downloaded_at TIMESTAMP, rows BIGINT)""")
-    con.execute("INSERT OR REPLACE INTO meta VALUES (?, ?, ?, ?)", [source, url, when or datetime.datetime.now(), rows])
 
 
 def _mtime(path: Path) -> datetime.datetime:
@@ -71,24 +65,24 @@ def _run_step(step: str, con, raw: dict, force: bool, data_dir: Path) -> object:
         return "pliki w data/raw"
 
     if step == "population":
-        if table_exists(con, "hex_pop_r8") and not force:
-            return "pominięto (hex_pop_r8 istnieje)"
+        if table_exists(con, "hex_pop_r9") and not force:
+            return "pominięto (hex_pop_r9 istnieje)"
         n = build_hex_pop(raw["census_parquet"], con)
-        _record_meta(con, "census", dl.CENSUS_URL, n, _mtime(raw["census_zip"]))
+        record_meta(con, "census", dl.CENSUS_URL, n, _mtime(raw["census_zip"]))
         return f"{n} heksagonów"
 
     if step == "osm":
         if table_exists(con, "poi") and table_exists(con, "places") and not force:
             return "pominięto (poi i places istnieją)"
         counts = build_poi_tables(raw["osm_pbf"], con)
-        _record_meta(con, "osm", dl.OSM_URL, counts["poi"], _mtime(raw["osm_pbf"]))
+        record_meta(con, "osm", dl.OSM_URL, counts["poi"], _mtime(raw["osm_pbf"]))
         return counts
 
     if step == "buildings":
         if table_exists(con, "building_weights") and not force:
             return "pominięto (building_weights istnieje)"
         n = build_building_weights(raw["osm_pbf"], con)
-        _record_meta(con, "buildings", dl.OSM_URL, n, _mtime(raw["osm_pbf"]))
+        record_meta(con, "buildings", dl.OSM_URL, n, _mtime(raw["osm_pbf"]))
         return f"{n} wierszy building_weights"
 
     if step == "permits":
@@ -96,7 +90,7 @@ def _run_step(step: str, con, raw: dict, force: bool, data_dir: Path) -> object:
             return "pominięto (permits_raw istnieje)"
         n = build_permits_raw(raw["gunb_permits"], raw["gunb_notifications"], con)
         newest = max(_mtime(p) for p in raw["gunb_permits"] + raw["gunb_notifications"])
-        _record_meta(con, "gunb", dl.GUNB_BASE, n, newest)
+        record_meta(con, "gunb", dl.GUNB_BASE, n, newest)
         return f"{n} pozwoleń i zgłoszeń"
 
     if step == "geocode":
@@ -113,13 +107,13 @@ def _run_step(step: str, con, raw: dict, force: bool, data_dir: Path) -> object:
             raise RuntimeError(
                 f"Geokodowanie nie zostało ukończone: pozostało {remaining} obrębów (ULDK mógł zablokować "
                 "połączenie — odczekaj i uruchom ponownie: uv run python -m etl.run_all --only geocode,permits_hex,aggregate)")
-        _record_meta(con, "uldk", ULDK_URL, _count(con, "obreb_geom"))
+        record_meta(con, "uldk", ULDK_URL, _count(con, "obreb_geom"))
         return counts
 
     if step == "permits_hex":
         if not (table_exists(con, "permits_raw") and table_exists(con, "obreb_geom")):
             raise RuntimeError("Brak tabel permits_raw/obreb_geom — uruchom kroki 'permits' i 'geocode'")
-        return f"{build_permits_hex(con)} wierszy permits_r8"
+        return f"{build_permits_hex(con)} wierszy permits_r9"
 
     if step == "aggregate":
         return build_aggregates(con)

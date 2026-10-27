@@ -185,7 +185,7 @@ def test_build_permits_hex_aggregates_by_month_and_kind():
     con.execute("CREATE TABLE obreb_geom (obreb_id VARCHAR PRIMARY KEY, name VARCHAR, lat DOUBLE, lng DOUBLE, status VARCHAR)")
     con.execute("INSERT INTO obreb_geom VALUES ('O1', 'x', 51.1, 17.0, 'region'), ('O_BRAK', NULL, NULL, NULL, 'missing')")
     n = build_permits_hex(con)
-    rows = con.execute("SELECT CAST(month AS VARCHAR), kind, n FROM permits_r8 ORDER BY 1, 2").fetchall()
+    rows = con.execute("SELECT CAST(month AS VARCHAR), kind, n FROM permits_r9 ORDER BY 1, 2").fetchall()
     assert rows == [("2026-01-01", "mf", 1), ("2026-01-01", "sf", 2), ("2026-02-01", "sf", 1)]
     assert n == 3
 

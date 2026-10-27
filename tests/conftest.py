@@ -10,9 +10,9 @@ from tests.factories import make_db
 CENTER = (52.23, 21.01)   # Warszawa — środek syntetycznej siatki testowej
 
 
-def disk(center=CENTER, k=12):
-    """Heksagony res 8 w promieniu k pierścieni wokół środka (k=12 → ~9,6 km)."""
-    return sorted(h3.grid_disk(h3.latlng_to_cell(*center, 8), k))
+def disk(center=CENTER, k=12, res=9):
+    """Heksagony res 9 w promieniu k pierścieni wokół środka (k=12 → ~3,6 km)."""
+    return sorted(h3.grid_disk(h3.latlng_to_cell(*center, res), k))
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def make_client(tmp_path, monkeypatch):
 
 @pytest.fixture
 def api_client(make_client):
-    """Domyślna baza: ~470 heksagonów po 1000 mieszkańców + kilka salonów kosmetycznych."""
+    """Domyślna baza: ~470 heksagonów res 9 po 1000 mieszkańców + kilka salonów kosmetycznych."""
     pop = {c: 1000.0 for c in disk()}
     pois = [("beauty", 52.23, 21.01), ("beauty", 52.24, 21.02), ("beauty", 52.21, 20.99)]
     return make_client(pop=pop, pois=pois)

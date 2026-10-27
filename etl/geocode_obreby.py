@@ -1,4 +1,4 @@
-"""Geokodowanie obrębów ewidencyjnych przez ULDK (GUGiK) → `obreb_geom`, a potem `permits_r8`.
+"""Geokodowanie obrębów ewidencyjnych przez ULDK (GUGiK) → `obreb_geom`, a potem `permits_r9`.
 
 Pozwolenia mają numer działki, ale działek są miliony, a ULDK odpowiada ~0,35 s na zapytanie.
 Dlatego geokodujemy OBRĘBY (jednostki ewidencyjne, ~50 tys.): pobieramy kształt obrębu, a jako jego
@@ -166,19 +166,19 @@ def geocode_missing(con: duckdb.DuckDBPyConnection, uldk: UldkClient, workers: i
     return counts
 
 
-def build_permits_hex(con: duckdb.DuckDBPyConnection) -> int:
-    """Pozwolenia → heksagony H3 res 8: tabela permits_r8(h3, month, kind, n).
+def build_permits_hex(con: duckdb.DuckDBPyConnection, res: int = 9) -> int:
+    """Pozwolenia → heksagony H3 (domyślnie res 9): tabela permits_r{res}(h3, month, kind, n).
 
     Każdy obręb wpada do jednego heksagonu (ten, w którym leży jego punkt reprezentatywny);
     pozwolenia zliczamy w miesiącach i rodzajach budynków (sf/mf). Obręby bez geokodowania
-    (status 'missing') pomijamy.
+    (status 'missing') pomijamy. Grubsze rozdzielczości buduje potem `aggregate`.
     """
     geo = con.execute("SELECT obreb_id, lat, lng FROM obreb_geom WHERE status != 'missing'").df()
-    geo["h3"] = [h3.latlng_to_cell(lat, lng, 8) for lat, lng in zip(geo["lat"], geo["lng"])]
+    geo["h3"] = [h3.latlng_to_cell(lat, lng, res) for lat, lng in zip(geo["lat"], geo["lng"])]
     con.register("geo_df", geo[["obreb_id", "h3"]])
-    con.execute("""CREATE OR REPLACE TABLE permits_r8 AS
+    con.execute(f"""CREATE OR REPLACE TABLE permits_r{res} AS
         SELECT g.h3, CAST(date_trunc('month', p.date) AS DATE) AS month, p.kind, CAST(COUNT(*) AS INTEGER) AS n
         FROM permits_raw p JOIN geo_df g ON p.obreb_id = g.obreb_id
         GROUP BY 1, 2, 3""")
     con.unregister("geo_df")
-    return con.execute("SELECT COUNT(*) FROM permits_r8").fetchall()[0][0]
+    return con.execute(f"SELECT COUNT(*) FROM permits_r{res}").fetchall()[0][0]

@@ -1,9 +1,16 @@
-"""Ludność: siatka spisu 2021 (Eurostat, kwadraty 1 km, EPSG:3035) → heksagony H3 rozdzielczości 8.
+"""Ludność: siatka spisu 2021 (Eurostat, kwadraty 1 km, EPSG:3035) → heksagony H3 rozdzielczości 9.
 
-Główna idea to INTERPOLACJA POWIERZCHNIOWA (areal interpolation): mamy liczby ludzi
-w kwadratach, a chcemy je w heksagonach, które kwadratów nie pokrywają "równo".
-Rozwiązanie: każdy kwadrat dzielimy na drobną siatkę punktów, każdy punkt dostaje
-równy ułamek ludności kwadratu i trafia do heksagonu, w którym leży.
+Mamy liczby ludzi w kwadratach 1 km, a chcemy je w heksagonach (res 9, ~0,1 km²), które
+kwadratów nie pokrywają "równo". Są dwie metody:
+
+1. METODA DASYMETRYCZNA (główna): ludność kwadratu rozkładamy proporcjonalnie do wag budynków
+   mieszkalnych z OpenStreetMap (tabela `building_weights`, patrz `buildings.py`). Ludzie
+   mieszkają w domach, a nie w lesie — więc heksagon z blokami dostaje dużo, a z polem nic.
+2. INTERPOLACJA POWIERZCHNIOWA (zapasowa): dla kwadratów, w których OSM nie ma żadnych budynków,
+   kwadrat dzielimy na drobną siatkę punktów; każdy punkt dostaje równy ułamek ludności i trafia
+   do heksagonu, w którym leży (założenie: ludność rozłożona równomiernie).
+
+W obu metodach suma ludności jest zachowana.
 """
 import duckdb
 import h3
@@ -11,6 +18,9 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 from pyproj import Transformer
+
+from etl.aggregate import table_exists
+from etl.meta import record_meta
 
 # Kolumny spisu Eurostatu → nazwy w naszej bazie.
 POP_COLUMNS = {
@@ -62,7 +72,7 @@ def impute_subcategories(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def cells_to_hex(df: pd.DataFrame, res: int = 8, n: int = 5, chunk_cells: int = 20_000) -> pd.DataFrame:
+def cells_to_hex(df: pd.DataFrame, res: int = 9, n: int = 5, chunk_cells: int = 20_000) -> pd.DataFrame:
     """Rozkłada ludność komórek 1 km na heksagony H3 (interpolacja powierzchniowa).
 
     Każdą komórkę dzielimy na n×n podkomórek (domyślnie 5×5 = co 200 m). Środek każdej
@@ -95,25 +105,77 @@ def cells_to_hex(df: pd.DataFrame, res: int = 8, n: int = 5, chunk_cells: int = 
     return out[["h3", *POP_COLUMNS.values()]]
 
 
+def dasymetric_to_hex(cells: pd.DataFrame, weights: pd.DataFrame, res: int = 9,
+                      n_uniform: int = 10) -> tuple[pd.DataFrame, float]:
+    """Rozkłada ludność komórek spisu na heksagony metodą dasymetryczną.
+
+    `cells`: kolumny E, N, T, F, M, Y_LT15, Y_1564, Y_GE65 (jak z `impute_subcategories`);
+    `weights`: cell_e, cell_n, h3, w — waga budynków komórki spisu (cell_e, cell_n) w heksagonie h3.
+
+    Dla komórki z sumą wag Σw > 0 heksagon h dostaje ułamek w_h / Σw całej ludności komórki.
+    Komórki bez budynków (Σw = 0 lub brak w tabeli) rozkładamy równomiernie (`cells_to_hex`,
+    siatka n_uniform × n_uniform punktów). Zwraca (heksagony, udział ludności rozłożonej przez budynki 0–1).
+    """
+    value_cols = list(POP_COLUMNS.keys())
+    w = pd.DataFrame({"E": weights["cell_e"].astype("int64"), "N": weights["cell_n"].astype("int64"),
+                      "h3": weights["h3"], "w": weights["w"].astype("float64")})
+    w = w[w["w"] > 0]
+    w["w_sum"] = w.groupby(["E", "N"])["w"].transform("sum")
+
+    # inner join: tylko komórki spisu, które mają budynki; każdy wiersz = (komórka, heksagon z budynkami)
+    with_w = cells.merge(w, on=["E", "N"], how="inner")
+    parts = []
+    if not with_w.empty:
+        fraction = (with_w["w"] / with_w["w_sum"]).to_numpy()
+        values = with_w[value_cols].to_numpy(dtype="float64") * fraction[:, None]
+        part = pd.DataFrame(values, columns=list(POP_COLUMNS.values()))
+        part["h3"] = with_w["h3"].to_numpy()
+        parts.append(part.groupby("h3").sum())
+
+    marked = cells[["E", "N"]].merge(w[["E", "N"]].drop_duplicates(), on=["E", "N"], how="left", indicator=True)
+    has_buildings = marked["_merge"].eq("both").to_numpy()      # które komórki spisu mają budynki
+    rest = cells[~has_buildings]
+    if not rest.empty:
+        parts.append(cells_to_hex(rest, res=res, n=n_uniform).set_index("h3"))
+
+    total = cells["T"].sum()
+    share = float(cells.loc[has_buildings, "T"].sum() / total) if total > 0 else 0.0
+    out = pd.concat(parts).groupby("h3").sum().reset_index() if parts else pd.DataFrame(
+        columns=["h3", *POP_COLUMNS.values()])
+    return out[["h3", *POP_COLUMNS.values()]], share
+
+
 def build_hex_pop(parquet_path, con: duckdb.DuckDBPyConnection) -> int:
-    """Cały krok: parquet → komórki PL → imputacja → heksagony → tabela hex_pop_r8."""
+    """Cały krok: parquet → komórki PL → imputacja → ludność w heksagonach res 9 → tabela hex_pop_r9.
+
+    Jeśli istnieje tabela `building_weights` (krok `buildings`), używamy metody dasymetrycznej;
+    jeśli nie — rozkładamy równomiernie (z ostrzeżeniem). Udział ludności rozłożonej przez budynki
+    zapisujemy w `meta` (source="dasymetria", rows = promile), żeby kontrola jakości mogła go sprawdzić.
+    """
     cells = load_polish_cells(parquet_path)
     cells = impute_subcategories(cells)
-    hexes = cells_to_hex(cells, res=8, n=5)
+    if table_exists(con, "building_weights"):
+        weights = con.execute("SELECT cell_e, cell_n, h3, w FROM building_weights").df()
+    else:
+        print("UWAGA: brak tabeli building_weights — ludność rozłożona równomiernie (uruchom krok 'buildings')", flush=True)
+        weights = pd.DataFrame({"cell_e": [], "cell_n": [], "h3": [], "w": []})
+    hexes, share = dasymetric_to_hex(cells, weights, res=9)
 
-    # Kontrola: interpolacja nie może zgubić ani dodać ludzi.
+    # Kontrola: rozkład nie może zgubić ani dodać ludzi.
     in_total, out_total = cells["T"].sum(), hexes["pop_total"].sum()
     if abs(in_total - out_total) > 0.001 * in_total:
         raise ValueError(f"Suma ludności zmieniła się: {in_total} → {out_total}")
-    print(f"hex_pop_r8: {len(hexes)} heksagonów, ludność {out_total:,.0f}")
+    print(f"hex_pop_r9: {len(hexes)} heksagonów, ludność {out_total:,.0f}, "
+          f"rozłożona przez budynki: {share:.1%}", flush=True)
 
     con.execute("""
-        CREATE OR REPLACE TABLE hex_pop_r8 (
+        CREATE OR REPLACE TABLE hex_pop_r9 (
             h3 VARCHAR PRIMARY KEY,
             pop_total DOUBLE, pop_f DOUBLE, pop_m DOUBLE,
             pop_lt15 DOUBLE, pop_1564 DOUBLE, pop_ge65 DOUBLE
         )""")
     con.register("hexes_df", hexes)
-    con.execute("INSERT INTO hex_pop_r8 SELECT * FROM hexes_df")
+    con.execute("INSERT INTO hex_pop_r9 SELECT * FROM hexes_df")
     con.unregister("hexes_df")
+    record_meta(con, "dasymetria", "", int(round(share * 1000)))
     return len(hexes)

@@ -13,10 +13,10 @@ from tests.conftest import CENTER, disk
 def _db_with_hex_pop_only(data_dir):
     data_dir.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(data_dir / "app.duckdb"))
-    con.execute("CREATE TABLE hex_pop_r8 (h3 VARCHAR, pop_total DOUBLE, pop_f DOUBLE, pop_m DOUBLE, "
+    con.execute("CREATE TABLE hex_pop_r9 (h3 VARCHAR, pop_total DOUBLE, pop_f DOUBLE, pop_m DOUBLE, "
                 "pop_lt15 DOUBLE, pop_1564 DOUBLE, pop_ge65 DOUBLE)")
     for cell in disk(k=2):
-        con.execute("INSERT INTO hex_pop_r8 VALUES (?, 10, 5, 5, 1, 7, 2)", [cell])
+        con.execute("INSERT INTO hex_pop_r9 VALUES (?, 10, 5, 5, 1, 7, 2)", [cell])
     con.close()
 
 
@@ -28,7 +28,7 @@ def test_run_aggregate_builds_coarse_tables(tmp_path):
     _db_with_hex_pop_only(tmp_path)
     run(["aggregate"], data_dir=tmp_path)
     con = duckdb.connect(str(tmp_path / "app.duckdb"))
-    assert table_exists(con, "hex_pop_r6") and table_exists(con, "hex_pop_r7")
+    assert table_exists(con, "hex_pop_r5") and table_exists(con, "hex_pop_r8")
     assert con.execute("SELECT SUM(pop_total) FROM hex_pop_r6").fetchall()[0][0] == 10 * len(disk(k=2))
 
 
@@ -59,7 +59,7 @@ def test_permits_hex_then_aggregate(tmp_path):
     con.close()
     run(["permits_hex", "aggregate"], data_dir=tmp_path)
     con = duckdb.connect(str(tmp_path / "app.duckdb"))
-    assert con.execute("SELECT SUM(n) FROM permits_r8").fetchall()[0][0] == 1
+    assert con.execute("SELECT SUM(n) FROM permits_r9").fetchall()[0][0] == 1
     assert con.execute("SELECT SUM(n) FROM permits_r6").fetchall()[0][0] == 1
 
 
@@ -86,7 +86,7 @@ def test_api_meta_db_missing(tmp_path, monkeypatch):
 
 
 def test_incomplete_geocoding_fails_loudly(tmp_path, monkeypatch):
-    """Przerwane geokodowanie (np. blokada ULDK) nie może wyglądać jak sukces ani zasilać permits_r8 połową danych."""
+    """Przerwane geokodowanie (np. blokada ULDK) nie może wyglądać jak sukces ani zasilać permits_r9 połową danych."""
     from etl import run_all as run_all_module
     _db_with_hex_pop_only(tmp_path)
     con = duckdb.connect(str(tmp_path / "app.duckdb"))
