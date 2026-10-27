@@ -4,7 +4,7 @@ from functools import lru_cache
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.app.analysis.service import AnalysisParams, cached_analysis
+from backend.app.analysis.service import ViewParams, cached_view
 from backend.app.catalog import DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
 from backend.app.config import ATTRIBUTION, USER_AGENT
 from backend.app.db import DatabaseMissing, cursor
@@ -34,36 +34,42 @@ def catalog() -> dict:
     return catalog_json()
 
 
-@router.get("/analyze")
-def analyze(
-    type_id: str = Query(alias="type"),
-    demand: str = Query(),
-    lat: float | None = None,
-    lng: float | None = None,
-    radius_km: float | None = None,
-    bandwidth_km: float | None = Query(default=None, gt=0, le=20),  # le=20: tyle co suwak w interfejsie
+def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
+    """„minLng,minLat,maxLng,maxLat” → krotka liczb; błędny zapis lub odwrócone granice → 422."""
+    try:
+        min_lng, min_lat, max_lng, max_lat = (float(x) for x in bbox.split(","))
+    except ValueError:
+        raise _bad_request("Nieprawidłowy bbox")
+    if not (min_lng < max_lng and min_lat < max_lat):
+        raise _bad_request("Nieprawidłowy bbox")
+    return min_lng, min_lat, max_lng, max_lat
+
+
+@router.get("/view")
+def view(
+    type_id: str = Query(default="", alias="type"),
+    demand: str = Query(default=""),
+    bbox: str = Query(),
+    zoom: int = Query(),
+    bandwidth_km: float = Query(),
     months: int = 24,
-    scope: str = "local",
 ) -> dict:
-    """Heatmapa „klienci na 1 konkurenta” dla typu działalności i czynnika popytu."""
-    if type_id not in TYPES:
+    """Heatmapa widocznego fragmentu mapy. Puste `type` / `demand` = brak wyboru (co najmniej jedno wymagane)."""
+    if not type_id and not demand:
+        raise _bad_request("Wybierz typ działalności albo czynnik popytu")
+    if type_id and type_id not in TYPES:
         raise _bad_request("Nieznany typ działalności")
-    if demand not in DEMANDS:
+    if demand and demand not in DEMANDS:
         raise _bad_request("Nieznany czynnik popytu")
     if months not in MONTHS_OPTIONS:
         raise _bad_request("Okres musi wynosić 12, 24 lub 36 miesięcy")
-    if scope not in ("local", "poland"):
-        raise _bad_request("Nieznany zakres analizy")
-    if scope == "local":
-        if radius_km is None or not 1 <= radius_km <= 50:
-            raise _bad_request("Promień musi mieścić się w zakresie 1–50 km")
-        if lat is None or lng is None:
-            raise _bad_request("Wybierz punkt na mapie albo wyszukaj adres")
-        if not (LAT_RANGE[0] <= lat <= LAT_RANGE[1] and LNG_RANGE[0] <= lng <= LNG_RANGE[1]):
-            raise _bad_request("Punkt poza Polską")
-    params = AnalysisParams(type_id, demand, lat, lng, radius_km, scope, bandwidth_km, months)
+    if not 3 <= zoom <= 19:
+        raise _bad_request("Przybliżenie (zoom) musi mieścić się w zakresie 3–19")
+    if not 0.1 <= bandwidth_km <= 20:
+        raise _bad_request("Zasięg klienta (bandwidth_km) musi mieścić się w zakresie 0,1–20 km")
+    params = ViewParams(type_id or None, demand or None, _parse_bbox(bbox), zoom, bandwidth_km, months)
     try:
-        return cached_analysis(params)
+        return cached_view(params)
     except DatabaseMissing:
         raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
 
@@ -76,12 +82,7 @@ def poi(type_id: str = Query(alias="type"), bbox: str = Query()) -> dict:
     """Punkty firm danego typu w widocznym fragmencie mapy (bbox = minLng,minLat,maxLng,maxLat)."""
     if type_id not in TYPES:
         raise _bad_request("Nieznany typ działalności")
-    try:
-        min_lng, min_lat, max_lng, max_lat = (float(x) for x in bbox.split(","))
-    except ValueError:
-        raise _bad_request("Nieprawidłowy bbox")
-    if not (min_lng < max_lng and min_lat < max_lat):
-        raise _bad_request("Nieprawidłowy bbox")
+    min_lng, min_lat, max_lng, max_lat = _parse_bbox(bbox)
     try:
         con = cursor()
     except DatabaseMissing:

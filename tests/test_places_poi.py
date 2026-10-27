@@ -7,6 +7,7 @@ from tests.conftest import CENTER, disk
 LAT, LNG = CENTER
 # 1° szerokości ≈ 111 km; 0,018° ≈ 2 km, 0,0045° ≈ 0,5 km
 DLAT_2KM, DLAT_05KM = 0.018, 0.0045
+VIEW_BBOX = "20.97,52.20,21.05,52.26"
 
 
 def _con(make_client, places, **kw):
@@ -43,19 +44,19 @@ def test_missing_places_table_returns_none(make_client):
     assert nearest_place_name(duckdb.connect(str(config.DB_PATH), read_only=True), LAT, LNG) is None
 
 
-def test_analysis_top_uses_place_names(make_client):
+def test_view_top_uses_place_names(make_client):
     pop = {c: 1000.0 for c in disk()}
     # siatka wsi co ~1,4 km pokrywa całe dane — każdy heksagon ma miejscowość w promieniu 3 km
     places = [("Osiedle Testowe", "suburb", LAT, LNG)] + [
         (f"Wieś {i}/{j}", "village", LAT + i * 0.0125, LNG + j * 0.02) for i in range(-10, 11) for j in range(-10, 11)]
     client = make_client(pop=pop, places=places, pois=[("beauty", LAT, LNG)])
-    j = client.get("/api/analyze", params=dict(type="beauty", demand="pop_f", lat=LAT, lng=LNG, radius_km=5)).json()
+    j = client.get("/api/view", params=dict(type="beauty", demand="pop_f", bbox=VIEW_BBOX, zoom=13, bandwidth_km=1)).json()
     assert all(not t["name"].startswith("okolice") for t in j["top"])
     assert all(t["name"] for t in j["top"])
 
 
-def test_analysis_top_falls_back_to_coordinates(api_client):
-    j = api_client.get("/api/analyze", params=dict(type="beauty", demand="pop_f", lat=LAT, lng=LNG, radius_km=5)).json()
+def test_view_top_falls_back_to_coordinates(api_client):
+    j = api_client.get("/api/view", params=dict(type="beauty", demand="pop_f", bbox=VIEW_BBOX, zoom=13, bandwidth_km=1)).json()
     assert all(t["name"].startswith("okolice ") for t in j["top"])
 
 

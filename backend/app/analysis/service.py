@@ -1,56 +1,75 @@
-"""Serwis analizy: z tabel H3 w bazie liczy wynik „klienci na 1 konkurenta” dla wybranego obszaru.
+"""Serwis analizy v2: heatmapa dla widocznego fragmentu mapy (bbox + zoom) i szczegóły klikniętego punktu.
 
-Schemat (dla trybu lokalnego, czyli punkt + promień):
-  1. wybór rozdzielczości H3 i szerokości pasma h,
-  2. zebranie heksagonów z danymi w obszarze PLUS buforze 3h (efekt krawędzi — konkurent
-     tuż za granicą obszaru też wpływa na wynik),
-  3. sumy ważone jądrem Gaussa: D (popyt w zasięgu) i S (konkurencja w zasięgu),
-  4. wynik = D / (S + 1), percentyle i ranking top-N — tylko dla heksagonów w obszarze.
+Schemat `run_view` (patrz spec §4):
+  1. `display_res` z zoomu (jak duże heksagony rysujemy), `r` = zasięg klienta,
+  2. `compute_res` = najdrobniejsza rozdzielczość, na której obliczenia mieszczą się w limitach,
+  3. wczytanie komórek `compute_res` z prostokąta widoku + bufora r (konkurent tuż za krawędzią
+     widoku też wpływa na wynik),
+  4. dla każdej komórki widoku: D = suma popytu i S = suma firm w OKRĘGU o promieniu r (2SFCA),
+  5. agregacja do `display_res` średnią ważoną liczbą mieszkańców,
+  6. percentyle (kolory) i legenda, top-5 miejsc.
+Kroki 1–6 (bez top-5) trafiają do pamięci podręcznej; klucz zawiera bbox przyciągnięty do siatki.
 """
 import datetime
 import functools
 import math
 from dataclasses import dataclass
-from typing import Literal
 
 import duckdb
 import h3
 import numpy as np
 import pandas as pd
 
-from backend.app.analysis.kernel import kernel_sums, to_metric
-from backend.app.analysis.resolution import HEX_SPACING_KM, choose_resolution, effective_bandwidth_km
-from backend.app.analysis.scoring import percentile_rank, pick_top, quantile_breaks, score
+from backend.app.analysis.kernel import catchment_sums, to_metric
+from backend.app.analysis.resolution import (
+    HEX_SPACING_KM,
+    choose_compute_res,
+    display_res_for_zoom,
+    snap_bbox,
+)
+from backend.app.analysis.scoring import legend_values, percentile_rank, pick_top, score, weighted_parent_mean
 from backend.app.catalog import DEMANDS, POOR_WARNING, TYPES
 from backend.app.db import DatabaseMissing, cursor, on_reset
 from etl.aggregate import table_exists
 
-NO_DEMAND_WARNING = "Brak danych o popycie w tym obszarze."
 NO_COMPETITORS_WARNING = (
     "Nie znaleziono konkurencji w OpenStreetMap w tym obszarze — wynik pokazuje sam popyt."
 )
 PERMITS_MISSING_WARNING = "Dane o pozwoleniach nie zostały jeszcze zaimportowane."
+PERMITS_MIN_RADIUS_KM = 1.0       # lokalizacja pozwoleń to środek obrębu — dokładniej nie da się zliczać
+PERMITS_NOTE = ("Lokalizację pozwoleń znamy z dokładnością do obrębu, dlatego zasięg dla nowych domów "
+                "wynosi co najmniej 1 km.")
+
+# Zoom reprezentujący każdy display_res w kluczu pamięci podręcznej (display_res_for_zoom(zoom) = klucz).
+_ZOOM_OF_RES = {5: 6, 6: 8, 7: 9, 8: 11, 9: 12}
 
 
 @dataclass(frozen=True)
-class AnalysisParams:
-    type_id: str
-    demand_id: str
-    lat: float | None = None
-    lng: float | None = None
-    radius_km: float | None = None
-    scope: Literal["local", "poland"] = "local"
-    bandwidth_km: float | None = None
+class ViewParams:
+    type_id: str | None
+    demand_id: str | None
+    bbox: tuple[float, float, float, float]      # minLng, minLat, maxLng, maxLat
+    zoom: int
+    bandwidth_km: float
     months: int = 24
 
 
-def _fetch(con: duckdb.DuckDBPyConnection, sql: str, cells: list[str], params: list | None = None) -> pd.DataFrame:
-    """Wykonuje zapytanie z JOIN-em do listy heksagonów (`cells_df`) przekazanej z Pythona."""
-    con.register("cells_df", pd.DataFrame({"h3": cells}))
-    try:
-        return con.execute(sql, params or []).df()
-    finally:
-        con.unregister("cells_df")
+def view_mode(p: ViewParams) -> str:
+    """full = typ + popyt (Okazja, Popyt, Konkurencja); demand = tylko popyt; competition = tylko typ."""
+    if p.type_id and p.demand_id:
+        return "full"
+    if p.demand_id:
+        return "demand"
+    if p.type_id:
+        return "competition"
+    raise ValueError("Wybierz typ działalności albo czynnik popytu")
+
+
+def effective_radius_km(p: ViewParams) -> float:
+    """Zasięg klienta; dla popytu z pozwoleń nie mniejszy niż 1 km."""
+    if p.demand_id and DEMANDS[p.demand_id].source == "permits":
+        return max(p.bandwidth_km, PERMITS_MIN_RADIUS_KM)
+    return p.bandwidth_km
 
 
 def _permit_window(con, res: int, months: int) -> tuple[datetime.date, datetime.date] | None:
@@ -68,31 +87,10 @@ def _permit_window(con, res: int, months: int) -> tuple[datetime.date, datetime.
     return datetime.date(index // 12, index % 12 + 1, 1), newest
 
 
-def _demand_values(con, res: int, p: AnalysisParams, cells: list[str], window) -> pd.DataFrame:
-    """Wartość czynnika popytu d_j w heksagonach (kolumny h3, d)."""
-    demand = DEMANDS[p.demand_id]
-    if demand.source == "census":
-        # nazwa kolumny pochodzi z katalogu (nie od użytkownika) — bezpieczne w SQL
-        return _fetch(con, f"SELECT t.h3, t.{demand.column} AS d FROM hex_pop_r{res} t "
-                           f"JOIN cells_df c ON t.h3 = c.h3", cells)
-    # Pozwolenia: suma liczby pozwoleń wybranych rodzajów (sf/mf) w oknie czasowym.
-    kinds = ", ".join("?" for _ in demand.kinds)
-    return _fetch(con, f"SELECT t.h3, SUM(t.n) AS d FROM permits_r{res} t JOIN cells_df c ON t.h3 = c.h3 "
-                       f"WHERE t.kind IN ({kinds}) AND t.month >= ? GROUP BY t.h3",
-                  cells, [*demand.kinds, window[0]])
-
-
-def _competitor_counts(con, res: int, type_id: str, cells: list[str]) -> pd.DataFrame:
-    """Liczba firm danego typu w heksagonach (kolumny h3, s); brak tabeli = brak firm."""
-    if not table_exists(con, f"poi_counts_r{res}"):
-        return _empty("s")
-    return _fetch(con, f"SELECT t.h3, t.n AS s FROM poi_counts_r{res} t JOIN cells_df c ON t.h3 = c.h3 "
-                       f"WHERE t.type_id = ?", cells, [type_id])
-
-
-def _empty(value_column: str) -> pd.DataFrame:
-    """Pusta ramka (h3, wartość) z poprawnymi typami — żeby dało się ją łączyć z innymi."""
-    return pd.DataFrame({"h3": pd.Series([], dtype=object), value_column: pd.Series([], dtype=float)})
+def _period(window) -> dict | None:
+    if window is None:
+        return None
+    return {"from": window[0].strftime("%Y-%m"), "to": window[1].strftime("%Y-%m")}
 
 
 # Im niższy numer, tym ważniejszy rodzaj miejsca przy nazywaniu lokalizacji: osiedle/wieś jest
@@ -130,166 +128,203 @@ def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * 6371 * math.asin(math.sqrt(a))
 
 
-def _period(window) -> dict | None:
-    if window is None:
-        return None
-    return {"from": window[0].strftime("%Y-%m"), "to": window[1].strftime("%Y-%m")}
+# ------------------------------------------------------------------ /api/view ----
+
+@dataclass
+class ViewCore:
+    """Wynik kroków 1–6 (to, co trafia do cache) + tablice potrzebne do wyboru top-5 dla dokładnego bbox."""
+    response: dict
+    top_metric: str | None = None
+    h3: np.ndarray | None = None          # heksagony display_res, które mamy w odpowiedzi
+    lat: np.ndarray | None = None
+    lng: np.ndarray | None = None
+    xy: np.ndarray | None = None          # współrzędne metryczne (EPSG:2180)
+    value: np.ndarray | None = None       # metryka do rankingu top-5 (score / D / S)
+    floor: np.ndarray | None = None       # wartość, której kwartyl odcina puste tereny (D; w trybie competition = S)
 
 
-def _empty_result(res: int, h_km: float, warnings: list[str], window=None) -> dict:
-    result = {"res": res, "bandwidth_km": h_km, "hexes": [], "top": [], "warnings": warnings,
-              "stats": {"n_hex": 0, "n_competitors": 0, "total_demand": 0.0,
-                        "score_breaks": [], "D_breaks": [], "S_breaks": []}}
+def _cells_query(con, table: str, columns: str, box: tuple[float, float, float, float], where: str = "",
+                 params: list | None = None, group: str = "") -> pd.DataFrame:
+    """SELECT z prostokąta (minLat, maxLat, minLng, maxLng) po kolumnach lat/lng tabeli."""
+    sql = f"SELECT {columns} FROM {table} WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? {where} {group}"
+    return con.execute(sql, [*box, *(params or [])]).df()
+
+
+def _empty_core(display_res: int, compute_res: int, radius_km: float, mode: str, notes: list[str],
+                warnings: list[str], window=None) -> ViewCore:
+    response = {"mode": mode, "display_res": display_res, "compute_res": compute_res, "radius_km": radius_km,
+                "hexes": [], "legend": {}, "top_metric": None, "notes": notes, "warnings": warnings}
     if window is not None:
-        result["permits_period"] = _period(window)
-    return result
+        response["permits_period"] = _period(window)
+    return ViewCore(response)
 
 
-def _round1(x) -> float:
-    return round(float(x), 1)
-
-
-def run_analysis(con: duckdb.DuckDBPyConnection, p: AnalysisParams) -> dict:
-    poland = p.scope == "poland"
-    btype = TYPES[p.type_id]
+def _compute_core(con: duckdb.DuckDBPyConnection, p: ViewParams) -> ViewCore:
+    mode = view_mode(p)
+    display_res = display_res_for_zoom(p.zoom)
+    radius_km = effective_radius_km(p)
+    notes: list[str] = []
     warnings: list[str] = []
-    if btype.osm_quality == "poor":
+    btype = TYPES[p.type_id] if p.type_id else None
+    demand = DEMANDS[p.demand_id] if p.demand_id else None
+    if btype and btype.osm_quality == "poor":
         warnings.append(POOR_WARNING)
+    if demand and demand.source == "permits" and p.bandwidth_km < PERMITS_MIN_RADIUS_KM:
+        notes.append(PERMITS_NOTE)
 
-    res = choose_resolution(None if poland else p.radius_km)   # cała Polska → res 6
-    if not table_exists(con, f"hex_pop_r{res}"):
-        raise DatabaseMissing(f"brak tabeli hex_pop_r{res}")
-    h_km = effective_bandwidth_km(p.bandwidth_km or btype.bandwidth_km, res)
-    if not poland:
-        radius_m = p.radius_km * 1000
-        reach_m = radius_m + 3 * h_km * 1000   # obszar + bufor 3h (jądro jest obcięte dla d > 3h)
+    compute_res = choose_compute_res(p.bbox, radius_km, display_res)
+    # Przy res 9 drobniej się nie da; na grubszych poziomach tłumaczymy, dlaczego zasięg bywa „zaokrąglony”.
+    if compute_res < 9 and radius_km < HEX_SPACING_KM[compute_res]:
+        spacing = f"{HEX_SPACING_KM[compute_res]:.1f}".replace(".", ",")
+        notes.append(f"Przy tym przybliżeniu najmniejszy liczony zasięg to ok. {spacing} km — "
+                     "przybliż mapę, aby zobaczyć dokładniej.")
+    if not table_exists(con, f"hex_pop_r{compute_res}"):
+        raise DatabaseMissing(f"brak tabeli hex_pop_r{compute_res}")
 
     window = None
-    if DEMANDS[p.demand_id].source == "permits":
-        window = _permit_window(con, res, p.months)
+    if demand and demand.source == "permits":
+        window = _permit_window(con, compute_res, p.months)
         if window is None:   # ETL pozwoleń jeszcze nie działał — czytelne ostrzeżenie zamiast błędu
             warnings.append(PERMITS_MISSING_WARNING)
-            return _empty_result(res, h_km, warnings)
+            return _empty_core(display_res, compute_res, radius_km, mode, notes, warnings)
 
-    if poland:
-        # Cała Polska: obszar = bufor = wszystkie heksagony res 6, w których coś mamy (brak krawędzi do uwzględniania).
-        union = [f"SELECT h3 FROM hex_pop_r{res}"]
-        if table_exists(con, f"poi_counts_r{res}"):
-            union.append(f"SELECT h3 FROM poi_counts_r{res}")
-        if window is not None:
-            union.append(f"SELECT h3 FROM permits_r{res}")
-        candidates = [r[0] for r in con.execute(" UNION ".join(union)).fetchall()]
+    # --- komórki obszaru + bufor r (prostokąt w stopniach) ---
+    min_lng, min_lat, max_lng, max_lat = p.bbox
+    dlat = radius_km / 110.54
+    dlng = radius_km / (111.32 * math.cos(math.radians(max(abs(min_lat), abs(max_lat)))))
+    box = (min_lat - dlat, max_lat + dlat, min_lng - dlng, max_lng + dlng)
+
+    # Ludność jest zawsze potrzebna: jako „ląd” (tylko tam rysujemy heksagony) i jako waga przy agregacji.
+    pop_col = demand.column if demand and demand.source == "census" else "pop_total"
+    cells = _cells_query(con, f"hex_pop_r{compute_res}", f"h3, lat, lng, pop_total AS pop, {pop_col} AS d_census", box)
+    frames = [cells[["h3", "lat", "lng"]]]
+    if demand and demand.source == "permits":
+        kinds = ", ".join("?" for _ in demand.kinds)
+        permits = _cells_query(con, f"permits_r{compute_res}", "h3, lat, lng, SUM(n) AS d_permits", box,
+                               f"AND kind IN ({kinds}) AND month >= ?", [*demand.kinds, window[0]], "GROUP BY h3, lat, lng")
+        frames.append(permits[["h3", "lat", "lng"]])
+    comp = None
+    if btype and table_exists(con, f"poi_counts_r{compute_res}"):
+        comp = _cells_query(con, f"poi_counts_r{compute_res}", "h3, lat, lng, n AS s", box, "AND type_id = ?", [p.type_id])
+        frames.append(comp[["h3", "lat", "lng"]])
+
+    allc = pd.concat(frames).drop_duplicates("h3").reset_index(drop=True)
+    allc = allc.merge(cells[["h3", "pop", "d_census"]], how="left", on="h3")
+    if demand and demand.source == "permits":
+        allc = allc.merge(permits[["h3", "d_permits"]], how="left", on="h3")
+        allc["d"] = allc["d_permits"]
     else:
-        # Heksagony w pobliżu punktu. Pierścienie H3 leżą w odległości od 0,87·k·odstęp do k·odstęp
-        # od środka, stąd współczynnik 1,16 — żeby zasięg na pewno objął cały okrąg buforu.
-        center = h3.latlng_to_cell(p.lat, p.lng, res)
-        k = math.ceil(1.16 * reach_m / 1000 / HEX_SPACING_KM[res]) + 1
-        candidates = list(h3.grid_disk(center, k))
-
-    # „Ląd” = heksagony, w których cokolwiek mamy (ludność, popyt, konkurencja). Tylko one
-    # są punktami źródłowymi i kandydatami do wyświetlenia — dzięki temu morze i teren
-    # za granicą nie dostają heksagonów.
-    pop_cells = _fetch(con, f"SELECT t.h3 FROM hex_pop_r{res} t JOIN cells_df c ON t.h3 = c.h3", candidates)
-    demand = _demand_values(con, res, p, candidates, window)
-    comp = _competitor_counts(con, res, p.type_id, candidates)
-
-    cells = (pop_cells[["h3"]].merge(demand[["h3"]], how="outer", on="h3")
-             .merge(comp[["h3"]], how="outer", on="h3").drop_duplicates())
-    cells = cells.merge(demand, how="left", on="h3").merge(comp, how="left", on="h3").fillna({"d": 0.0, "s": 0.0})
-    cells = cells.reset_index(drop=True)
-
-    if cells.empty:
-        warnings.append(NO_DEMAND_WARNING)
-        return _empty_result(res, h_km, warnings, window)
-
-    latlng = np.array([h3.cell_to_latlng(c) for c in cells["h3"]])
-    xy = to_metric(latlng[:, 0], latlng[:, 1])
-    if poland:
-        in_area = np.ones(len(cells), dtype=bool)
+        allc["d"] = allc["d_census"]
+    if comp is not None:
+        allc = allc.merge(comp[["h3", "s"]], how="left", on="h3")
     else:
-        center_xy = to_metric(np.array([p.lat]), np.array([p.lng]))[0]
-        dist = np.hypot(xy[:, 0] - center_xy[0], xy[:, 1] - center_xy[1])
-        in_buffer = dist <= reach_m
-        cells, latlng, xy = cells[in_buffer], latlng[in_buffer], xy[in_buffer]
-        in_area = (dist <= radius_m)[in_buffer]
+        allc["s"] = 0.0
+    allc = allc.fillna({"pop": 0.0, "d": 0.0, "s": 0.0}).reset_index(drop=True)
 
-    d = cells["d"].to_numpy(float)
-    s = cells["s"].to_numpy(float)
-    if s.sum() == 0:
+    if allc.empty:
+        return _empty_core(display_res, compute_res, radius_km, mode, notes, warnings, window)
+    if mode == "full" and allc["s"].sum() == 0:
         warnings.append(NO_COMPETITORS_WARNING)
 
-    # Sumy ważone jądrem: celem są heksagony obszaru, źródłami — wszystkie z bufora.
-    sums = kernel_sums(xy[in_area], xy, np.column_stack([d, s]), bandwidth_m=h_km * 1000)
+    # --- D i S w okręgu: celem są komórki widoku, źródłem — wszystkie z bufora ---
+    xy = to_metric(allc["lat"].to_numpy(), allc["lng"].to_numpy())
+    in_view = ((allc["lat"] >= min_lat) & (allc["lat"] <= max_lat) &
+               (allc["lng"] >= min_lng) & (allc["lng"] <= max_lng)).to_numpy()
+    if not in_view.any():
+        return _empty_core(display_res, compute_res, radius_km, mode, notes, warnings, window)
+    sums = catchment_sums(xy[in_view], xy, allc[["d", "s"]].to_numpy(float), radius_m=radius_km * 1000)
     D, S = sums[:, 0], sums[:, 1]
-    a_d, a_s = d[in_area], s[in_area]
-    area_h3 = cells["h3"].to_numpy()[in_area]
-    area_latlng = latlng[in_area]
-    area_xy = xy[in_area]
-
-    total_demand = float(a_d.sum())
-    if total_demand == 0:
-        warnings.append(NO_DEMAND_WARNING)
-
     sc = score(D, S)
-    keep = (D > 0) | (S > 0)
-    # Percentyl liczymy tylko wśród pokazywanych heksagonów (tak samo jak klasy kolorów); puste
-    # heksagony zaniżałyby rangi i najgorsze miejsce na mapie nie miałoby percentyla 0.
-    pct = np.zeros(len(sc), dtype=int)
-    pct[keep] = percentile_rank(sc[keep])
-    hexes = [[area_h3[i], _round1(sc[i]), _round1(D[i]), _round1(S[i]), _round1(a_d[i]), _round1(a_s[i]), int(pct[i])]
-             for i in np.flatnonzero(keep)]
+    t = allc[in_view]
+    t_h3, t_lat, t_lng, t_pop = t["h3"].to_numpy(), t["lat"].to_numpy(), t["lng"].to_numpy(), t["pop"].to_numpy()
 
-    top = []
-    min_sep_km = max(2 * h_km, 20) if poland else 2 * h_km    # w skali kraju miejsca z top-5 mają być od siebie daleko
-    for i in pick_top(sc, D, area_xy, min_sep_m=min_sep_km * 1000):
-        lat, lng = float(area_latlng[i][0]), float(area_latlng[i][1])
-        name = nearest_place_name(con, lat, lng) or f"okolice {lat:.3f}, {lng:.3f}"
-        top.append({"h3": area_h3[i], "lat": lat, "lng": lng, "name": name,
-                    "score": _round1(sc[i]), "D": _round1(D[i]), "S": _round1(S[i])})
-
-    result = {
-        "res": res,
-        "bandwidth_km": h_km,
-        "hexes": hexes,
-        "top": top,
-        "stats": {
-            "n_hex": len(hexes),
-            "n_competitors": int(a_s.sum()),
-            "total_demand": _round1(total_demand),
-            "score_breaks": [round(b, 2) for b in quantile_breaks(sc[keep])],
-            "D_breaks": [round(b, 2) for b in quantile_breaks(D[keep])],
-            "S_breaks": [round(b, 2) for b in quantile_breaks(S[keep])],
-        },
-        "warnings": warnings,
-    }
-    if window is not None:
-        result["permits_period"] = _period(window)
-    return result
-
-
-@functools.lru_cache(maxsize=128)
-def _cached(key: AnalysisParams) -> dict:
-    return run_analysis(cursor(), key)
-
-
-def cached_analysis(p: AnalysisParams) -> dict:
-    """run_analysis z pamięcią podręczną (LRU, 128 wyników).
-
-    Klucz to parametry zaokrąglone: położenie do 3 miejsc po przecinku (~100 m), promień do 0,5 km,
-    zasięg klienta do 0,1 km — drobne różnice (np. przesunięcie pinezki o kilka metrów) trafiają
-    w ten sam wynik. W trybie „cała Polska” położenie i promień nie mają znaczenia. Błędy nie są cache'owane.
-    """
-    if p.scope == "poland":
-        key = AnalysisParams(p.type_id, p.demand_id, scope="poland",
-                             bandwidth_km=_round_to(p.bandwidth_km, 0.1), months=p.months)
+    # --- agregacja do display_res (średnia ważona ludnością) ---
+    if compute_res > display_res:
+        out_h3, vals = weighted_parent_mean(t_h3, np.column_stack([sc, D, S]), t_pop, display_res)
+        sc, D, S = vals[:, 0], vals[:, 1], vals[:, 2]
+        centers = np.array([h3.cell_to_latlng(c) for c in out_h3])
+        out_lat, out_lng = centers[:, 0], centers[:, 1]
     else:
-        key = AnalysisParams(p.type_id, p.demand_id, round(p.lat, 3), round(p.lng, 3), _round_to(p.radius_km, 0.5),
-                             "local", _round_to(p.bandwidth_km, 0.1), p.months)
-    return _cached(key)
+        out_h3, out_lat, out_lng = t_h3, t_lat, t_lng
+
+    # --- które heksagony pokazujemy i jak je kolorujemy ---
+    keep = {"full": (D > 0) | (S > 0), "demand": D > 0, "competition": S > 0}[mode]
+    if not keep.any():
+        return _empty_core(display_res, compute_res, radius_km, mode, notes, warnings, window)
+    out_h3, out_lat, out_lng = out_h3[keep], out_lat[keep], out_lng[keep]
+    sc, D, S = sc[keep], D[keep], S[keep]
+    metrics: dict[str, np.ndarray] = {}
+    if mode == "full":
+        metrics["score"] = sc
+    if mode in ("full", "demand"):
+        metrics["D"] = D
+    if mode in ("full", "competition"):
+        metrics["S"] = S
+    pct = {name: percentile_rank(values) for name, values in metrics.items()}
+
+    def col(values: np.ndarray, name: str, i: int):
+        return round(float(values[i]), 2) if name in metrics else None
+
+    def pct_of(name: str, i: int):
+        return int(pct[name][i]) if name in pct else None
+
+    hexes = [[out_h3[i], col(sc, "score", i), col(D, "D", i), col(S, "S", i),
+              pct_of("score", i), pct_of("D", i), pct_of("S", i)] for i in range(len(out_h3))]
+    top_metric = {"full": "score", "demand": "D", "competition": "S"}[mode]
+    response = {"mode": mode, "display_res": display_res, "compute_res": compute_res, "radius_km": radius_km,
+                "hexes": hexes, "legend": {name: legend_values(v) for name, v in metrics.items()},
+                "top_metric": top_metric, "notes": notes, "warnings": warnings}
+    if window is not None:
+        response["permits_period"] = _period(window)
+    floor = S if mode == "competition" else D           # tryb competition: bez progu popytu (D := S)
+    return ViewCore(response, top_metric, out_h3, out_lat, out_lng, to_metric(out_lat, out_lng),
+                    metrics[top_metric], floor)
 
 
-def _round_to(value: float | None, step: float) -> float | None:
-    return None if value is None else round(round(value / step) * step, 6)
+def _pick_top(con, core: ViewCore, bbox, radius_km: float) -> list[dict]:
+    """Top-5 wśród heksagonów w DOKŁADNYM bbox widoku, z odstępem min. max(2r, 1/6 przekątnej widoku)."""
+    if core.h3 is None:
+        return []
+    min_lng, min_lat, max_lng, max_lat = bbox
+    inside = (core.lat >= min_lat) & (core.lat <= max_lat) & (core.lng >= min_lng) & (core.lng <= max_lng)
+    idx = np.flatnonzero(inside)
+    if len(idx) == 0:
+        return []
+    diag_km = math.hypot((max_lng - min_lng) * 111.32 * math.cos(math.radians((min_lat + max_lat) / 2)),
+                         (max_lat - min_lat) * 110.54)
+    min_sep_m = max(2 * radius_km, diag_km / 6) * 1000
+    chosen = pick_top(core.value[idx], core.floor[idx], core.xy[idx], min_sep_m=min_sep_m)
+    top = []
+    for k in chosen:
+        i = idx[k]
+        lat, lng = float(core.lat[i]), float(core.lng[i])
+        name = nearest_place_name(con, lat, lng) or f"okolice {lat:.3f}, {lng:.3f}"
+        top.append({"h3": core.h3[i], "lat": lat, "lng": lng, "name": name, "value": round(float(core.value[i]), 2)})
+    return top
 
 
-on_reset(_cached.cache_clear)   # zmiana/ponowne otwarcie bazy unieważnia wyniki
+def run_view(con: duckdb.DuckDBPyConnection, p: ViewParams) -> dict:
+    """Pełna odpowiedź /api/view dla bbox dokładnie takiego, jaki podano (bez przyciągania i bez cache)."""
+    core = _compute_core(con, p)
+    return {**core.response, "top": _pick_top(con, core, p.bbox, core.response["radius_km"])}
+
+
+@functools.lru_cache(maxsize=64)
+def _cached_core(key: ViewParams) -> ViewCore:
+    return _compute_core(cursor(), key)
+
+
+def cached_view(p: ViewParams) -> dict:
+    """run_view z pamięcią podręczną rdzenia (LRU 64) na bbox przyciągniętym do siatki.
+
+    Małe przesunięcie mapy daje ten sam przyciągnięty bbox → wynik z cache. Top-5 liczymy za każdym
+    razem dla dokładnego bbox widoku (tanie: tylko ranking gotowych heksagonów). Błędy nie są cache'owane.
+    """
+    display_res = display_res_for_zoom(p.zoom)
+    key = ViewParams(p.type_id, p.demand_id, snap_bbox(p.bbox, display_res), _ZOOM_OF_RES[display_res],
+                     round(p.bandwidth_km, 2), p.months)
+    core = _cached_core(key)
+    return {**core.response, "top": _pick_top(cursor(), core, p.bbox, core.response["radius_km"])}
+
+
+on_reset(_cached_core.cache_clear)   # zmiana/ponowne otwarcie bazy unieważnia wyniki

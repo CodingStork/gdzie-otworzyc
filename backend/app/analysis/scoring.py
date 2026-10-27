@@ -1,4 +1,4 @@
-"""Wynik „klienci na 1 konkurenta”, percentyle, klasy kolorów i wybór najlepszych miejsc."""
+"""Wynik „klienci na firmę”, percentyle (kolory), legenda, agregacja do grubszej siatki i wybór najlepszych miejsc."""
 import h3
 import numpy as np
 import pandas as pd
@@ -23,18 +23,6 @@ def percentile_rank(x: np.ndarray) -> np.ndarray:
         return np.array([100])
     ranks = rankdata(x, method="average")  # 1..n
     return np.rint((ranks - 1) / (n - 1) * 100).astype(int)
-
-
-def quantile_breaks(x: np.ndarray, k: int = 5) -> list[float]:
-    """Granice k klas kwantylowych (k−1 liczb, rosnące, bez powtórzeń) do legendy mapy.
-
-    Klasy kwantylowe mają w każdej klasie podobną liczbę heksagonów, więc kolory
-    są dobrze wykorzystane nawet przy mocno skośnym rozkładzie.
-    """
-    if len(x) == 0:
-        return []
-    cuts = np.quantile(x, [i / k for i in range(1, k)])
-    return [float(v) for v in np.unique(cuts)]
 
 
 def pick_top(scores: np.ndarray, D: np.ndarray, xy: np.ndarray, min_sep_m: float,

@@ -3,9 +3,8 @@
 v2 (`catchment_sums`): suma wartości źródeł w OKRĘGU o promieniu = zasięg klienta. To klasyczna
 metoda 2SFCA (two-step floating catchment area) z progiem odległości: dla każdego miejsca okrąg
 zasięgu „pływa” po mapie, a my zliczamy w nim popyt (mieszkańców) i podaż (konkurentów). Liczby są
-całkowite i sprawdzalne — w odróżnieniu od v1 (`kernel_sums`, do usunięcia w Task 5).
-
-v1: sumy ważone jądrem Gaussa (estymacja jądrowa, KDE).
+całkowite i sprawdzalne — w odróżnieniu od v1, gdzie źródła ważyło jądro Gaussa (K(d) = exp(-d²/2h²)):
+dla klienta „kilka razy dalej niż zasięg” waga wciąż była niezerowa, a sumy nie dało się zweryfikować.
 
 Dla punktu docelowego i sumujemy wartości źródeł j z wagą zależną od odległości:
     K(d) = exp(-d² / (2h²)),   d = odległość, h = szerokość pasma ("zasięg klienta")
@@ -26,27 +25,6 @@ def to_metric(lat: np.ndarray, lng: np.ndarray) -> np.ndarray:
     """Zamienia współrzędne geograficzne (WGS84) na metry w EPSG:2180; wynik N×2 (x, y)."""
     x, y = _TO_2180.transform(np.asarray(lng, dtype=float), np.asarray(lat, dtype=float))
     return np.column_stack([x, y])
-
-
-def kernel_sums(target_xy: np.ndarray, source_xy: np.ndarray, values: np.ndarray, bandwidth_m: float) -> np.ndarray:
-    """Dla każdego celu: suma values[j] · K(odległość do źródła j).
-
-    `values` ma kształt (M,) albo (M, k) — wtedy liczymy k sum naraz (np. popyt i konkurencja).
-    Wynik ma kształt (N,) albo (N, k).
-    """
-    values = np.asarray(values, dtype=float)
-    out_shape = (len(target_xy),) + values.shape[1:]
-    if len(source_xy) == 0 or len(target_xy) == 0:
-        return np.zeros(out_shape)
-
-    radius = 3 * bandwidth_m  # obcięcie jądra
-    targets, sources = cKDTree(target_xy), cKDTree(source_xy)
-    # Wszystkie pary (cel, źródło) bliższe niż radius — drzewa przeszukują tylko sąsiedztwo,
-    # zamiast liczyć N×M odległości.
-    pairs = targets.sparse_distance_matrix(sources, radius, output_type="ndarray")
-    weights = np.exp(-(pairs["v"] ** 2) / (2 * bandwidth_m ** 2))
-    w = coo_matrix((weights, (pairs["i"], pairs["j"])), shape=(len(target_xy), len(source_xy)))
-    return np.asarray(w @ values).reshape(out_shape)
 
 
 def catchment_sums(target_xy: np.ndarray, source_xy: np.ndarray, values: np.ndarray, radius_m: float) -> np.ndarray:
