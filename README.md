@@ -2,42 +2,54 @@
 
 Aplikacja webowa, która na mapie Polski pokazuje, **gdzie jest dużo potencjalnych klientów i mało konkurencji**. Projekt zaliczeniowy z przedmiotu „Analiza danych przestrzennych”.
 
-Wybierasz typ działalności (16 typów), czynnik popytu (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę) i obszar (adres/klik + promień albo cała Polska). W odpowiedzi dostajesz heatmapę **„klienci na 1 konkurenta”**, listę 5 najlepszych miejsc i szczegóły po kliknięciu w heksagon.
+Wybierasz typ działalności (16 typów) i/lub czynnik popytu (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę), ustawiasz **zasięg klienta** (0,1–20 km) i oglądasz mapę. Obszar analizy to **widoczny fragment mapy** — wynik odświeża się sam po przesunięciu lub przybliżeniu. Heksagony są tym drobniejsze, im bardziej przybliżysz mapę. Kolor to płynny gradient wg pozycji miejsca w rankingu widocznego obszaru, a kliknięcie mapy pokazuje dymek z dokładnymi liczbami dla klikniętego punktu.
 
-![Salon kosmetyczny w Opolu](docs/screenshots/opole-salon.png)
+![Warszawa — fryzjer i mieszkańcy, zasięg 0,5 km](docs/screenshots/v2-warszawa-fryzjer-z13.png)
+
+## Jak używać
+
+- **Tryby jednego wyboru:** sam typ działalności → mapa **konkurencji** („gdzie są fryzjerzy”); sam czynnik popytu → mapa **popytu** („gdzie mieszka dużo seniorów”); oba → warstwy **Okazja / Popyt / Konkurencja**. Pytajniki „?” obok warstw, zasięgu i legendy wyjaśniają, co pokazują.
+- **Zasięg klienta:** suwak logarytmiczny 0,1–20 km (salon: ok. 1,5 km, market budowlany: 10–20 km). Małe wartości dają ostrą mapę pojedynczych ulic.
+- **Poruszanie się:** przeciągnij i przybliżaj mapę albo wpisz adres w polu na górze panelu (mapa przeskoczy w to miejsce). Link w pasku adresu zapisuje cały widok.
+- **Klik w mapę:** dymek z liczbą mieszkańców i firm w okręgu zasięgu, wynikiem „klienci na firmę po otwarciu Twojej” i 5 najbliższymi konkurentami; na mapie rysuje się okrąg zasięgu.
+- **Najlepsze miejsca:** 5 ponumerowanych miejsc w widocznym obszarze (klik w znacznik lub listę przybliża mapę).
 
 ## Przykłady użycia
 
-- **Salon kosmetyczny**: typ „Salon kosmetyczny”, popyt „Kobiety”, punkt w Opolu, promień 10 km → ciemne heksagony to miejsca z dużą liczbą kobiet w zasięgu 1,5 km i małą liczbą salonów w OpenStreetMap.
-- **Brukarz**: typ „Brukarstwo”, popyt „Nowe domy jednorodzinne” (ostatnie 24 miesiące), okolice Wrocławia 30 km → skupiska nowo wydawanych pozwoleń na domy, gdzie ludzie będą potrzebować kostki brukowej.
-- **Sklep spożywczy w skali kraju**: „Cała Polska” → mapa w heksagonach ~5,6 km.
-
-| Brukarz pod Wrocławiem | Cała Polska |
+| Sam popyt: seniorzy, Kraków, 1 km | Sama konkurencja: fryzjerzy, Kraków, 1 km |
 |---|---|
-| ![Brukarz](docs/screenshots/wroclaw-brukarz.png) | ![Polska](docs/screenshots/polska-spozywczy.png) |
+| ![Seniorzy](docs/screenshots/v2-krakow-seniorzy-popyt.png) | ![Fryzjerzy](docs/screenshots/v2-krakow-fryzjer-konkurencja.png) |
+
+| Brukarz pod Wrocławiem (min. zasięg 1 km dla pozwoleń) | Cała Polska, zasięg 0,1 km |
+|---|---|
+| ![Brukarz](docs/screenshots/v2-wroclaw-brukarz-min-1km.png) | ![Polska](docs/screenshots/v2-polska-z6-zasieg-0-1km.png) |
+
+| Dymek punktu z punktami firm | Telefon (375×812) |
+|---|---|
+| ![Dymek](docs/screenshots/v2-dymek-z-punktami-firm.png) | ![Telefon](docs/screenshots/v2-mobile-dymek.png) |
 
 ## Jak to działa (metoda)
 
-Dla każdego heksagonu *i* siatki H3 liczymy dwie sumy z wagą malejącą z odległością (**estymacja jądrowa, KDE**; uproszczony model dostępności typu 2SFCA):
+Dla każdego heksagonu *i* siatki H3 liczymy dwie sumy w **okręgu o promieniu równym zasięgowi klienta** *r* (klasyczny **2SFCA z progiem odległości**, w wersji uproszczonej):
 
 ```
-D_i = Σ_j d_j · K(odległość_ij)      popyt w zasięgu   (d_j = np. liczba kobiet w heksagonie j)
-S_i = Σ_j s_j · K(odległość_ij)      konkurencja w zasięgu (s_j = liczba firm danego typu w heksagonie j)
-K(d) = exp(−d² / (2h²))              jądro Gaussa, obcięte dla d > 3h
+D_i = Σ d_j     po komórkach j o środku w odległości ≤ r od i   (popyt, np. liczba mieszkańców)
+S_i = Σ s_j     po komórkach j o środku w odległości ≤ r od i   (konkurencja: liczba firm danego typu)
 
-wynik_i = D_i / (S_i + 1)            „klienci na 1 konkurenta”
+wynik_i = D_i / (S_i + 1)           „klienci na firmę po otwarciu Twojej”
 ```
 
-`h` to szerokość pasma — „zasięg klienta” (np. 1,5 km dla salonu, 15 km dla marketu budowlanego); można ją zmienić suwakiem. „+1” zapobiega dzieleniu przez zero.
+„+1” to Ty jako nowy konkurent (i brak dzielenia przez zero). Liczby są całkowite i sprawdzalne — po kliknięciu mapy dymek pokazuje dokładne zliczenia w okręgu.
 
 Najważniejsze decyzje metodyczne (szczegółowo w [docs/sciaga-do-obrony.md](docs/sciaga-do-obrony.md)):
 
-- **Siatka H3** (heksagony) w rozdzielczościach 8 → 7 → 6, zależnie od wielkości obszaru; unikamy zależności wyniku od granic administracyjnych (MAUP).
-- **Interpolacja powierzchniowa**: ludność ze spisu (kwadraty 1 km, EPSG:3035) rozkładamy na heksagony, dzieląc każdy kwadrat na 5×5 punktów.
-- **Odległości w EPSG:2180** (układ metryczny dla Polski), nie w stopniach.
-- **Bufor 3h** wokół obszaru, żeby uniknąć efektu krawędzi.
-- **Top-5** z odstępem ≥ 2h między miejscami (non-maximum suppression) i z odrzuceniem terenów bez ludności.
-- **Geokodowanie obrębów ewidencyjnych** (ULDK GUGiK) dla pozwoleń na budowę — dokładność do obrębu, nie do działki.
+- **Metoda dasymetryczna:** ludność ze spisu (kwadraty 1 km, EPSG:3035) rozkładamy na heksagony H3 **res 9** (~0,1 km²) proporcjonalnie do wagi budynków mieszkalnych z OpenStreetMap (powierzchnia × kondygnacje × współczynnik typu). Komórki bez budynków rozkładamy równomiernie.
+- **Poziomy szczegółowości (LOD):** siatka H3 res 9 → 5, rysowana w rozdzielczości zależnej od zoomu (zoom ≥ 12 → res 9, 10–11 → 8, 9 → 7, 7–8 → 6, ≤ 6 → 5). Liczymy na najdrobniejszej rozdzielczości, na jaką pozwala koszt, i agregujemy średnią ważoną liczbą mieszkańców; przy zmianie poziomu siatki płynnie się zamieniają.
+- **Gradient wg percentyla** (YlGnBu): kolor = pozycja w rankingu widocznego obszaru; legenda podaje wartości dla min / 25% / mediany / 75% / 90% / max.
+- **Cache i przyciąganie bbox** do siatki: małe przesunięcie mapy nie liczy wyniku od nowa i nie zmienia kolorów.
+- **Odległości w EPSG:2180** (układ metryczny dla Polski), nie w stopniach; bufor *r* wokół widoku usuwa efekt krawędzi.
+- **Top-5** z odstępem ≥ max(2*r*, 1/6 przekątnej widoku) (non-maximum suppression) i z odrzuceniem terenów bez ludności.
+- **Geokodowanie obrębów ewidencyjnych** (ULDK GUGiK) dla pozwoleń na budowę — dokładność do obrębu, stąd minimalny zasięg 1 km dla nowych domów.
 
 ## Źródła danych i licencje
 
@@ -57,10 +69,11 @@ Podkład: pierwotnie planowano CARTO Positron, ale darmowe kafelki CARTO wymagaj
 ```
             (raz + odświeżanie)                                     (na żądanie)
  ┌────────────── ETL (Python) ───────────────┐      ┌──────── Backend FastAPI ────────┐     ┌──── Frontend ────┐
- │ Eurostat Census GRID 2021 → hex_pop        │      │ /api/catalog                    │     │ index.html       │
- │ Geofabrik poland.osm.pbf  → poi, places    │ ───▶ │ /api/analyze  (jądro Gaussa,    │ ──▶ │ Leaflet + h3-js  │
- │ GUNB RWDZ CSV + ULDK      → permits        │DuckDB│   ranking, top-5)               │ JSON│ (bez buildowania)│
- │ agregacja do H3 res 8 → 7 → 6              │ plik │ /api/poi /api/geocode /api/meta │     │                  │
+ │ Eurostat Census GRID 2021 → hex_pop_r9     │      │ /api/catalog                    │     │ index.html       │
+ │ Geofabrik poland.osm.pbf  → poi, places,   │ ───▶ │ /api/view (okrąg zasięgu,       │ ──▶ │ Leaflet + h3-js  │
+ │   building_weights (dasymetria)            │DuckDB│   LOD, percentyle, top-5)       │ JSON│ (bez buildowania)│
+ │ GUNB RWDZ CSV + ULDK      → permits        │ plik │ /api/point (dymek punktu)       │     │                  │
+ │ agregacja do H3 res 9 → 8 → 7 → 6 → 5      │      │ /api/poi /api/geocode /api/meta │     │                  │
  └────────────────────────────────────────────┘      └─────────────────────────────────┘     └──────────────────┘
 ```
 
@@ -71,8 +84,8 @@ Struktura repozytorium:
 ```
 backend/app/        FastAPI: main.py, config.py, db.py, catalog.py, api/routes.py,
                     analysis/{kernel,scoring,resolution,service}.py, services/geocode.py
-etl/                download.py, population.py, osm_poi.py, permits.py, geocode_obreby.py,
-                    aggregate.py, run_all.py, sanity.py
+etl/                download.py, osm_poi.py, buildings.py, population.py, permits.py,
+                    geocode_obreby.py, aggregate.py, meta.py, run_all.py, sanity.py
 frontend/           index.html, css/style.css, js/{app,api,map,ui,colors}.js
 tests/              pytest (małe fixture'y, baza testowa budowana w locie)
 docs/               specyfikacja, plan, źródła danych, raport ETL, ściąga do obrony
@@ -85,14 +98,14 @@ Wymagania: Windows 11, ≥ 16 GB RAM, ≥ 20 GB wolnego dysku, dostęp do intern
 ```powershell
 winget install --id=astral-sh.uv -e      # menedżer Pythona (po instalacji otwórz nową powłokę)
 uv sync                                   # Python 3.13 + biblioteki (środowisko .venv)
-uv run python -m etl.run_all              # ETL: pobieranie i przetwarzanie danych (kilka godzin, jednorazowo)
+uv run python -m etl.run_all              # ETL: pobieranie i przetwarzanie danych (kilka godzin, jednorazowo; budynki OSM ok. 16 min)
 uv run python -m etl.sanity               # kontrola jakości danych (powinno wypisać OK)
 start.bat                                 # serwer: http://localhost:8000
 ```
 
 Uwagi:
 - Używamy Pythona 3.13 zarządzanego przez `uv` (`.python-version`); systemowego Pythona nie trzeba instalować.
-- ETL można przerwać i wznowić — pobieranie i geokodowanie są wznawialne. `--only population,aggregate` uruchamia wybrane kroki, `--force` wymusza ponowne wykonanie.
+- ETL można przerwać i wznowić — pobieranie i geokodowanie są wznawialne. `--only buildings,population,aggregate` uruchamia wybrane kroki, `--force` wymusza ponowne wykonanie.
 - Serwer i ETL nie mogą działać jednocześnie (blokada pliku DuckDB).
 - Serwer ULDK (GUGiK) może po godzinie intensywnych zapytań zablokować połączenie (przekierowanie na stronę-pułapkę). Geokodowanie przerywa się wtedy z komunikatem; odczekaj i dokończ: `uv run python -m etl.run_all --only geocode,permits_hex,aggregate --force` (szczegóły i aktualny stan: [docs/raport-etl.md](docs/raport-etl.md)).
 - Testy: `uv run pytest -v`.
@@ -112,8 +125,9 @@ Aplikacja działa na komputerze domowym; z laptopa (np. na uczelni) otwierasz j�
 
 - **OpenStreetMap jest niekompletny**, zwłaszcza dla małych usług (fryzjerzy, brukarze). Wynik „mało konkurencji” może oznaczać „mało wpisów w OSM”; dla typów z oceną „poor” aplikacja ostrzega, że to głównie mapa popytu.
 - **Spis ludności jest z 2021 r.**; uzupełniają go pozwolenia na budowę.
-- **Pozwolenie na budowę ≠ wybudowany dom** (budowa trwa 1–3 lata, część nie rusza), a lokalizacja jest z dokładnością do obrębu ewidencyjnego (miasto: osiedle, wieś: cała wieś).
-- **Założenie równomiernego rozkładu ludności** w kwadracie 1 km podczas interpolacji do heksagonów.
+- **Pozwolenie na budowę ≠ wybudowany dom** (budowa trwa 1–3 lata, część nie rusza), a lokalizacja jest z dokładnością do obrębu ewidencyjnego (miasto: osiedle, wieś: cała wieś) — dlatego zasięg dla nowych domów wynosi co najmniej 1 km.
+- **Ludność w heksagonach to szacunek modelowy** (metoda dasymetryczna): spis podaje tylko kwadraty 1 km, a rozkład wewnątrz kwadratu wynika z wag budynków OSM (nie znamy liczby mieszkań w budynku).
+- **Kolory są względne dla widoku** (percentyl), a liczby „klientów na firmę” są zawyżone, bo OSM ma ok. 1/3–1/4 firm — mapę czytamy porównawczo.
 - Liczba „nowych budynków wielorodzinnych” to liczba inwestycji, nie mieszkań (rejestr nie podaje liczby lokali).
 - Wynik jest rankingiem pomocniczym, nie prognozą zysku.
 
@@ -125,4 +139,4 @@ Aplikacja działa na komputerze domowym; z laptopa (np. na uczelni) otwierasz j�
 - **M9** integracja CEIDG jako drugie źródło konkurencji (kody PKD są już w katalogu),
 - **M10** dokładne geokodowanie działek dla ostatnich 24 miesięcy.
 
-Dokumentacja: [specyfikacja](docs/superpowers/specs/2026-10-26-gdzie-otworzyc-design.md), [plan implementacji](docs/superpowers/plans/2026-10-26-gdzie-otworzyc.md), [źródła danych](docs/zrodla-danych.md), [raport ETL](docs/raport-etl.md), [ściąga do obrony](docs/sciaga-do-obrony.md).
+Dokumentacja: [specyfikacja v1](docs/superpowers/specs/2026-10-26-gdzie-otworzyc-design.md), [specyfikacja v2](docs/superpowers/specs/2026-10-27-widok-dynamiczny-design.md), [plan v1](docs/superpowers/plans/2026-10-26-gdzie-otworzyc.md), [plan v2](docs/superpowers/plans/2026-10-27-widok-dynamiczny.md), [źródła danych](docs/zrodla-danych.md), [raport ETL](docs/raport-etl.md), [ściąga do obrony](docs/sciaga-do-obrony.md).

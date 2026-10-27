@@ -113,3 +113,32 @@ Rozmiar `data/app.duckdb`: ok. 277 MB (v1: 93 MB).
 - **Brak notatki o „najmniejszym liczonym zasięgu” przy `compute_res = 9`**: drobniejszej siatki nie ma, więc prośba „przybliż mapę” wprowadzałaby w błąd. Notatka pojawia się tylko przy grubszym `compute_res`.
 - **Obsługa zablokowanej bazy** jest globalnym handlerem wyjątku `DatabaseBusy` w `main.py` (obejmuje wszystkie endpointy), a nie obsługą w każdym endpoincie osobno.
 - **`poi.h3` zostaje w res 8** (kolumna z v1, niewykorzystywana przez v2); `poi_counts_r9` liczone jest z `poi.lat/lng`.
+
+## Czasy odpowiedzi API v2 (prawdziwa baza, `GET /api/view`)
+
+Pomiar `curl`-em z Pythona na tym samym komputerze (pierwsze zapytanie po starcie serwera obejmuje otwarcie bazy) oraz `performance.now()` w przeglądarce dla widoku całej Polski.
+
+| Scenariusz | Czas | Heksagony (rysowane) | display/compute res |
+|---|---|---|---|
+| Warszawa, zoom 13, fryzjer + mieszkańcy, zasięg 0,5 km (pierwsze zapytanie) | 2,2 s | 2 489 | 9 / 9 |
+| to samo, z pamięci podręcznej | 0,04 s | 2 489 | 9 / 9 |
+| Warszawa, zoom 11, zasięg 1,5 km | 0,20 s | 4 707 | 8 / 9 |
+| Mazowsze, zoom 9, zasięg 1,5 km | 0,37 s | 15 222 | 7 / 8 |
+| **Cała Polska, zoom 6, zasięg 0,1 km** | **0,22 s** (w przeglądarce 0,22–0,24 s) | 1 445 | 5 / 7 |
+| Cała Polska, zoom 6, zasięg 20 km (market + nowe budynki) | 0,12–0,14 s | 1 445 | 5 / 6 |
+| Kraków, zoom 13, tylko seniorzy, 1 km | 0,07 s | 3 820 | 9 / 9 |
+| Wrocław, zoom 10, brukarz + nowe domy, 0,3 km (→ 1 km) | 0,16 s | 3 179 | 8 / 9 |
+
+Wszystkie wyraźnie poniżej 5 s. Przy zoomie 6 `compute_res` to 7 (a nie 8): bbox przyciągnięty do siatki 2° jest większy od samej Polski, więc estymata liczby komórek res 8 przekracza limit 800 tys.
+
+## Weryfikacja w przeglądarce (v2)
+
+Wbudowana przeglądarka, okno 1280×800 i emulacja telefonu 375×812; zrzuty w `docs/screenshots/v2-*.png`. Sprawdzone: tryby (sam typ → tylko „Konkurencja”, sam popyt → tylko „Popyt”, oba → trzy warstwy), automatyczne odświeżanie po przesunięciu/zoomie, płynne przejście między rozdzielczościami (próbkowanie `opacity` paneli: stara siatka gaśnie 0,70 → 0, nowa rośnie 0 → 0,70 w ok. 250 ms), pytajniki, link z hashem po przeładowaniu, notatka o min. 1 km dla pozwoleń, notatka o przybliżeniu przy małym zoomie, **kliknięcie heksagonu zawsze daje dymek z liczbami i okrąg, nigdy pinezkę** (także z włączonymi punktami firm i po kliknięciu pozycji top-5). **Nie sprawdzono:** dostępu z drugiego urządzenia (Tailscale) ani Safari/Firefox.
+
+## Dodatkowe odchylenia i uwagi z implementacji frontendu
+
+- Statyczne pliki frontendu są serwowane z `Cache-Control: no-cache` (przeglądarka potrafiła uruchomić stary `index.html` z nowym `app.js`).
+- Na telefonie na czas otwarcia dymku chowają się kontrolki warstw/legenda; legenda jest tam niższa (bez podpisu 90%).
+- Zasięg < 1 km dla pozwoleń: suwak pokazuje wybraną wartość, a faktyczny zasięg (1 km) podaje notatka i dymek.
+- Eurostat przypisuje komórki graniczne (np. „DE-PL”) do Polski w całości — pojedyncze heksagony tuż za granicą (np. po niemieckiej stronie Nysy) mają więc ludność i mogą trafić do top-5; to ograniczenie danych z v1.
+- Top-5 jest liczone dla widocznego obszaru, więc po „przelocie” do wskazanego miejsca lista się zmienia.
