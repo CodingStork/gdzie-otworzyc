@@ -45,7 +45,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("retail", "Handel / gastro / sport"),
 )
 
-POOR_WARNING = "Dane o firmach tego typu w OpenStreetMap są bardzo niepełne. Traktuj mapę głównie jako mapę popytu."
+POOR_WARNING = "Dane o firmach tego typu (OpenStreetMap, Overture Maps) są bardzo niepełne. Traktuj mapę głównie jako mapę popytu."
 MONTHS_OPTIONS = (12, 24, 36)
 DEFAULT_MONTHS = 24
 

@@ -25,7 +25,7 @@ from backend.app.db import DatabaseMissing, cursor, on_reset
 from etl.aggregate import table_exists
 
 NO_COMPETITORS_WARNING = (
-    "Nie znaleziono konkurencji w OpenStreetMap w tym obszarze — wynik pokazuje sam popyt."
+    "Nie znaleziono konkurencji w OpenStreetMap ani w Overture Maps w tym obszarze — wynik pokazuje sam popyt."
 )
 PERMITS_MISSING_WARNING = "Dane o pozwoleniach nie zostały jeszcze zaimportowane."
 MIN_REACH_KM = 0.3                # dane o ludności mają rozdzielczość ok. 300 m (komórka H3 res 9)

@@ -1,30 +1,27 @@
-// Punkt startowy frontendu: spina mapę, panel boczny i API.
+// Punkt startowy frontendu: spina mapę, panele (lewy = ustawienia, prawy = wnioski) i API.
 // Przepływ (Shneiderman 1996: przegląd → zawężenie → szczegóły na żądanie):
 //   1. użytkownik wybiera branżę/klientów, miejsce i promień → „Pokaż mapę” (zawężenie),
-//   2. mapa okolicy jako mgła (przegląd),
-//   3. kliknięcie w mapę pokazuje szczegóły punktu (okrąg zasięgu, drobne heksagony, liczby).
+//   2. mapa okolicy jako mgła + podsumowanie obszaru po prawej (przegląd),
+//   3. kliknięcie W okręgu pokazuje szczegóły punktu (okrąg zasięgu, konkurenci, liczby),
+//      kliknięcie POZA okręgiem wybiera nowe miejsce.
 // Ruch mapy NICZEGO nie przelicza — zapytania idą tylko po „Pokaż mapę” i po zmianie ustawień.
 import { getCatalog, getMeta, getPoi, point, surface } from './api.js';
-import { logPosition, logScale } from './colors.js';
+import { logPosition, logScale, trendColor, trendPosition, trendScale } from './colors.js';
 import { initMap } from './map.js';
 import * as ui from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 const map = initMap('map');
 
-// place: wybrane miejsce {lat, lng, name}; result: ostatnia odpowiedź /api/surface; used: ustawienia, dla których ją policzono.
-const state = { loading: false, place: null, result: null, used: null, controller: null, requestId: 0 };
+// place: wybrane miejsce {lat, lng, name}; result: ostatnia odpowiedź /api/surface; used: ustawienia, dla których ją policzono;
+// preview: wskazano nowe miejsce, a mapa pokazuje jeszcze stary obszar; pendingNote: dodatkowa notatka (np. po podniesieniu zasięgu).
+const state = { loading: false, place: null, result: null, used: null, controller: null, requestId: 0, preview: false, pendingNote: null };
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 const NEED_SELECTION = 'Wybierz branżę lub klientów.';
 const NEED_PLACE = 'Wybierz miejsce: wpisz miejscowość albo kliknij mapę.';
-
-// Na telefonie zwijamy panel, żeby odsłonić mapę; po zmianie rozmiaru Leaflet musi przeliczyć widok.
-function collapseSheetOnMobile() {
-  if (!isMobile()) return;
-  $('sidebar').classList.add('collapsed');
-  map.invalidateSize();
-}
+const NEW_PLACE_INFO = 'Wybrano nowe miejsce — kliknij »Pokaż mapę«.';
+const MAP_POINT = 'punkt na mapie';   // nazwa miejsca wskazanego kliknięciem (nigdy „wybrane miejsce”)
 
 // Odległość po kuli w km (haversine).
 function distanceKm(lat1, lng1, lat2, lng2) {
@@ -36,11 +33,15 @@ function distanceKm(lat1, lng1, lat2, lng2) {
 
 // ---- Wybór miejsca ----
 
-// Ustawia miejsce: pinezka + okrąg podglądu (po wyniku także przygaszenie poza okręgiem).
-function setPlace(lat, lng, name, { fit = false } = {}) {
+// Ustawia miejsce: pinezka + okrąg. `preview` = nowe miejsce przy widocznym starym wyniku: przerywany okrąg podglądu,
+// bez przygaszenia poza okręgiem, a mgła starego obszaru przygasa do 30% i przycisk „Pokaż mapę” się wyróżnia.
+function setPlace(lat, lng, name, { fit = false, preview = false } = {}) {
   state.place = { lat, lng, name };
+  state.preview = preview;
   ui.setPlaceName(name);
-  map.setArea(lat, lng, ui.radiusKm(), { veil: !!state.result, fit });
+  map.setArea(lat, lng, ui.radiusKm(), { veil: !!state.result && !preview, fit });
+  map.dimFog(preview);
+  ui.highlightShow(preview);
 }
 
 function pickPlace(place) {
@@ -56,23 +57,40 @@ const hasPermits = () => !!(state.result && state.result.permits_period);
 
 // Rysuje wybraną warstwę z ostatniego wyniku — bez ponownego zapytania do serwera.
 function drawLayer() {
-  const result = state.result;
+  const { result, used } = state;
   const layer = ui.currentLayer();
   const values = result.values[layer];
-  const scale = logScale(values);
-  if (!scale) {
-    map.clearFog();
-    ui.hideLegend();
+  if (!values) return;                                   // warstwa z nowszych ustawień — poczekajmy na nowy wynik
+  const title = ui.legendTitle(layer, used.type, used.demand);
+  const period = result.permits_period;
+  if (layer === 'trend') {
+    // Trend ma znak (spadek / wzrost): paleta rozbieżna, środek (bez zmian) przezroczysty.
+    const scale = trendScale(values);
+    if (!scale) {
+      map.clearFog();
+      ui.hideLegend();
+    } else {
+      const t = new Float32Array(values.length);
+      values.forEach((v, i) => { t[i] = v === null ? NaN : trendPosition(v, scale); });
+      map.setFog(result.grid, t, used.radius_km, trendColor);
+      ui.renderTrendLegend(title, 'mniej budów ← → więcej budów (ostatnie 12 mies. vs poprzednie 12)');
+    }
   } else {
-    const t = new Float32Array(values.length);
-    values.forEach((v, i) => { t[i] = v === null ? NaN : logPosition(v, scale); });
-    map.setFog(result.grid, t, state.used.radius_km);
-    // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
-    const period = result.permits_period;
-    const note = period && layer !== 'competition'
-      ? `Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.` : '';
-    ui.renderLegend(ui.legendTitle(layer), scale, note);
+    const scale = logScale(values);
+    if (!scale) {
+      map.clearFog();
+      ui.hideLegend();
+    } else {
+      const t = new Float32Array(values.length);
+      values.forEach((v, i) => { t[i] = v === null ? NaN : logPosition(v, scale); });
+      map.setFog(result.grid, t, used.radius_km);
+      // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
+      const note = period && layer !== 'competition'
+        ? `Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.` : '';
+      ui.renderLegend(title, scale, note);
+    }
   }
+  map.dimFog(state.preview);
   const top = result.top[layer] || [];
   ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place));
   map.setTopMarkers(top, (place) => openPlace(place));
@@ -81,16 +99,18 @@ function drawLayer() {
 function showResult(result, used) {
   state.result = result;
   state.used = used;
+  state.preview = false;
+  ui.highlightShow(false);
   ui.hideIntro();
-  ui.showControls(true);
-  ui.setLayers(result.layers);
-  // Warstwa zapisana w linku (tylko przy pierwszym wyniku po wczytaniu linku).
-  if (state.pendingLayer && result.layers.includes(state.pendingLayer)) ui.selectLayer(state.pendingLayer);
-  state.pendingLayer = null;
+  ui.showInsights();                                     // panel po prawej zmienia szerokość mapy
+  map.invalidateSize();
   map.setArea(used.lat, used.lng, used.radius_km, { veil: true });
   drawLayer();
+  ui.renderSummary(result.summary, { placeName: used.name, demandId: used.demand, permitsPeriod: result.permits_period });
   ui.renderWarnings(result.warnings);
-  ui.renderNotes(result.notes);
+  ui.renderNotes([...(state.pendingNote ? [state.pendingNote] : []), ...result.notes]);
+  state.pendingNote = null;
+  if (isMobile()) ui.setTab('insights');                 // na telefonie po „Pokaż mapę” od razu wnioski
 }
 
 // ---- Zapytanie o mapę ----
@@ -118,7 +138,7 @@ async function run({ fit }) {
   const controller = new AbortController();
   state.controller = controller;
   const mine = ++state.requestId;
-  const used = { ...p, lat: state.place.lat, lng: state.place.lng };
+  const used = { ...p, lat: state.place.lat, lng: state.place.lng, name: state.place.name };
   ui.setLoading(true);
   state.loading = true;
   try {
@@ -131,7 +151,6 @@ async function run({ fit }) {
     showResult(result, used);
     if (fit) map.setArea(used.lat, used.lng, used.radius_km, { veil: true, fit: true });
     writeHash();
-    collapseSheetOnMobile();
   } catch (e) {
     if (e.name === 'AbortError') return;   // zastąpione nowszym zapytaniem
     if (mine !== state.requestId) return;
@@ -155,8 +174,8 @@ async function showPointAt(lat, lng) {
   const u = state.used;
   const mine = ++pointRequest;
   try {
-    // Konkurenci do narysowania: firmy z OSM w prostokącie okręgu zasięgu, przycięte do okręgu.
-    // Zasięg efektywny (dla pozwoleń min. 1 km) znamy dopiero z odpowiedzi, więc prostokąt liczymy z zapasem.
+    // Konkurenci do narysowania: firmy (OSM i Overture) w prostokącie okręgu zasięgu, przycięte do okręgu.
+    // Zasięg efektywny (min. 0,3 km, dla pozwoleń 1 km) znamy dopiero z odpowiedzi, więc prostokąt liczymy z zapasem.
     const reach = Math.max(u.reach_km, 1);
     const dlat = reach / 110.54;
     const dlng = reach / (111.32 * Math.cos(lat * Math.PI / 180));
@@ -166,8 +185,7 @@ async function showPointAt(lat, lng) {
     ]);   // brak konkurentów na mapie (poi == null) nie blokuje dymku
     if (mine !== pointRequest) return;
     const competitors = poi ? poi.items.filter((c) => distanceKm(lat, lng, c.lat, c.lng) <= data.radius_km) : [];
-    map.showDetails(lat, lng, data.radius_km, data.cells, competitors,
-      ui.pointPopup(data, () => useAsCenter(lat, lng)));
+    map.showDetails(lat, lng, data.radius_km, competitors, ui.pointPopup(data, () => useAsCenter(lat, lng)));
   } catch (e) {
     if (mine === pointRequest) ui.showError(e.message);
   }
@@ -175,27 +193,39 @@ async function showPointAt(lat, lng) {
 
 // Wskazane miejsce (z listy top-5 albo ze znacznika): przybliżamy mapę i pokazujemy szczegóły.
 function openPlace(place) {
+  if (isMobile()) ui.collapseSheet();                    // arkusz zasłaniałby mapę i dymek
   map.safeFlyTo(place.lat, place.lng, Math.max(map.getView().zoom, 13));
-  collapseSheetOnMobile();
   showPointAt(place.lat, place.lng);
 }
 
 // „Ustaw tu środek obszaru” w dymku: ten punkt staje się środkiem i mapa jest liczona od nowa.
 function useAsCenter(lat, lng) {
   discardPoint();
-  setPlace(lat, lng, 'wybrany punkt');
+  setPlace(lat, lng, MAP_POINT);
   run({ fit: true });
 }
 
-// Kliknięcie w mapę: bez wyniku ustawia miejsce, z wynikiem pokazuje szczegóły.
+// Kliknięcie w mapę:
+//   • bez wyniku (albo gdy właśnie wskazano nowe miejsce) — ustawia miejsce,
+//   • w okręgu obszaru — szczegóły punktu,
+//   • poza okręgiem — nowe miejsce (podgląd; trzeba kliknąć »Pokaż mapę«).
 function onMapClick(lat, lng) {
   if (!state.result) {
-    setPlace(lat, lng, 'punkt na mapie');
+    setPlace(lat, lng, MAP_POINT);
     ui.showInfo('');
     writeHash();
     return;
   }
-  showPointAt(lat, lng);
+  const u = state.used;
+  if (!state.preview && distanceKm(lat, lng, u.lat, u.lng) <= u.radius_km) {
+    showPointAt(lat, lng);
+    return;
+  }
+  discardPoint();
+  setPlace(lat, lng, MAP_POINT, { preview: true });
+  ui.showInfo(NEW_PLACE_INFO);
+  if (isMobile()) ui.setTab('settings');                 // tam jest przycisk „Pokaż mapę”
+  writeHash();
 }
 
 // ---- Stan w adresie URL (#type=…&demand=…&reach=…&m=…&layer=…&lat=…&lng=…&r=…) — link można komuś wysłać ----
@@ -218,12 +248,13 @@ function applyHash() {
   const lng = Number(h.get('lng'));
   if (!h.get('lat') || !h.get('lng') || !Number.isFinite(lat) || !Number.isFinite(lng)) return false;
   if (!h.get('type') && !h.get('demand')) return false;
-  ui.setSelection({
+  const clamped = ui.setSelection({
     type: h.get('type'), demand: h.get('demand'), reach: Number(h.get('reach')) || null,
     months: h.get('m'), radius: Number(h.get('r')) || null,
   });
-  setPlace(lat, lng, h.get('n') || 'wybrane miejsce', { fit: true });
-  state.pendingLayer = h.get('layer');
+  state.pendingNote = clamped ? ui.MIN_REACH_NOTE : null;   // stary link z zasięgiem < 0,3 km
+  if (h.get('layer')) ui.selectLayer(h.get('layer'));
+  setPlace(lat, lng, h.get('n') || MAP_POINT, { fit: true });
   return true;
 }
 
@@ -233,23 +264,21 @@ map.onMapClick(onMapClick);
 // Zmiana ustawień: po wyniku liczymy od nowa (z opóźnieniem), przed wynikiem tylko odświeżamy okrąg podglądu.
 function onFormChange() {
   discardPoint();
-  ui.showInfo('');
+  ui.showInfo(state.preview ? NEW_PLACE_INFO : '');
   if (state.result || state.loading) scheduleRun(false);   // także w trakcie pierwszego zapytania
   else if (state.place) map.setArea(state.place.lat, state.place.lng, ui.radiusKm(), { veil: false });
   writeHash();
 }
 
 ui.onShowClick(() => { clearTimeout(runTimer); run({ fit: true }); });
-document.querySelectorAll('input[name=layer]').forEach((el) => el.addEventListener('change', () => {
+ui.onLayerChange(() => {
   discardPoint();
-  drawLayer();
+  if (state.result) drawLayer();
   writeHash();
-}));
+});
 $('opacity-input').addEventListener('input', () => map.setFogOpacity(Number($('opacity-input').value)));
 
-// Mobile: uchwyt zwija i rozwija arkusz.
-$('sheet-handle').addEventListener('click', () => $('sidebar').classList.toggle('collapsed'));
-
+ui.initTabs(() => map.invalidateSize());
 ui.renderHelp();
 ui.initSearch(pickPlace);
 

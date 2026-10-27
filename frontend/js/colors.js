@@ -33,12 +33,14 @@ function quantile(sorted, q) {
   return i + 1 < sorted.length ? sorted[i] + (sorted[i + 1] - sorted[i]) * (x - i) : sorted[i];
 }
 
-// Skala z wartości > 0 (null = poza okręgiem): dolna granica = percentyl 5, górna = 99.
-// Zwraca { lo, hi } albo null, gdy nie ma żadnej dodatniej wartości.
+// Skala z wartości > 0 (null = poza okręgiem): górna granica = percentyl 99, dolna = percentyl 5, ale nie niżej niż
+// hi/100 — skala obejmuje najwyżej 2 rzędy wielkości. Wcześniej rozciągała się na 4 rzędy (0,04–320) i prawie
+// wszystko było czerwone. Zwraca { lo, hi } albo null, gdy nie ma żadnej dodatniej wartości.
 export function logScale(values) {
   const positive = values.filter((v) => v > 0).sort((a, b) => a - b);
   if (!positive.length) return null;
-  return { lo: quantile(positive, 0.05), hi: quantile(positive, 0.99) };
+  const hi = quantile(positive, 0.99);
+  return { lo: Math.max(quantile(positive, 0.05), hi / 100), hi };
 }
 
 // Pozycja wartości na skali, 0–1. Wartość ≤ 0 → 0 (przezroczysta); lo == hi → środek palety.
@@ -75,6 +77,41 @@ export function fogGradientCss(direction = 'to top') {
     const t = k / 20;
     const [r, g, b, a] = fogColor(t);
     return `rgba(${r},${g},${b},${a.toFixed(2)}) ${(t * 100).toFixed(0)}%`;
+  });
+  return `linear-gradient(${direction}, ${stops.join(', ')})`;
+}
+
+// ---- Mapa trendu (zmiana w czasie): paleta ROZBIEŻNA ----
+// Zmiana ma znak (spadek / wzrost), więc używamy dwóch barw z neutralnym środkiem: niebieski = mniej budów,
+// czerwony = więcej, wartości bliskie zeru przezroczyste. Paleta sekwencyjna (żółty → czerwony) nie pokazałaby spadku.
+const RDBU = ['#2166ac', '#4393c3', '#92c5de', '#f7f7f7', '#f4a582', '#d6604d', '#b2182b'];
+const RDBU_RGB = RDBU.map((hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)));
+
+// Skala trendu: M = percentyl 99 z |wartości| (bez zer). Zwraca { max } albo null, gdy wszędzie 0.
+export function trendScale(values) {
+  const sizes = values.filter((v) => v !== null && v !== 0).map(Math.abs).sort((a, b) => a - b);
+  return sizes.length ? { max: quantile(sizes, 0.99) } : null;
+}
+
+// Pozycja 0–1 na palecie rozbieżnej: 0 = największy spadek, 0,5 = bez zmian, 1 = największy wzrost.
+export function trendPosition(v, scale) {
+  if (!scale || !(scale.max > 0)) return 0.5;
+  return 0.5 + 0.5 * Math.max(-1, Math.min(1, v / scale.max));
+}
+
+// t 0–1 → [r, g, b, a]; przezroczystość rośnie z odległością od środka (jak w fogAlpha, liczona z |zmiany|).
+export function trendColor(t) {
+  const x = Math.min(1, Math.max(0, t)) * (RDBU_RGB.length - 1);
+  const i = Math.min(Math.floor(x), RDBU_RGB.length - 2);
+  const f = x - i;
+  const [r, g, b] = RDBU_RGB[i].map((c, k) => Math.round(c + (RDBU_RGB[i + 1][k] - c) * f));
+  return [r, g, b, fogAlpha(Math.abs(t - 0.5) * 2)];
+}
+
+export function trendGradientCss(direction = 'to top') {
+  const stops = Array.from({ length: 21 }, (_, k) => {
+    const [r, g, b, a] = trendColor(k / 20);
+    return `rgba(${r},${g},${b},${a.toFixed(2)}) ${(k * 5)}%`;
   });
   return `linear-gradient(${direction}, ${stops.join(', ')})`;
 }

@@ -7,14 +7,15 @@
 import { fogColor } from './colors.js';
 
 const ATTRIBUTION =
-  '© OpenStreetMap contributors © Esri | Ludność: © EU, Eurostat GISCO (Census 2021, zmodyfikowane) | ' +
-  'Pozwolenia: GUNB RWDZ | Geokodowanie: GUGiK ULDK';
+  '© OpenStreetMap contributors © Esri | Firmy: © Overture Maps Foundation | ' +
+  'Ludność: © EU, Eurostat GISCO (Census 2021, zmodyfikowane) | Pozwolenia: GUNB RWDZ | Geokodowanie: GUGiK ULDK';
 // Podkład: Esri „Light Gray Canvas” (jasnoszary, kafelki bez klucza API). Etykiety są osobną warstwą (Reference),
 // żeby leżały NAD mgłą i były czytelne.
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/';
 const MAX_ZOOM = 16; // Esri Light Gray ma kafelki do poziomu 16
 const MIN_ZOOM = 5;
 
+const DIM = 0.3;      // mnożnik przezroczystości przygaszonej mgły
 const UPSCALE = 4;   // obraz mgły jest 4 razy gęstszy niż siatka obliczeniowa (płynne przejścia zamiast kwadratów)
 
 // Leaflet wstawia tekst podpowiedzi jako HTML — nazwy firm z OSM (edytowane przez wolontariuszy)
@@ -25,13 +26,16 @@ function plainText(text) {
   return span;
 }
 
+// Skąd pochodzi firma — pokazujemy w podpowiedzi punktu (kolor ten sam dla obu źródeł).
+export const SOURCE_NAMES = { osm: 'OpenStreetMap', overture: 'Overture Maps' };
+
 const smoothstep = (f) => f * f * (3 - 2 * f);
 
 // Rysuje mgłę: t (pozycje 0–1 na skali, NaN = poza okręgiem) interpolujemy między punktami siatki na gęstszą
 // siatkę pikseli i DOPIERO TERAZ kolorujemy. Interpolowanie wartości (a nie gotowych kolorów) nie daje obwódek
 // ani widocznych kwadratów; funkcja smoothstep wygładza też załamania na granicach komórek.
 // Piksele poza okręgiem są przezroczyste (krawędź wygładzona na 1 piksel). Zwraca data URL obrazu PNG.
-function renderFog(grid, t, radiusKm) {
+function renderFog(grid, t, radiusKm, colorOf) {
   const { nx, ny, cell_m: cell } = grid;
   const w = nx * UPSCALE;
   const h = ny * UPSCALE;
@@ -40,7 +44,7 @@ function renderFog(grid, t, radiusKm) {
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   const image = ctx.createImageData(w, h);
-  const lut = Array.from({ length: 256 }, (_, i) => fogColor(i / 255));
+  const lut = Array.from({ length: 256 }, (_, i) => colorOf(i / 255));
   const radiusPx = radiusKm * 1000 / cell * UPSCALE;
   const cx = w / 2;
   const cy = h / 2;
@@ -92,14 +96,6 @@ function circleRing(lat, lng, radiusKm, points = 120) {
   });
 }
 
-// Kolor drobnego heksagonu w szczegółach: szaroniebieski, ciemniejszy = więcej mieszkańców.
-function cellColor(pop, maxPop) {
-  const t = maxPop > 0 ? Math.sqrt(Math.min(1, pop / maxPop)) : 0;
-  const from = [232, 238, 245];
-  const to = [59, 91, 126];
-  return `rgb(${from.map((c, k) => Math.round(c + (to[k] - c) * t)).join(',')})`;
-}
-
 export function initMap(elementId) {
   const map = L.map(elementId, { maxZoom: MAX_ZOOM, minZoom: MIN_ZOOM }).setView([52.07, 19.48], 6);
 
@@ -128,6 +124,7 @@ export function initMap(elementId) {
   const detailsRenderer = L.svg({ pane: 'details' });
   let fogOverlay = null;
   let opacity = 0.85;
+  let dimmed = false;
 
   // Gdy zmieni się rozmiar kontenera mapy (np. zwinięcie panelu na telefonie), Leaflet musi przeliczyć rozmiar.
   new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById(elementId));
@@ -166,11 +163,12 @@ export function initMap(elementId) {
     },
 
     // Mgła: t = pozycje 0–1 na skali (NaN poza okręgiem), grid z /api/surface.
-    setFog(grid, t, radiusKm) {
+    // colorOf: funkcja t → [r,g,b,a]; domyślnie paleta żółto-czerwona (dla trendu: paleta rozbieżna).
+    setFog(grid, t, radiusKm, colorOf = fogColor) {
       if (fogOverlay) fogOverlay.remove();
       const bounds = [[grid.south, grid.west], [grid.north, grid.east]];
-      fogOverlay = L.imageOverlay(renderFog(grid, t, radiusKm), bounds, {
-        pane: 'fog', interactive: false, opacity,
+      fogOverlay = L.imageOverlay(renderFog(grid, t, radiusKm, colorOf), bounds, {
+        pane: 'fog', interactive: false, opacity: opacity * (dimmed ? DIM : 1),
       }).addTo(map);
     },
     clearFog() {
@@ -178,7 +176,12 @@ export function initMap(elementId) {
     },
     setFogOpacity(value) {
       opacity = value;
-      if (fogOverlay) fogOverlay.setOpacity(value);
+      if (fogOverlay) fogOverlay.setOpacity(value * (dimmed ? DIM : 1));
+    },
+    // Przygaszenie mgły starego obszaru, gdy użytkownik wskazał nowe miejsce (do 30% zwykłej przezroczystości).
+    dimFog(on) {
+      dimmed = on;
+      if (fogOverlay) fogOverlay.setOpacity(opacity * (on ? DIM : 1));
     },
 
     // Wybrane miejsce: pinezka i okrąg obszaru; z `veil` także przygaszenie wszystkiego poza okręgiem
@@ -201,26 +204,15 @@ export function initMap(elementId) {
         interactive: false, keyboard: false,
       }).addTo(areaLayer);
       if (fit) {
-        // Na szerokim ekranie prawy margines zostawiamy kontrolkom (warstwy, legenda), żeby nie zasłaniały okręgu.
-        const wide = window.innerWidth >= 768;
-        map.fitBounds(circle.getBounds(), {
-          animate: false, paddingTopLeft: [20, 20], paddingBottomRight: [wide ? 250 : 20, 20],
-        });
+        map.fitBounds(circle.getBounds(), { animate: false, padding: [20, 20] });
       }
     },
     clearArea() { areaLayer.clearLayers(); },
 
-    // Szczegóły punktu: okrąg zasięgu, drobne heksagony z ludnością [h3, pop], konkurenci [{lat,lng,name}] i dymek.
+    // Szczegóły punktu: okrąg zasięgu, konkurenci [{lat,lng,name,source}] i dymek (bez heksagonów — laikowi nic nie mówią).
     // Zamknięcie dymku usuwa wszystko, co tu narysowano.
-    showDetails(lat, lng, reachKm, cells, competitors, element) {
+    showDetails(lat, lng, reachKm, competitors, element) {
       map.closePopup();   // stary dymek (jego zamknięcie czyści stare szczegóły) — dopiero potem rysujemy nowe
-      const maxPop = cells.reduce((m, c) => Math.max(m, c[1]), 0);
-      for (const [cell, pop] of cells) {
-        L.polygon(h3.cellToBoundary(cell), {
-          renderer: detailsRenderer, interactive: false, weight: 0.5, color: '#ffffff', opacity: 0.8,
-          fillColor: cellColor(pop, maxPop), fillOpacity: 0.7,
-        }).addTo(detailsLayer);
-      }
       L.polygon(circleRing(lat, lng, reachKm), {
         renderer: detailsRenderer, interactive: false, color: '#253494', weight: 1.5, fillOpacity: 0.03,
       }).addTo(detailsLayer);
@@ -228,7 +220,7 @@ export function initMap(elementId) {
         L.circleMarker([p.lat, p.lng], {
           renderer: detailsRenderer, radius: 4, color: '#fff', weight: 1, fillColor: '#253494', fillOpacity: 0.95,
           bubblingMouseEvents: false,
-        }).bindTooltip(plainText(p.name || 'bez nazwy')).addTo(detailsLayer);
+        }).bindTooltip(plainText(`${p.name || 'bez nazwy'} (${SOURCE_NAMES[p.source] || 'OpenStreetMap'})`)).addTo(detailsLayer);
       }
       // Na wąskim ekranie przyciski zoomu zasłaniają lewy margines mapy — dymek ma się mieścić obok nich.
       const narrow = window.innerWidth < 768;

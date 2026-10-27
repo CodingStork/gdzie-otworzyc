@@ -7,10 +7,9 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-  <!-- Panel boczny: na telefonie staje się arkuszem na dole ekranu -->
+<body data-tab="settings">
+  <!-- Lewa strona: WYŁĄCZNIE ustawienia. Na telefonie to zakładka „Ustawienia” arkusza na dole ekranu. -->
   <aside id="sidebar">
-    <button id="sheet-handle" type="button" aria-label="Zwiń lub rozwiń panel"></button>
     <h1>Gdzie otworzyć?</h1>
 
     <!-- Karta instrukcji: widoczna do pierwszego wyniku -->
@@ -41,7 +40,7 @@
       <label for="reach-input">Zasięg klienta: <b id="reach-value">1,5</b> km</label>
       <button type="button" class="help" data-help="reach" aria-label="Co to jest zasięg klienta?">?</button>
     </div>
-    <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,1–20 km (wzór w ui.js) -->
+    <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,3–20 km (wzór w ui.js) -->
     <input id="reach-input" type="range" min="0" max="100" step="1" value="50">
 
     <label for="search-input">Miejsce</label>
@@ -58,10 +57,35 @@
     </div>
     <input id="radius-input" type="range" min="1" max="30" step="1" value="10">
 
+    <!-- Warstwy do wyboru zależą od ustawień powyżej (ui.js: syncLayers) -->
+    <fieldset id="layer-choice">
+      <legend>Co pokazać na mapie</legend>
+      <div id="layer-options"></div>
+    </fieldset>
+
     <button id="show-button" type="button">Pokaż mapę</button>
 
     <div id="info" class="info" role="status" hidden></div>
     <div id="error" role="alert" hidden></div>
+  </aside>
+
+  <main id="map"></main>
+  <div id="loading-bar" hidden></div>
+
+  <!-- Prawa strona: legenda i wnioski o obszarze. Na telefonie to zakładka „Wnioski”. -->
+  <aside id="insights" hidden>
+    <div id="legend" hidden></div>
+    <label class="opacity">Przezroczystość mgły
+      <input id="opacity-input" type="range" min="0.2" max="1" step="0.05" value="0.85">
+    </label>
+
+    <section id="summary-box" hidden>
+      <div class="label-row">
+        <h2>Podsumowanie obszaru</h2>
+        <button type="button" class="help" data-help="summary" aria-label="Jak czytać podsumowanie?">?</button>
+      </div>
+      <div id="summary"></div>
+    </section>
 
     <h2 id="top-title" hidden>Najlepsze miejsca</h2>
     <ol id="top-list"></ol>
@@ -71,32 +95,15 @@
     <footer id="meta-footer"></footer>
   </aside>
 
-  <main id="map"></main>
-  <div id="loading-bar" hidden></div>
-
-  <!-- Przełącznik warstw i legenda (kontrolki nad mapą) -->
-  <div id="map-controls" hidden>
-    <div id="layer-switch">
-      <div class="layer-row">
-        <label><input type="radio" name="layer" value="open" checked> Gdzie otworzyć</label>
-        <button type="button" class="help" data-help="open" aria-label="Co to jest Gdzie otworzyć?">?</button>
-      </div>
-      <div class="layer-row">
-        <label><input type="radio" name="layer" value="demand"> Gdzie są klienci</label>
-        <button type="button" class="help" data-help="demand" aria-label="Co to jest Gdzie są klienci?">?</button>
-      </div>
-    </div>
-    <div id="layer-title" hidden></div>
-    <label class="opacity">Przezroczystość
-      <input id="opacity-input" type="range" min="0.2" max="1" step="0.05" value="0.85">
-    </label>
-    <div id="legend" hidden></div>
-  </div>
+  <!-- Telefon: zakładki arkusza na dole (kliknięcie aktywnej zakładki zwija arkusz) -->
+  <nav id="tabs">
+    <button type="button" data-tab="settings" class="active">Ustawienia</button>
+    <button type="button" data-tab="insights" disabled>Wnioski</button>
+  </nav>
 
   <div id="help-popover" role="tooltip" hidden></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
