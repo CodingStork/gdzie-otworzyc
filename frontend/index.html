@@ -13,10 +13,17 @@
     <button id="sheet-handle" type="button" aria-label="Zwiń lub rozwiń panel"></button>
     <h1>Gdzie otworzyć?</h1>
 
+    <!-- Obszar analizy = to, co widać na mapie; wyszukiwarka tylko przenosi mapę w wybrane miejsce -->
+    <div id="search-wrap">
+      <input id="search-input" type="search" placeholder="Przejdź do adresu lub miejscowości" autocomplete="off"
+             aria-label="Przejdź do adresu lub miejscowości">
+      <ul id="search-results" hidden></ul>
+    </div>
+
     <label for="type-select">Typ działalności</label>
     <select id="type-select"></select>
 
-    <label for="demand-select">Porównaj z</label>
+    <label for="demand-select">Czynnik popytu</label>
     <select id="demand-select"></select>
 
     <div id="months-row" hidden>
@@ -28,42 +35,42 @@
       </select>
     </div>
 
-    <fieldset id="area-box">
-      <legend>Obszar</legend>
-      <div id="search-wrap">
-        <input id="search-input" type="search" placeholder="Wpisz adres lub miejscowość" autocomplete="off">
-        <ul id="search-results" hidden></ul>
-      </div>
-      <p class="hint">…albo kliknij punkt na mapie.</p>
-      <label for="radius-input">Promień: <b id="radius-value">10</b> km</label>
-      <input id="radius-input" type="range" min="1" max="50" step="1" value="10">
-      <label class="check"><input id="poland-checkbox" type="checkbox"> Cała Polska</label>
-    </fieldset>
-
-    <details id="advanced">
-      <summary>Zaawansowane</summary>
+    <div class="label-row">
       <label for="bandwidth-input">Zasięg klienta: <b id="bandwidth-value">1,5</b> km</label>
-      <input id="bandwidth-input" type="range" min="0.5" max="20" step="0.5" value="1.5">
-    </details>
+      <button type="button" class="help" data-help="range" aria-label="Co to jest zasięg klienta?">?</button>
+    </div>
+    <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,1–20 km (wzór w ui.js) -->
+    <input id="bandwidth-input" type="range" min="0" max="100" step="1" value="50">
 
-    <button id="analyze-btn" type="button">Analizuj</button>
+    <div id="info" class="info" role="status" hidden></div>
     <div id="error" role="alert" hidden></div>
 
-    <h2>Najlepsze miejsca</h2>
-    <ol id="top-list"><li class="muted">Wybierz punkt i kliknij „Analizuj”.</li></ol>
+    <h2 id="top-title">Najlepsze miejsca</h2>
+    <ol id="top-list"><li class="muted">Wybierz typ działalności albo czynnik popytu.</li></ol>
 
     <div id="warnings" hidden></div>
+    <div id="notes" hidden></div>
     <footer id="meta-footer"></footer>
   </aside>
 
   <main id="map"></main>
+  <div id="loading-bar" hidden></div>
 
   <!-- Przełącznik warstw i legenda (kontrolki nad mapą) -->
   <div id="map-controls">
     <div id="layer-switch">
-      <label><input type="radio" name="layer" value="score" checked> Okazja</label>
-      <label><input type="radio" name="layer" value="D"> Popyt</label>
-      <label><input type="radio" name="layer" value="S"> Konkurencja</label>
+      <div class="layer-row">
+        <label><input type="radio" name="layer" value="score" checked> Okazja</label>
+        <button type="button" class="help" data-help="score" aria-label="Co to jest Okazja?">?</button>
+      </div>
+      <div class="layer-row">
+        <label><input type="radio" name="layer" value="D"> Popyt</label>
+        <button type="button" class="help" data-help="D" aria-label="Co to jest Popyt?">?</button>
+      </div>
+      <div class="layer-row">
+        <label><input type="radio" name="layer" value="S"> Konkurencja</label>
+        <button type="button" class="help" data-help="S" aria-label="Co to jest Konkurencja?">?</button>
+      </div>
     </div>
     <label class="check"><input id="poi-checkbox" type="checkbox"> Punkty firm</label>
     <div id="poi-note" class="hint" hidden></div>
@@ -72,6 +79,8 @@
     </label>
     <div id="legend" hidden></div>
   </div>
+
+  <div id="help-popover" role="tooltip" hidden></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>

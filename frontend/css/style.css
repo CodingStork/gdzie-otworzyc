@@ -26,24 +26,9 @@ select, input[type=search] {
   width: 100%; padding: 7px 8px; border: 1px solid #bbc; border-radius: 6px; font-size: 14px; background: #fff;
 }
 input[type=range] { width: 100%; }
-fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 14px 0 6px; padding: 4px 10px 10px; }
-legend { font-weight: 700; padding: 0 4px; }
-details { margin: 10px 0; }
-summary { cursor: pointer; font-weight: 600; }
 .hint, .muted { color: var(--muted); font-size: 12.5px; margin: 6px 0; }
 
-#analyze-btn {
-  width: 100%; margin-top: 14px; padding: 10px; border: 0; border-radius: 8px;
-  background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
-}
-#analyze-btn:disabled { opacity: .7; cursor: progress; }
-#analyze-btn.loading::after {   /* spinner na przycisku podczas analizy */
-  content: ''; display: inline-block; width: 12px; height: 12px; margin-left: 8px; vertical-align: -1px;
-  border: 2px solid #fff6; border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
 #search-results li.muted { color: var(--muted); cursor: default; }
-#radius-input:disabled { opacity: .4; }
 #error { margin-top: 8px; padding: 8px; border-radius: 6px; background: #fde8e8; color: #9b1c1c; }
 #warnings { margin-top: 12px; padding: 8px 10px; border: 1px solid var(--warn-line); background: var(--warn-bg); border-radius: 6px; }
 #warnings p { margin: 4px 0; }
@@ -51,6 +36,58 @@ summary { cursor: pointer; font-weight: 600; }
 #top-list li { margin: 5px 0; cursor: pointer; }
 #top-list li.muted { cursor: default; list-style: none; margin-left: -20px; }
 #meta-footer { margin-top: 18px; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+
+#search-wrap { margin-bottom: 4px; }
+.info { margin-top: 8px; padding: 8px; border-radius: 6px; background: #eef1fb; color: #2a3470; }
+#notes { margin-top: 10px; color: var(--muted); font-size: 12.5px; }
+#notes p { margin: 4px 0; }
+
+/* Pytajnik z wyjaśnieniem: okrągły przycisk 18 px */
+.help {
+  flex: none; width: 18px; height: 18px; padding: 0; border: 1px solid #889; border-radius: 50%;
+  background: #fff; color: #445; font: 700 11px/16px system-ui, sans-serif; cursor: help; text-align: center;
+}
+.help:hover, .help:focus-visible { background: var(--accent); color: #fff; border-color: var(--accent); }
+#help-popover {
+  position: fixed; z-index: 3000; padding: 9px 11px; border-radius: 8px; background: #222; color: #fff;
+  font-size: 12.5px; line-height: 1.45; box-shadow: 0 4px 14px #0005; pointer-events: none;
+}
+.label-row, .layer-row { display: flex; align-items: center; gap: 6px; }
+.label-row label { flex: 1; }
+.layer-row label { flex: 1; }
+label.disabled { opacity: .4; }
+
+/* Cienki pasek ładowania u góry mapy */
+#loading-bar { position: fixed; top: 0; left: 300px; right: 0; height: 3px; z-index: 1500; overflow: hidden; background: #d9def5; }
+#loading-bar::after {
+  content: ''; display: block; height: 100%; width: 35%; background: var(--accent); animation: slide 1s ease-in-out infinite;
+}
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+
+/* Heksagony rysujemy na canvasie, który nie może przechwytywać kliknięć (inaczej kliknięcie nie dochodzi do mapy). */
+.hex-pane canvas { pointer-events: none; }
+
+/* Numerowane znaczniki top-5 */
+.top-pin {
+  display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%;
+  background: #d62728; color: #fff; font: 700 12px/1 system-ui, sans-serif; border: 2px solid #fff; box-shadow: 0 1px 4px #0006;
+}
+
+/* Legenda: pionowy gradient z podpisami przy odpowiednich percentylach */
+#legend { margin-top: 8px; font-size: 12px; }
+#legend .legend-title { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+#legend .legend-body { display: flex; gap: 8px; margin: 8px 0 6px; }
+#legend .bar { width: 14px; height: 150px; border-radius: 3px; border: 1px solid #0002; flex: none; }
+#legend .stops { position: relative; height: 150px; flex: 1; }
+#legend .stop { position: absolute; left: 0; transform: translateY(50%); white-space: nowrap; line-height: 1; }
+#legend .stop small { color: var(--muted); }
+#legend .tick { display: inline-block; width: 5px; height: 1px; background: #556; margin-right: 4px; vertical-align: middle; }
+#legend .note { margin-top: 6px; color: var(--muted); }
+
+/* Dymek klikniętego punktu */
+.hex-popup .strong { font-weight: 700; margin: 3px 0; }
+.hex-popup ul { margin: 2px 0 0; padding-left: 18px; }
+.hex-popup .note { margin-top: 6px; color: var(--muted); font-size: 12px; }
 
 #search-wrap { position: relative; }
 #search-results {
@@ -66,12 +103,6 @@ summary { cursor: pointer; font-weight: 600; }
 }
 #layer-switch label, #map-controls label { margin: 2px 0; font-weight: 400; }
 #map-controls .opacity { display: block; font-size: 12px; margin-top: 6px; }
-#legend { margin-top: 8px; font-size: 12px; }
-#legend .row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
-#legend .sw { width: 22px; height: 12px; border-radius: 2px; border: 1px solid #0002; flex: none; }
-#legend .note { margin-top: 6px; color: var(--muted); }
-.hex-popup .title { font-weight: 700; margin-bottom: 4px; }
-.popup-btn { margin-top: 8px; width: 100%; padding: 6px; border: 1px solid #253494; border-radius: 6px; background: #fff; color: #253494; cursor: pointer; }
 
 @media (max-width: 767px) {
   body { flex-direction: column-reverse; }
@@ -81,9 +112,11 @@ summary { cursor: pointer; font-weight: 600; }
     border-radius: 14px 14px 0 0; box-shadow: 0 -2px 10px #0003;
   }
   #sidebar.collapsed { max-height: 44px; overflow: hidden; }
+  #loading-bar { left: 0; }
   #sheet-handle {
     display: block; width: 48px; height: 6px; border: 0; border-radius: 3px; background: #bbc;
     margin: -6px auto 8px; padding: 0; cursor: pointer;
   }
   #map-controls { top: 8px; right: 8px; max-width: 170px; font-size: 12px; }
+  #legend .bar, #legend .stops { height: 110px; }
 }
