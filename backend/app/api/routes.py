@@ -102,7 +102,7 @@ def point(
     reach_km: float = Query(),
     months: int = 24,
 ) -> dict:
-    """Szczegóły klikniętego punktu: liczby w okręgu zasięgu, model Huffa i komórki do narysowania."""
+    """Szczegóły klikniętego punktu: liczby w okręgu zasięgu, model Huffa, najbliższe firmy."""
     _check_selection(type_id, demand, months)
     if not REACH_KM[0] <= reach_km <= REACH_KM[1]:
         raise _bad_request("Zasięg klienta (reach_km) musi mieścić się w zakresie 0,1–20 km")
@@ -129,9 +129,9 @@ def poi(type_id: str = Query(alias="type"), bbox: str = Query()) -> dict:
     if not table_exists(con, "poi"):
         return {"items": [], "truncated": False}
     rows = con.execute(
-        "SELECT lat, lng, name FROM poi WHERE type_id = ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT ?",
+        "SELECT lat, lng, name, source FROM poi WHERE type_id = ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT ?",
         [type_id, min_lat, max_lat, min_lng, max_lng, POI_LIMIT + 1]).fetchall()
-    return {"items": [{"lat": lat, "lng": lng, "name": name} for lat, lng, name in rows[:POI_LIMIT]],
+    return {"items": [{"lat": lat, "lng": lng, "name": name, "source": source} for lat, lng, name, source in rows[:POI_LIMIT]],
             "truncated": len(rows) > POI_LIMIT}
 
 

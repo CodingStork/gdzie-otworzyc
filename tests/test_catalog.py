@@ -69,3 +69,9 @@ def test_every_type_has_plural_name():
     j = catalog_json()
     types = [t for g in j["groups"] for t in g["types"]]
     assert all(t["plural"] for t in types) and next(t for t in types if t["id"] == "hairdresser")["plural"] == "fryzjerzy"
+
+
+def test_every_demand_has_genitive_for_summary_sentences():
+    assert all(d.genitive for d in DEMANDS.values())
+    assert DEMANDS["pop_f"].genitive == "kobiet" and DEMANDS["new_sf"].genitive == "nowych domów jednorodzinnych"
+    assert {d["id"]: d["genitive"] for d in catalog_json()["demands"]}["pop_ge65"] == "seniorów"

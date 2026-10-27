@@ -50,12 +50,11 @@ def test_point_expected_only_with_type_and_demand(client):
     assert point(client, type="").json()["expected"] is None
 
 
-def test_point_cells_in_reach(client):
-    j = point(client, reach_km=1).json()
-    assert j["cells"] and len(j["cells"]) < 60
-    assert all(h3.get_resolution(c) == 9 and pop == 1000.0 for c, pop in j["cells"])
-    assert all(_haversine_km(LAT, LNG, *h3.cell_to_latlng(c)) <= 1.0 + 1e-6 for c, _ in j["cells"])
-    assert point(client, reach_km=5).json()["cells"] == []         # za duży zasięg — nie rysujemy komórek
+def test_point_has_no_cells_and_nearest_has_source(make_client):
+    """v3.1: heksagony po kliknięciu usunięte; za to najbliższe firmy mówią, z jakiego źródła pochodzą."""
+    client = make_client(pop=POP, pois=[("hairdresser", LAT + 0.0027, LNG, "overture")])
+    j = point(client).json()
+    assert "cells" not in j and j["nearest"][0]["source"] == "overture"
 
 
 def test_point_nearest_lists_up_to_five_sorted(make_client):
@@ -67,7 +66,7 @@ def test_point_nearest_lists_up_to_five_sorted(make_client):
 
 def test_point_empty(client):
     j = point(client, lat=54.6, lng=18.2).json()                   # Bałtyk
-    assert j["demand"] == 0 and j["competitors"] == 0 and j["expected"] == 0 and j["nearest"] == [] and j["cells"] == []
+    assert j["demand"] == 0 and j["competitors"] == 0 and j["expected"] == 0 and j["nearest"] == []
 
 
 def test_point_modes(client):
@@ -103,4 +102,7 @@ def test_point_small_radius_counts_own_cell(client):
     else:
         pytest.fail("nie znaleziono punktu w komórce, ale dalej niż 0,1 km od jej środka")
     j = point(client, lat=lat, lng=lng, type="", reach_km=0.1).json()
-    assert j["demand"] == pytest.approx(1000.0)      # tylko własna komórka (pop 1000)
+    # zasięg 0,1 km jest podnoszony do 0,3 km; mimo to własna komórka (1000) liczy się zawsze, a sąsiednie tylko gdy ich środek jest w okręgu
+    expected = 1000.0 + sum(v for c, v in POP.items() if c != center_cell
+                            and _haversine_km(lat, lng, *h3.cell_to_latlng(c)) <= 0.3)
+    assert j["radius_km"] == 0.3 and j["demand"] == pytest.approx(expected)

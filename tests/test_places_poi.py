@@ -64,7 +64,7 @@ def test_api_poi_filters_type_and_bbox(make_client):
     bbox = f"{LNG - 0.1},{LAT - 0.1},{LNG + 0.1},{LAT + 0.1}"
     j = client.get("/api/poi", params=dict(type="cafe", bbox=bbox)).json()
     assert j["truncated"] is False and len(j["items"]) == 1
-    assert set(j["items"][0]) == {"lat", "lng", "name"}
+    assert set(j["items"][0]) == {"lat", "lng", "name", "source"}
 
 
 def test_api_poi_truncates_at_5000(make_client):

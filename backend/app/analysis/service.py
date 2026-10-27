@@ -20,7 +20,7 @@ from backend.app.analysis.kernel import LocalFrame
 from backend.app.analysis.surface import (
     competition_density, demand_potential, huff_and_potential, make_grid, top_points,
 )
-from backend.app.catalog import DEMANDS, POOR_WARNING, TYPES
+from backend.app.catalog import DEMANDS, PLURALS, POOR_WARNING, TYPES
 from backend.app.db import DatabaseMissing, cursor, on_reset
 from etl.aggregate import table_exists
 
@@ -28,6 +28,8 @@ NO_COMPETITORS_WARNING = (
     "Nie znaleziono konkurencji w OpenStreetMap w tym obszarze — wynik pokazuje sam popyt."
 )
 PERMITS_MISSING_WARNING = "Dane o pozwoleniach nie zostały jeszcze zaimportowane."
+MIN_REACH_KM = 0.3                # dane o ludności mają rozdzielczość ok. 300 m (komórka H3 res 9)
+MIN_REACH_NOTE = "Dane o mieszkańcach mają rozdzielczość ok. 300 m — mniejszy zasięg nie dodaje informacji."
 PERMITS_MIN_REACH_KM = 1.0        # lokalizacja pozwoleń to środek obrębu — dokładniej nie da się zliczać
 PERMITS_NOTE = ("Lokalizację pozwoleń znamy z dokładnością do obrębu, dlatego zasięg dla nowych domów "
                 "wynosi co najmniej 1 km.")
@@ -135,22 +137,32 @@ class SurfaceParams:
     months: int = 24
 
 
+def _is_permits(demand_id: str | None) -> bool:
+    return bool(demand_id) and DEMANDS[demand_id].source == "permits"
+
+
 def effective_reach_km(demand_id: str | None, reach_km: float) -> float:
-    """Zasięg klienta; dla popytu z pozwoleń nie mniejszy niż 1 km."""
-    if demand_id and DEMANDS[demand_id].source == "permits":
-        return max(reach_km, PERMITS_MIN_REACH_KM)
-    return reach_km
+    """Zasięg klienta: nie mniejszy niż 0,3 km (rozdzielczość danych), a dla pozwoleń niż 1 km."""
+    reach_km = max(reach_km, MIN_REACH_KM)
+    return max(reach_km, PERMITS_MIN_REACH_KM) if _is_permits(demand_id) else reach_km
+
+
+def _reach_notes(demand_id: str | None, reach_km: float) -> list[str]:
+    """Notatka, gdy zażądany zasięg został podniesiony (jedna, ta istotniejsza)."""
+    if _is_permits(demand_id) and reach_km < PERMITS_MIN_REACH_KM:
+        return [PERMITS_NOTE]
+    return [MIN_REACH_NOTE] if reach_km < MIN_REACH_KM else []
 
 
 def surface_layers(p: SurfaceParams) -> list[str]:
-    """typ + klienci → ["open", "demand"]; sam popyt → ["demand"]; sama branża → ["competition"]."""
-    if p.type_id and p.demand_id:
-        return ["open", "demand"]
-    if p.demand_id:
-        return ["demand"]
-    if p.type_id:
-        return ["competition"]
-    raise ValueError("Wybierz typ działalności albo czynnik popytu")
+    """typ + klienci → ["open", "demand"]; sam popyt → ["demand"]; sama branża → ["competition"].
+
+    Gdy popyt pochodzi z pozwoleń, dochodzi warstwa "trend" (gdzie budów przybywa).
+    """
+    if not p.type_id and not p.demand_id:
+        raise ValueError("Wybierz typ działalności albo czynnik popytu")
+    layers = ["open", "demand"] if p.type_id and p.demand_id else ["demand"] if p.demand_id else ["competition"]
+    return layers + ["trend"] if _is_permits(p.demand_id) else layers
 
 
 def demand_res(reach_km: float) -> int:
@@ -196,6 +208,99 @@ def load_competitors(con, type_id: str, box: list[float]) -> np.ndarray:
     return np.array(rows, dtype=float).reshape(-1, 2)
 
 
+def _shift_months(day: datetime.date, k: int) -> datetime.date:
+    """Pierwszy dzień miesiąca przesunięty o k miesięcy (k może być ujemne)."""
+    index = day.year * 12 + day.month - 1 + k
+    return datetime.date(index // 12, index % 12 + 1, 1)
+
+
+def load_trend(con, demand_id: str, res: int, box: list[float]):
+    """Zmiana liczby nowych budów w komórkach: ostatnie 12 mies. MINUS poprzednie 12 mies.
+
+    Okna liczymy od najnowszych danych (jak `_permit_window`). Zwraca (tablica N×3: lat, lng, zmiana; okno 12 mies. lub None).
+    """
+    window = _permit_window(con, res, 12)
+    if window is None:
+        return np.empty((0, 3)), None
+    kinds = DEMANDS[demand_id].kinds
+    marks = ", ".join("?" for _ in kinds)
+    rows = con.execute(f"SELECT lat, lng, SUM(CASE WHEN month >= ? THEN n ELSE -n END) FROM permits_r{res} "
+                       f"WHERE kind IN ({marks}) AND month >= ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? "
+                       "GROUP BY lat, lng", [window[0], *kinds, _shift_months(window[0], -12), *box]).fetchall()
+    return np.array(rows, dtype=float).reshape(-1, 3), window
+
+
+# ---------------------------------------------------------------- podsumowanie obszaru ----
+
+_national: dict[tuple, float | None] = {}     # średnia krajowa liczona raz na (typ, popyt, okres); czyszczona przy zmianie bazy
+on_reset(_national.clear)
+
+
+def national_per_firm(con, type_id: str, demand_id: str, months: int) -> float | None:
+    """Ile „klientów” (popytu) przypada w całej Polsce na jedną firmę danego typu (None, gdy brak firm lub popytu)."""
+    key = (type_id, demand_id, months)
+    if key not in _national:
+        firms = con.execute("SELECT COUNT(*) FROM poi WHERE type_id = ?", [type_id]).fetchone()[0] if table_exists(con, "poi") else 0
+        demand, total = DEMANDS[demand_id], 0.0
+        if demand.source == "census":
+            total = con.execute(f"SELECT COALESCE(SUM({demand.column}), 0) FROM hex_pop_r5").fetchone()[0]
+        else:
+            window = _permit_window(con, 5, months)
+            if window is not None:
+                marks = ", ".join("?" for _ in demand.kinds)
+                total = con.execute(f"SELECT COALESCE(SUM(n), 0) FROM permits_r5 WHERE kind IN ({marks}) AND month >= ?",
+                                    [*demand.kinds, window[0]]).fetchone()[0]
+        _national[key] = total / firms if firms and total else None
+    return _national[key]
+
+
+def verdict(per_firm: float | None, national: float | None) -> str:
+    """„less” = mniej konkurencji niż przeciętnie (na firmę przypada >125% średniej), „more” = więcej (<80%)."""
+    if per_firm is None or national is None:      # brak firm w obszarze → konkurencji nie ma
+        return "less"
+    if per_firm > 1.25 * national:
+        return "less"
+    return "more" if per_firm < 0.8 * national else "similar"
+
+
+def area_summary(con, p: SurfaceParams, frame: LocalFrame) -> dict:
+    """Liczby dla całego okręgu obszaru: popyt, firmy (OSM / Overture), ile klientów na firmę, porównanie z Polską.
+
+    Popyt liczymy z komórek res 9, których środek leży w okręgu; firmy — punkty `poi` w okręgu.
+    """
+    radius_m = p.radius_km * 1000
+    box = _box(p.lat, p.lng, p.radius_km)
+    summary = {"demand_total": None, "demand_genitive": None, "competitors": None, "type_plural": None,
+               "per_firm": None, "national_per_firm": None, "verdict": None, "radius_km": p.radius_km}
+    if p.demand_id:
+        arr, _ = load_demand(con, p.demand_id, 9, box, p.months)
+        total = 0.0
+        if len(arr):
+            xy = frame.to_metric(arr[:, 0], arr[:, 1])
+            total = float(arr[np.hypot(xy[:, 0], xy[:, 1]) <= radius_m, 2].sum())
+        summary["demand_total"] = round(total)
+        summary["demand_genitive"] = DEMANDS[p.demand_id].genitive
+    if p.type_id:
+        counts = {"osm": 0, "overture": 0}
+        if table_exists(con, "poi"):
+            rows = con.execute("SELECT source, lat, lng FROM poi WHERE type_id = ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                               [p.type_id, *box]).fetchall()
+            if rows:
+                xy = frame.to_metric(np.array([r[1] for r in rows]), np.array([r[2] for r in rows]))
+                for (source, _, _), d in zip(rows, np.hypot(xy[:, 0], xy[:, 1])):
+                    if d <= radius_m:
+                        counts[source] += 1
+        summary["competitors"] = {"total": counts["osm"] + counts["overture"], **counts}
+        summary["type_plural"] = PLURALS[p.type_id]
+    if p.type_id and p.demand_id:
+        firms = summary["competitors"]["total"]
+        summary["per_firm"] = round(summary["demand_total"] / firms, 1) if firms else None
+        national = national_per_firm(con, p.type_id, p.demand_id, p.months)
+        summary["national_per_firm"] = round(national, 1) if national else None
+        summary["verdict"] = verdict(summary["per_firm"], national)
+    return summary
+
+
 def _round_significant(values: np.ndarray, digits: int = 3) -> np.ndarray:
     """Zaokrąglenie do `digits` cyfr znaczących (mniejsza odpowiedź JSON).
 
@@ -204,9 +309,10 @@ def _round_significant(values: np.ndarray, digits: int = 3) -> np.ndarray:
     """
     v = np.asarray(values, dtype=float)
     out = np.zeros_like(v)
-    nz = v > 0
-    scale = 10.0 ** (np.floor(np.log10(v[nz])) - (digits - 1))
-    out[nz] = np.round(v[nz] / scale) * scale
+    nz = v != 0                                          # wartości ujemne (spadek trendu) zaokrąglamy tak samo
+    size = np.abs(v[nz])
+    scale = 10.0 ** (np.floor(np.log10(size)) - (digits - 1))
+    out[nz] = np.sign(v[nz]) * np.round(size / scale) * scale
     return out
 
 
@@ -220,8 +326,7 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     btype = TYPES[p.type_id] if p.type_id else None
     if btype and btype.osm_quality == "poor":
         warnings.append(POOR_WARNING)
-    if p.demand_id and DEMANDS[p.demand_id].source == "permits" and p.reach_km < PERMITS_MIN_REACH_KM:
-        notes.append(PERMITS_NOTE)
+    notes += _reach_notes(p.demand_id, p.reach_km)
 
     frame = LocalFrame(p.lat, p.lng)                     # metry względem wybranego miejsca (osie na północ i wschód)
     center = np.zeros(2)
@@ -253,6 +358,10 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         computed["demand"] = demand_potential(g, dem_xy, dem_w, reach_m)
     else:
         computed["competition"] = competition_density(g, comp_xy, reach_m)
+    if "trend" in layers:                                 # zmiana liczby budów (ostatnie 12 mies. − poprzednie 12), też z rozpadem odległości
+        trend, _ = load_trend(con, p.demand_id, demand_res(reach_km), _box(p.lat, p.lng, p.radius_km + 4 * reach_km))
+        computed["trend"] = (demand_potential(g, frame.to_metric(trend[:, 0], trend[:, 1]), trend[:, 2], reach_m)
+                             if len(trend) else np.zeros(len(g)))
     min_sep_m = max(reach_m, radius_m / 5)
     values, top = {}, {}
     for layer in layers:
@@ -273,7 +382,8 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
                 "grid": {"west": float(edges[1][0]), "east": float(edges[1][1]),
                          "south": float(edges[0][2]), "north": float(edges[0][3]),
                          "nx": nx, "ny": ny, "cell_m": cell_m},
-                "values": values, "top": top, "notes": notes, "warnings": warnings}
+                "values": values, "top": top, "notes": notes, "warnings": warnings,
+                "summary": area_summary(con, p, frame)}
     if window is not None:
         response["permits_period"] = _period(window)
     return response
@@ -296,9 +406,6 @@ on_reset(_cached.cache_clear)   # zmiana/ponowne otwarcie bazy unieważnia wynik
 
 # ---------------------------------------------------------------- /api/point ----
 
-CELLS_MAX_REACH_KM = 3        # przy większym zasięgu nie zwracamy komórek (za dużo do narysowania)
-CELLS_LIMIT = 3000
-
 def _haversine_m(lat: float, lng: float, lats: np.ndarray, lngs: np.ndarray) -> np.ndarray:
     """Odległości [m] od punktu (lat, lng) do tablic punktów — wzór haversine na kuli o promieniu 6371 km."""
     p1, p2 = math.radians(lat), np.radians(lats)
@@ -316,9 +423,9 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
     if not type_id and not demand_id:
         raise ValueError("Wybierz typ działalności albo czynnik popytu")
     radius_km = effective_reach_km(demand_id, reach_km)
-    notes: list[str] = []
+    notes: list[str] = _reach_notes(demand_id, reach_km)
     result: dict = {"radius_km": radius_km, "demand": None, "demand_name": None, "competitors": None,
-                    "type_name": None, "expected": None, "cells": [], "nearest": [], "notes": notes}
+                    "type_name": None, "expected": None, "nearest": [], "notes": notes}
 
     # Prostokąt zawiera margines 0,2 km (promień komórki res 9), żeby do zapytania trafiła też komórka klikniętego punktu.
     box = _box(lat, lng, radius_km + 0.2)
@@ -343,8 +450,6 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
                                    "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? GROUP BY lat, lng, h3",
                                    [*demand.kinds, window[0], *box]).fetchall()
                 result["permits_period"] = _period(window)
-            if reach_km < PERMITS_MIN_REACH_KM:
-                notes.append(PERMITS_NOTE)
         if rows:
             arr = np.array([r[:3] for r in rows], dtype=float)
             inside = _haversine_m(lat, lng, arr[:, 0], arr[:, 1]) <= radius_km * 1000
@@ -359,26 +464,20 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
         result["type_name"] = TYPES[type_id].name
         rows = []
         if table_exists(con, "poi"):
-            rows = con.execute("SELECT name, lat, lng FROM poi WHERE type_id = ? "
+            rows = con.execute("SELECT name, lat, lng, source FROM poi WHERE type_id = ? "
                                "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?", [type_id, *box]).fetchall()
         competitors, nearest = 0, []
         if rows:
             dist = _haversine_m(lat, lng, np.array([r[1] for r in rows]), np.array([r[2] for r in rows]))
             order = [i for i in np.argsort(dist, kind="stable") if dist[i] <= radius_km * 1000]
             competitors = len(order)
-            nearest = [{"name": rows[i][0] or "bez nazwy", "distance_m": round(float(dist[i]))} for i in order[:5]]
+            nearest = [{"name": rows[i][0] or "bez nazwy", "distance_m": round(float(dist[i])), "source": rows[i][3]}
+                       for i in order[:5]]
         result["competitors"] = competitors
         result["nearest"] = nearest
 
     if type_id and demand_id:
         result["expected"] = _expected_at(con, lat, lng, type_id, demand_id, radius_km, months)
-
-    if radius_km <= CELLS_MAX_REACH_KM and table_exists(con, "hex_pop_r9"):
-        rows = con.execute("SELECT h3, lat, lng, pop_total FROM hex_pop_r9 "
-                           "WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? AND pop_total > 0", box).fetchall()
-        if rows:
-            dist = _haversine_m(lat, lng, np.array([r[1] for r in rows]), np.array([r[2] for r in rows]))
-            result["cells"] = [[rows[i][0], rows[i][3]] for i in np.flatnonzero(dist <= radius_km * 1000)[:CELLS_LIMIT]]
     return result
 
 

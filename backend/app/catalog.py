@@ -23,6 +23,7 @@ class Demand:
     column: str | None        # kolumna tabeli hex_pop_* (tylko dla census)
     kinds: tuple[str, ...]    # rodzaje budynków w permits: "sf" (jednorodzinny), "mf" (wielorodzinny)
     needs_months: bool        # czy w UI pokazać wybór okresu 12/24/36 miesięcy
+    genitive: str             # dopełniacz liczby mnogiej do zdań typu „1 firma na ok. 260 {kobiet}”
 
 
 @dataclass(frozen=True)
@@ -49,24 +50,24 @@ MONTHS_OPTIONS = (12, 24, 36)
 DEFAULT_MONTHS = 24
 
 
-def _census(id: str, name: str, column: str) -> Demand:
-    return Demand(id, name, "census", column, (), False)
+def _census(id: str, name: str, column: str, genitive: str) -> Demand:
+    return Demand(id, name, "census", column, (), False, genitive)
 
 
-def _permits(id: str, name: str, kinds: tuple[str, ...]) -> Demand:
-    return Demand(id, name, "permits", None, kinds, True)
+def _permits(id: str, name: str, kinds: tuple[str, ...], genitive: str) -> Demand:
+    return Demand(id, name, "permits", None, kinds, True, genitive)
 
 
 DEMANDS: dict[str, Demand] = {d.id: d for d in (
-    _census("pop_total", "Mieszkańcy", "pop_total"),
-    _census("pop_f", "Kobiety", "pop_f"),
-    _census("pop_m", "Mężczyźni", "pop_m"),
-    _census("pop_lt15", "Dzieci (<15 lat)", "pop_lt15"),
-    _census("pop_1564", "Osoby 15–64 lata", "pop_1564"),
-    _census("pop_ge65", "Seniorzy (65+)", "pop_ge65"),
-    _permits("new_sf", "Nowe domy jednorodzinne", ("sf",)),
-    _permits("new_mf", "Nowe bloki (wielorodzinne)", ("mf",)),
-    _permits("new_all", "Wszystkie nowe budynki mieszkalne", ("sf", "mf")),
+    _census("pop_total", "Mieszkańcy", "pop_total", "mieszkańców"),
+    _census("pop_f", "Kobiety", "pop_f", "kobiet"),
+    _census("pop_m", "Mężczyźni", "pop_m", "mężczyzn"),
+    _census("pop_lt15", "Dzieci (<15 lat)", "pop_lt15", "dzieci"),
+    _census("pop_1564", "Osoby 15–64 lata", "pop_1564", "osób w wieku 15–64 lata"),
+    _census("pop_ge65", "Seniorzy (65+)", "pop_ge65", "seniorów"),
+    _permits("new_sf", "Nowe domy jednorodzinne", ("sf",), "nowych domów jednorodzinnych"),
+    _permits("new_mf", "Nowe bloki (wielorodzinne)", ("mf",), "nowych budynków wielorodzinnych"),
+    _permits("new_all", "Wszystkie nowe budynki mieszkalne", ("sf", "mf"), "nowych budynków mieszkalnych"),
 )}
 
 
@@ -207,7 +208,7 @@ def catalog_json() -> dict:
         ]
         groups.append({"id": group_id, "name": group_name, "types": types})
     demands = [
-        {"id": d.id, "name": d.name, "source": d.source, "needs_months": d.needs_months}
+        {"id": d.id, "name": d.name, "source": d.source, "needs_months": d.needs_months, "genitive": d.genitive}
         for d in DEMANDS.values()
     ]
     return {
