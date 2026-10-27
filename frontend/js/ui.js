@@ -6,7 +6,9 @@ const $ = (id) => document.getElementById(id);
 
 let catalog = null;
 
-export const fmt = (n, digits = 0) => Number(n).toLocaleString('pl-PL', { maximumFractionDigits: digits });
+// useGrouping: 'always' — domyślnie pl-PL nie grupuje liczb czterocyfrowych (1500), a pięciocyfrowe tak (15 800).
+export const fmt = (n, digits = 0) =>
+  Number(n).toLocaleString('pl-PL', { maximumFractionDigits: digits, useGrouping: 'always' });
 
 // ---- Wyjaśnienia pod pytajnikami (teksty uzgodnione ze specyfikacją — nie zmieniać bez powodu) ----
 const HELP = {

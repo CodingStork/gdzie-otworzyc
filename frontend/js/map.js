@@ -77,7 +77,12 @@ export function initMap(elementId) {
   let pointCircle = null;
   map.on('click', (e) => clickCb && clickCb(e.latlng.lat, e.latlng.lng));
   // Zamknięcie dymku (krzyżyk, Escape, kliknięcie w inne miejsce) usuwa okrąg zasięgu.
-  map.on('popupclose', () => { if (pointCircle) { pointCircle.remove(); pointCircle = null; } });
+  map.on('popupclose', () => {
+    if (pointCircle) { pointCircle.remove(); pointCircle = null; }
+    document.body.classList.remove('popup-open');
+  });
+  // Na telefonie kontrolki (warstwy, legenda) zasłaniałyby dymek — na czas jego otwarcia się chowają (patrz style.css).
+  map.on('popupopen', () => document.body.classList.add('popup-open'));
 
   // Animowany lot opiera się na zdarzeniu końca przejścia CSS, które nie dochodzi, gdy karta jest w tle
   // albo rozmiar mapy zmienia się w trakcie — mapa zostawała w stanie pośrednim (rozmazane etykiety).
@@ -148,7 +153,12 @@ export function initMap(elementId) {
       pointCircle = L.circle([lat, lng], {
         radius: radiusKm * 1000, color: '#253494', weight: 1.5, fillOpacity: 0.04, interactive: false,
       }).addTo(map);
-      L.popup({ className: 'hex-popup', maxWidth: 300 }).setLatLng([lat, lng]).setContent(element).openOn(map);
+      // Na wąskim ekranie przyciski zoomu zasłaniają lewy margines mapy — dymek ma się mieścić obok nich.
+      const narrow = window.innerWidth < 768;
+      L.popup({
+        className: 'hex-popup', maxWidth: narrow ? 220 : 300,
+        autoPanPaddingTopLeft: narrow ? [50, 10] : [10, 10], autoPanPaddingBottomRight: [10, 10],
+      }).setLatLng([lat, lng]).setContent(element).openOn(map);
     },
     closePoint() { map.closePopup(); },
 

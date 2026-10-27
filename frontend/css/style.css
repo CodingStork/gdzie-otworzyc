@@ -118,5 +118,11 @@ label.disabled { opacity: .4; }
     margin: -6px auto 8px; padding: 0; cursor: pointer;
   }
   #map-controls { top: 8px; right: 8px; max-width: 170px; font-size: 12px; }
-  #legend .bar, #legend .stops { height: 110px; }
+  #legend { margin-top: 4px; font-size: 11px; }
+  #legend .bar, #legend .stops { height: 90px; }
+  #legend .stop:nth-child(2) { display: none; }   /* podpis 90% zlewa się z maksimum na niskim pasku */
+  #legend .legend-body { margin: 4px 0 2px; }
+  #map-controls .opacity { display: none; }   /* na telefonie oszczędzamy miejsce nad mapą */
+  #layer-switch label { font-size: 12px; }
+  .popup-open #map-controls { visibility: hidden; }
 }

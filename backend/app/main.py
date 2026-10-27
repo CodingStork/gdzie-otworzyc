@@ -17,5 +17,17 @@ def database_busy(request, exc):
     return JSONResponse(status_code=503, content={"detail": DB_BUSY_MESSAGE})
 
 
+@app.middleware("http")
+async def revalidate_static(request, call_next):
+    """Pliki frontendu: `no-cache` = przeglądarka pyta serwer, czy plik się zmienił (ETag), zamiast zgadywać.
+
+    Bez tego po aktualizacji aplikacji przeglądarka bywa uruchamiała stary index.html z nowym JavaScriptem.
+    """
+    response = await call_next(request)
+    if not request.url.path.startswith("/api"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # Montowanie na końcu, żeby statyczne pliki nie przykryły ścieżek /api.
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

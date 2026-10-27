@@ -39,3 +39,9 @@ def test_locked_db_returns_503(make_client):
         child.wait(timeout=15)
     # po zakończeniu procesu blokada znika; zepsute połączenie nie zostało zapamiętane
     assert client.get("/api/view", params=params).status_code == 200
+
+
+def test_static_files_are_revalidated():
+    """Przeglądarka nie może trzymać starego frontendu po aktualizacji aplikacji."""
+    r = TestClient(app).get("/js/app.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
