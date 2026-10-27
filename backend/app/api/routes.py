@@ -5,7 +5,7 @@ from functools import lru_cache
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.app.analysis.service import ViewParams, cached_view, point_details
+from backend.app.analysis.service import SurfaceParams, cached_surface, point_details
 from backend.app.catalog import DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
 from backend.app.config import ATTRIBUTION, USER_AGENT
 from backend.app.db import DatabaseMissing, cursor
@@ -47,40 +47,12 @@ def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
     return min_lng, min_lat, max_lng, max_lat
 
 
-AREA_RADIUS_KM = (1, 50)
+RADIUS_KM = (1, 30)
+REACH_KM = (0.1, 20)
 
 
-def _parse_area(area: str) -> tuple[float, float, float] | None:
-    """„lat,lng,promień_km” → krotka; pusty napis = brak obszaru. Punkt musi leżeć w Polsce, promień 1–50 km."""
-    if not area:
-        return None
-    try:
-        lat, lng, radius = (float(x) for x in area.split(","))
-    except ValueError:
-        raise _bad_request("Nieprawidłowy parametr area (oczekiwano: lat,lng,promień_km)")
-    if not all(math.isfinite(v) for v in (lat, lng, radius)):
-        raise _bad_request("Nieprawidłowy parametr area (oczekiwano: lat,lng,promień_km)")
-    if not (LAT_RANGE[0] <= lat <= LAT_RANGE[1] and LNG_RANGE[0] <= lng <= LNG_RANGE[1]):
-        raise _bad_request("Parametr area: punkt poza Polską")
-    if not AREA_RADIUS_KM[0] <= radius <= AREA_RADIUS_KM[1]:
-        raise _bad_request("Parametr area: promień musi mieścić się w zakresie 1–50 km")
-    return lat, lng, radius
-
-
-@router.get("/view")
-def view(
-    type_id: str = Query(default="", alias="type"),
-    demand: str = Query(default=""),
-    bbox: str = Query(),
-    zoom: int = Query(),
-    bandwidth_km: float = Query(),
-    months: int = 24,
-    area: str = Query(default=""),
-) -> dict:
-    """Heatmapa widocznego fragmentu mapy. Puste `type` / `demand` = brak wyboru (co najmniej jedno wymagane).
-
-    `area` (opcjonalnie, „lat,lng,promień_km”) zawęża do okręgu tylko listę top-5.
-    """
+def _check_selection(type_id: str, demand: str, months: int) -> None:
+    """Wspólna walidacja wyboru użytkownika (typ, czynnik popytu, okres) dla /surface i /point."""
     if not type_id and not demand:
         raise _bad_request("Wybierz typ działalności albo czynnik popytu")
     if type_id and type_id not in TYPES:
@@ -89,14 +61,34 @@ def view(
         raise _bad_request("Nieznany czynnik popytu")
     if months not in MONTHS_OPTIONS:
         raise _bad_request("Okres musi wynosić 12, 24 lub 36 miesięcy")
-    if not 3 <= zoom <= 19:
-        raise _bad_request("Przybliżenie (zoom) musi mieścić się w zakresie 3–19")
-    if not 0.1 <= bandwidth_km <= 20:
-        raise _bad_request("Zasięg klienta (bandwidth_km) musi mieścić się w zakresie 0,1–20 km")
-    params = ViewParams(type_id or None, demand or None, _parse_bbox(bbox), zoom, bandwidth_km, months)
-    top_area = _parse_area(area)
+
+
+def _check_in_poland(lat: float, lng: float, what: str) -> None:
+    if not (math.isfinite(lat) and math.isfinite(lng)
+            and LAT_RANGE[0] <= lat <= LAT_RANGE[1] and LNG_RANGE[0] <= lng <= LNG_RANGE[1]):
+        raise _bad_request(f"{what} poza Polską")
+
+
+@router.get("/surface")
+def surface(
+    type_id: str = Query(default="", alias="type"),
+    demand: str = Query(default=""),
+    lat: float = Query(),
+    lng: float = Query(),
+    radius_km: float = Query(),
+    reach_km: float = Query(),
+    months: int = 24,
+) -> dict:
+    """Mapa okolicy: wartości na siatce w okręgu wokół miejsca. Puste `type` / `demand` = brak wyboru."""
+    _check_selection(type_id, demand, months)
+    _check_in_poland(lat, lng, "Miejsce")
+    if not RADIUS_KM[0] <= radius_km <= RADIUS_KM[1]:
+        raise _bad_request("Promień obszaru musi mieścić się w zakresie 1–30 km")
+    if not REACH_KM[0] <= reach_km <= REACH_KM[1]:
+        raise _bad_request("Zasięg klienta (reach_km) musi mieścić się w zakresie 0,1–20 km")
+    params = SurfaceParams(type_id or None, demand or None, lat, lng, radius_km, reach_km, months)
     try:
-        return cached_view(params, top_area)
+        return cached_surface(params)
     except DatabaseMissing:
         raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
 

@@ -31,14 +31,14 @@ def test_locked_db_returns_503(make_client):
         stdout=subprocess.PIPE, text=True)
     try:
         assert child.stdout.readline().strip() == "ready"
-        params = dict(demand="pop_total", bbox="20.97,52.2,21.05,52.26", zoom=13, bandwidth_km=1)
-        for url, extra in (("/api/view", params), ("/api/meta", {}), ("/api/poi", dict(type="cafe", bbox="20,52,21,53"))):
+        params = dict(demand="pop_total", lat=52.23, lng=21.01, radius_km=3, reach_km=1)
+        for url, extra in (("/api/surface", params), ("/api/meta", {}), ("/api/poi", dict(type="cafe", bbox="20,52,21,53"))):
             r = client.get(url, params=extra)
             assert r.status_code == 503 and r.json()["detail"] == DB_BUSY_MESSAGE, url
     finally:
         child.wait(timeout=15)
     # po zakończeniu procesu blokada znika; zepsute połączenie nie zostało zapamiętane
-    assert client.get("/api/view", params=params).status_code == 200
+    assert client.get("/api/surface", params=params).status_code == 200
 
 
 def test_static_files_are_revalidated():
