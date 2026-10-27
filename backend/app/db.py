@@ -15,6 +15,13 @@ class DatabaseMissing(Exception):
     """Plik bazy nie istnieje — trzeba uruchomić ETL."""
 
 
+class DatabaseBusy(Exception):
+    """Plik bazy jest zablokowany przez inny proces (ETL zapisuje do bazy)."""
+
+
+DB_BUSY_MESSAGE = "Baza danych jest właśnie aktualizowana. Spróbuj ponownie za kilka minut."
+
+
 _conn: duckdb.DuckDBPyConnection | None = None
 _lock = threading.Lock()
 _reset_hooks: list = []   # funkcje do wywołania przy zmianie bazy (np. czyszczenie cache wyników)
@@ -26,7 +33,10 @@ def cursor() -> duckdb.DuckDBPyConnection:
         if _conn is None:
             if not config.DB_PATH.exists():
                 raise DatabaseMissing(str(config.DB_PATH))
-            _conn = duckdb.connect(str(config.DB_PATH), read_only=True)
+            try:
+                _conn = duckdb.connect(str(config.DB_PATH), read_only=True)
+            except duckdb.IOException as e:    # blokada pliku przez ETL; _conn zostaje None — następne żądanie spróbuje znowu
+                raise DatabaseBusy(str(e)) from e
         return _conn.cursor()
 
 
