@@ -103,6 +103,10 @@ function currentDemand() {
   return catalog.demands.find((d) => d.id === $('demand-select').value) || null;
 }
 
+// Przy popycie z pozwoleń „klientami” są nowe budowy, nie ludzie — inaczej podpis wprowadzałby w błąd.
+export const scoreNoun = (permits) => (permits ? 'nowych budów' : 'klientów');
+const demandIsPermits = () => currentDemand()?.source === 'permits';
+
 function syncMonthsRow() {
   const demand = currentDemand();
   $('months-row').hidden = !(demand && demand.needs_months);
@@ -279,7 +283,7 @@ export function renderTop(list, metric, onClick) {
   list.forEach((place, i) => {
     const li = document.createElement('li');
     const label = metric === 'S' ? `${fmt(place.value, 1)} firm w zasięgu`
-      : metric === 'D' ? `${fmt(place.value)} w zasięgu` : `${fmt(place.value)} klientów na firmę`;
+      : metric === 'D' ? `${fmt(place.value)} w zasięgu` : `${fmt(place.value)} ${scoreNoun(demandIsPermits())} na firmę`;
     li.textContent = `${place.name} — ${label}`;
     li.addEventListener('click', () => onClick(place, i));
     ol.append(li);
@@ -312,7 +316,7 @@ export function pointPopup(d) {
       : `${d.demand_name}: ok. ${fmt(roundEstimate(d.demand))} (szacunek)`);
   }
   if (d.competitors != null) add(`${d.type_name} w OpenStreetMap: ${fmt(d.competitors)}`);
-  if (d.score != null) add(`→ ok. ${fmt(d.score)} klientów na firmę po otwarciu Twojej`, true);
+  if (d.score != null) add(`→ ok. ${fmt(d.score)} ${scoreNoun(d.permits_period != null)} na firmę po otwarciu Twojej`, true);
   if (d.nearest.length) {
     add('Najbliżsi:');
     const ul = document.createElement('ul');

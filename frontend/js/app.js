@@ -39,7 +39,8 @@ function drawLayer(fade = false) {
   const period = result.permits_period;
   const note = period && ui.currentLayer() !== 'S'
     ? `Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.` : '';
-  ui.renderLegend(layer.title, result.legend[layer.legend], note);
+  const title = layer.legend === 'score' && period ? 'Nowe budowy na firmę' : layer.title;
+  ui.renderLegend(title, result.legend[layer.legend], note);
 }
 
 function showResult(result) {
