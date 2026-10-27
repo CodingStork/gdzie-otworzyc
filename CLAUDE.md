@@ -62,7 +62,7 @@ Traktuj to jak własny produkt. Konkretnie oznacza to:
 | v1 | Heksagony H3 dla całej Polski, wskaźnik „klienci na 1 konkurenta”, skala percentylowa | Kolory zlewały 4 600 i 19 000; heksagony rosły z oddaleniem; niezrozumiałe „okazja/popyt/konkurencja” |
 | v2 / v2.1 | Mapa dynamiczna z poziomami szczegółowości (LOD), dasymetria na budynki, okrąg 2SFCA, skala log | Ciągłe przeliczanie całej Polski przy ruchu mapy było męczące; mapa „zalana kolorem” po oddaleniu |
 | v3 | Przepływ **miejsce + promień → „Pokaż mapę”**, **mgła** (powierzchnia ciągła YlOrRd, log, przezroczystość), **model Huffa** z opcją zewnętrzną, szczegóły po kliknięciu | Uwagi: brak danych o firmach, panele pomieszane, heksagony w szczegółach zbędne, nie da się kliknąć poza okrąg |
-| v3.1 | Firmy z **OSM + Overture Maps** (deduplikacja), **podsumowanie obszaru** ze średnią krajową, ulice w top-5, **trend budów**, lewo = ustawienia / prawo = wnioski, klik poza okręgiem = nowe miejsce, zasięg min. 0,3 km, zakładki na telefonie | — (aktualna) |
+| v3.1 | Firmy z **OSM + Overture Maps** (deduplikacja), **podsumowanie obszaru** ze średnią krajową, ulice w top-5, **trend budów**, lewo = ustawienia / prawo = wnioski, klik poza okręgiem = nowe miejsce, zasięg min. 0,3 km, zakładki na telefonie | — (aktualna, commit 5d9dbf8, zweryfikowana w przeglądarce 2026-10-27; czeka na testy Marcina) |
 
 Odrzucone świadomie: heksagony jako główna warstwa, przeliczanie przy ruchu mapy, przełącznik „Konkurencja”, mapa bivariate, Leaflet.heat,
 tęczowe palety, zasięg < 0,3 km (dane ludności mają ~300 m rozdzielczości), Overpass API na żywo (blokuje automaty).
@@ -75,6 +75,8 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
   numpy/scipy (cKDTree), pyproj, shapely, h3 v4, pyosmium. Frontend: czysty JS + Leaflet 1.9.4, bez Node i bez budowania.
 - **Dane:** Eurostat Census GRID 2021 (1 km) rozłożony dasymetrycznie na H3 res 9; OSM (Geofabrik) → firmy, miejscowości, ulice, wagi budynków;
   Overture Places → firmy; GUNB RWDZ + ULDK → pozwolenia na budowę (dokładność do obrębu). Układy: EPSG:2180/lokalny metryczny do odległości, 3035 spis, 4326 H3/mapa.
+- **Stan v3.1:** 195 testów zielonych, `etl.sanity` OK. Tabela `poi` ma kolumny `source` (`osm`/`overture`) i `source_id` (dawniej `osm_id`).
+  Salony kosmetyczne: 7 206 z OSM + 24 133 z Overture. Zasięg 0,1–0,3 km API podnosi do 0,3 z notatką; trend pomija ostatni, niepełny miesiąc danych.
 - **API:** `/api/surface` (mgła + podsumowanie + top-5 + trend), `/api/point` (dymek), `/api/catalog`, `/api/poi`, `/api/geocode`, `/api/meta`.
 - **Komendy:** `uv sync` · `uv run pytest -v` · `uv run python -m etl.run_all [--only kroki] [--force]` · `uv run python -m etl.sanity` · `start.bat` (port 8000).
 
@@ -91,8 +93,11 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 1. **CEIDG** jako trzecie źródło firm (kody PKD już są w katalogu) — najważniejsze dla branż, których nie ma w OSM/Overture (brukarze, ogrodnicy).
    Marcin musi złożyć wniosek o token API (dane.biznes.gov.pl, Profil Zaufany). **Token trafia do pliku `.env` (w gitignore), nigdy do czatu ani repo.**
 2. **Tailscale** (dostęp z uczelni) + reguła zapory dla portu 8000 — instrukcja w README; robimy dopiero, gdy Marcin przetestuje wersję lokalnie.
-3. Opcjonalnie: hot-spoty Getis-Ord Gi\*, model ML „luki rynkowej” z walidacją przestrzenną, dokładne geokodowanie działek.
-4. Przy każdej nowej wersji: **zaktualizuj ten plik** (tabela w §4, stan w §5–6), README i ściągę.
+3. Drobne, odłożone z przeglądu v3.1: deduplikacja „jeden do wielu” (dla sklepów i restauracji odpada ok. 2/3 punktów Overture — sprawdzić, czy nie za agresywnie),
+   `/api/poi` bez `ORDER BY` przy limicie 5 000, sanity liczy wiersze typ×firma, brak pliku `.release` → „Overture Maps nieznane”,
+   promień obszaru ma krok 1 km, w podsumowaniu „Obszar: punkt na mapie”, gdy miejsce wybrano kliknięciem (można dociągnąć nazwę najbliższej miejscowości).
+4. Opcjonalnie: hot-spoty Getis-Ord Gi\*, model ML „luki rynkowej” z walidacją przestrzenną, dokładne geokodowanie działek.
+5. Przy każdej nowej wersji: **zaktualizuj ten plik** (tabela w §4, stan w §5–6), README i ściągę.
 
 ## 7. Zasady stałe
 
