@@ -259,6 +259,9 @@ on_reset(_cached.cache_clear)   # zmiana/ponowne otwarcie bazy unieważnia wynik
 
 # ---------------------------------------------------------------- /api/point ----
 
+CELLS_MAX_REACH_KM = 3        # przy większym zasięgu nie zwracamy komórek (za dużo do narysowania)
+CELLS_LIMIT = 3000
+
 def _haversine_m(lat: float, lng: float, lats: np.ndarray, lngs: np.ndarray) -> np.ndarray:
     """Odległości [m] od punktu (lat, lng) do tablic punktów — wzór haversine na kuli o promieniu 6371 km."""
     p1, p2 = math.radians(lat), np.radians(lats)
@@ -267,7 +270,7 @@ def _haversine_m(lat: float, lng: float, lats: np.ndarray, lngs: np.ndarray) -> 
 
 
 def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_id: str | None,
-                  demand_id: str | None, bandwidth_km: float, months: int) -> dict:
+                  demand_id: str | None, reach_km: float, months: int) -> dict:
     """Dokładne liczby w okręgu zasięgu wokół punktu (dymek po kliknięciu mapy).
 
     Inaczej niż heatmapa (komórki + agregacja) liczymy tu na najdrobniejszych danych: popyt z komórek
@@ -275,16 +278,13 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
     """
     if not type_id and not demand_id:
         raise ValueError("Wybierz typ działalności albo czynnik popytu")
-    radius_km = effective_reach_km(demand_id, bandwidth_km)
+    radius_km = effective_reach_km(demand_id, reach_km)
     notes: list[str] = []
     result: dict = {"radius_km": radius_km, "demand": None, "demand_name": None, "competitors": None,
-                    "type_name": None, "score": None, "nearest": [], "notes": notes}
+                    "type_name": None, "expected": None, "cells": [], "nearest": [], "notes": notes}
 
     # Prostokąt zawiera margines 0,2 km (promień komórki res 9), żeby do zapytania trafiła też komórka klikniętego punktu.
-    reach_km = radius_km + 0.2
-    dlat = reach_km / 110.54
-    dlng = reach_km / (111.32 * math.cos(math.radians(lat)))
-    box = [lat - dlat, lat + dlat, lng - dlng, lng + dlng]
+    box = _box(lat, lng, radius_km + 0.2)
 
     if demand_id:
         demand = DEMANDS[demand_id]
@@ -306,7 +306,7 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
                                    "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? GROUP BY lat, lng, h3",
                                    [*demand.kinds, window[0], *box]).fetchall()
                 result["permits_period"] = _period(window)
-            if bandwidth_km < PERMITS_MIN_REACH_KM:
+            if reach_km < PERMITS_MIN_REACH_KM:
                 notes.append(PERMITS_NOTE)
         if rows:
             arr = np.array([r[:3] for r in rows], dtype=float)
@@ -334,5 +334,23 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
         result["nearest"] = nearest
 
     if type_id and demand_id:
-        result["score"] = result["demand"] / (result["competitors"] + 1)
+        result["expected"] = _expected_at(con, lat, lng, type_id, demand_id, radius_km, months)
+
+    if radius_km <= CELLS_MAX_REACH_KM and table_exists(con, "hex_pop_r9"):
+        rows = con.execute("SELECT h3, lat, lng, pop_total FROM hex_pop_r9 "
+                           "WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? AND pop_total > 0", box).fetchall()
+        if rows:
+            dist = _haversine_m(lat, lng, np.array([r[1] for r in rows]), np.array([r[2] for r in rows]))
+            result["cells"] = [[rows[i][0], rows[i][3]] for i in np.flatnonzero(dist <= radius_km * 1000)[:CELLS_LIMIT]]
     return result
+
+
+def _expected_at(con, lat: float, lng: float, type_id: str, demand_id: str, reach_km: float, months: int) -> float:
+    """E (model Huffa) dla jednego punktu — te same źródła i wzór co w /api/surface, ale bez siatki."""
+    arr, _ = load_demand(con, demand_id, demand_res(reach_km), _box(lat, lng, 4 * reach_km), months)
+    if not len(arr):
+        return 0.0
+    comp = load_competitors(con, type_id, _box(lat, lng, 8 * reach_km))
+    comp_xy = to_metric(comp[:, 0], comp[:, 1]) if len(comp) else np.empty((0, 2))
+    here = to_metric(np.array([lat]), np.array([lng]))
+    return float(huff_and_potential(here, to_metric(arr[:, 0], arr[:, 1]), arr[:, 2], comp_xy, reach_km * 1000)[0][0])
