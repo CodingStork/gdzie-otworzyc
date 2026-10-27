@@ -2,36 +2,37 @@
 
 Aplikacja webowa, która na mapie Polski pokazuje, **gdzie jest dużo potencjalnych klientów i mało konkurencji**. Projekt zaliczeniowy z przedmiotu „Analiza danych przestrzennych”.
 
-Wybierasz typ działalności (16 typów) i/lub klientów (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (0,1–20 km), po czym klikasz „Pokaż mapę”. W okręgu wokół miejsca dostajesz **mgłę** — płynną żółto-czerwoną mapę — a kliknięcie w nią pokazuje szczegóły.
+Wybierasz typ działalności (16 typów) i/lub klientów (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (0,3–20 km), po czym klikasz „Pokaż mapę”. Po lewej są **same ustawienia**, po prawej **wnioski**: legenda, podsumowanie obszaru (ilu klientów, ile firm, jak to wypada na tle średniej krajowej) i top-5 miejsc. W okręgu wokół miejsca widać **mgłę** — płynną żółto-czerwoną mapę — a kliknięcie w nią pokazuje szczegóły.
 
-![Pruszków — fryzjer i mieszkańcy, „Gdzie otworzyć”](docs/screenshots/v3-pruszkow-gdzie-otworzyc.png)
+![Brzeg — salon kosmetyczny i kobiety, „Gdzie otworzyć” z podsumowaniem obszaru](docs/screenshots/v31-a-brzeg-salony-kobiety.png)
 
 ## Jak używać
 
-1. **Wybierz branżę** („Typ działalności”) i/lub **klientów** („Twoi klienci to”); przy nowych domach wybierz okres pozwoleń.
-2. **Podaj miejsce:** wpisz miejscowość albo kliknij mapę. Ustaw **promień obszaru** (1–30 km) i **zasięg klienta** (suwak logarytmiczny 0,1–20 km; fryzjer ok. 1,5 km, market budowlany 10–20 km).
-3. Kliknij **„Pokaż mapę”**. Poza okręgiem mapa jest przygaszona, w okręgu widać mgłę, a w panelu top-5 miejsc. Zmiana ustawień przelicza mapę sama (po 300 ms); **ruch i przybliżanie mapy nie wysyłają żadnych zapytań**.
-4. **Warstwy:** typ + klienci → przełącznik **„Gdzie otworzyć”** (szacowana liczba Twoich klientów, model Huffa) i **„Gdzie są klienci”**; tylko typ → **„Gdzie są {firmy}”**; tylko klienci → **„Gdzie są klienci”**. Pytajniki przy nazwach wyjaśniają warstwy.
-5. **Kliknięcie w mapę** pokazuje szczegóły: okrąg zasięgu, drobne heksagony z ludnością, konkurentów i dymek („W promieniu 1,5 km: ok. 36 800 mieszkańców · Otwierając tu, zdobyłbyś ok. 1 600 klientów”) oraz link „Ustaw tu środek obszaru”. Zamknięcie dymku czyści szczegóły.
-6. Adres strony (hash) zapisuje cały widok — link można wysłać i odtworzy tę samą mapę.
+1. **Lewy panel (ustawienia):** wybierz **branżę** („Typ działalności”) i/lub **klientów** („Twoi klienci to”); przy nowych domach wybierz okres pozwoleń.
+2. **Podaj miejsce:** wpisz miejscowość albo kliknij mapę (pod polem widać nazwę wybranego miejsca). Ustaw **promień obszaru** (1–30 km) i **zasięg klienta** (suwak logarytmiczny 0,3–20 km; fryzjer ok. 1,5 km, market budowlany 10–20 km). Zasięg nie schodzi poniżej 0,3 km, bo dane o mieszkańcach mają rozdzielczość ok. 300 m.
+3. **„Co pokazać na mapie”:** typ + klienci → **„Gdzie otworzyć”** (szacowana liczba Twoich klientów, model Huffa) i **„Gdzie są klienci”**; tylko typ → **„Gdzie są {firmy}”**; tylko klienci → **„Gdzie są klienci”**; klienci z pozwoleń na budowę → dodatkowo **„Gdzie budowy przybywa”** (mapa trendu). Pytajniki wyjaśniają każdą warstwę.
+4. Kliknij **„Pokaż mapę”**. Poza okręgiem mapa jest przygaszona, w okręgu widać mgłę. Zmiana ustawień przelicza mapę sama (po 300 ms); **ruch i przybliżanie mapy nie wysyłają żadnych zapytań**.
+5. **Prawy panel (wnioski):** legenda (skala obejmuje 2 rzędy wielkości), **podsumowanie obszaru** („Kobiety: ok. 18 800 · Salony kosmetyczne w obszarze: 36 (OSM 18, Overture 18) · 1 firma na ok. 520 kobiet · Średnio w Polsce: 1 na ok. 610 · Konkurencja na poziomie średniej krajowej”) i top-5 z nazwami ulic (klik = przelot na mapie i szczegóły).
+6. **Kliknięcie w mapę:** w okręgu — szczegóły punktu (okrąg zasięgu, konkurenci, dymek: „W promieniu 1 km: ok. 11 100 kobiet · Otwierając tu, zdobyłbyś ok. 560 klientów”); **poza okręgiem — nowe miejsce** (pinezka i przerywany okrąg podglądu, stara mgła przygasa, przycisk „Pokaż mapę” się wyróżnia). Zamknięcie dymku czyści szczegóły.
+7. Adres strony (hash) zapisuje cały widok — link można wysłać i odtworzy tę samą mapę. Na telefonie panele to zakładki „Ustawienia” / „Wnioski” arkusza na dole (po „Pokaż mapę” otwierają się „Wnioski”).
 
 ## Przykłady użycia
 
-| Gdzie są klienci (ta sama okolica) | Szczegóły po kliknięciu |
+| Brzeg: szczegóły po kliknięciu w okręgu (bez heksagonów) | Klik poza okręgiem = nowe miejsce |
 |---|---|
-| ![Gdzie są klienci](docs/screenshots/v3-pruszkow-gdzie-sa-klienci.png) | ![Szczegóły](docs/screenshots/v3-pruszkow-szczegoly-klik.png) |
+| ![Szczegóły](docs/screenshots/v31-a-szczegoly-bez-heksagonow.png) | ![Nowe miejsce](docs/screenshots/v31-c-klik-poza-okregiem-nowe-miejsce.png) |
 
-| Tylko klienci: seniorzy, Kraków (bez przełącznika) | Brukarz pod Wrocławiem, promień 30 km, zasięg 15 km |
+| Wrocław Psie Pole: salony kosmetyczne (OSM + Overture) | Brukarstwo pod Wrocławiem: „Gdzie budowy przybywa” |
 |---|---|
-| ![Seniorzy](docs/screenshots/v3-krakow-seniorzy-bez-przelacznika.png) | ![Brukarz](docs/screenshots/v3-wroclaw-brukarstwo-30km.png) |
+| ![Wrocław](docs/screenshots/v31-b-wroclaw-psie-pole.png) | ![Trend budów](docs/screenshots/v31-d-brukarstwo-trend-budow.png) |
 
-| Start (karta instrukcji) | Telefon (375×812) |
-|---|---|
-| ![Start](docs/screenshots/v3-start.png) | ![Telefon](docs/screenshots/v3-mobile-krakow-fryzjerzy.png) |
+| Telefon (375×812): zakładka „Wnioski” |
+|---|
+| ![Telefon](docs/screenshots/v31-e-telefon-wnioski.png) |
 
 ## Jak to działa (metoda)
 
-Dla okręgu wokół wybranego miejsca serwer buduje **regularną siatkę** w metrach (lokalny układ metryczny wyrównany do północy; krok ok. promień/90, 50–300 m) i liczy na niej trzy wielkości. Każde źródło popytu *i* (komórka H3 z ludnością albo pozwoleniami, `d_i` osób) i każdy konkurent *k* (firma z OSM) wpływa na punkt siatki *g* z wagą malejącą z odległością — **rozpad wykładniczy** `f(d) = exp(−d / zasięg)`, obcięty dla `d > 4·zasięg`:
+Dla okręgu wokół wybranego miejsca serwer buduje **regularną siatkę** w metrach (lokalny układ metryczny wyrównany do północy; krok ok. promień/90, 50–300 m) i liczy na niej trzy wielkości. Każde źródło popytu *i* (komórka H3 z ludnością albo pozwoleniami, `d_i` osób) i każdy konkurent *k* (firma z OpenStreetMap albo Overture Maps) wpływa na punkt siatki *g* z wagą malejącą z odległością — **rozpad wykładniczy** `f(d) = exp(−d / zasięg)`, obcięty dla `d > 4·zasięg`:
 
 ```
 Gdzie są klienci:  P(g) = Σ_i d_i · f(d_ig)
@@ -40,13 +41,18 @@ Gdzie otworzyć:    E(g) = Σ_i d_i · f(d_ig) / ( f(d_ig) + C_i + A0 )     (mod
                    C_i  = Σ_k f(d_ik)   (siła istniejących konkurentów dla mieszkańca i),  A0 = exp(−1)
 ```
 
-**Model Huffa (1963):** każdy mieszkaniec wybiera między firmami, a bliższa przyciąga go mocniej; `E(g)` to szacowana liczba klientów **nowej** firmy w punkcie *g*. **Opcja zewnętrzna `A0`** reprezentuje „inne możliwości” (firmy spoza OSM, zakupy gdzie indziej) i częściowo kompensuje niekompletność OSM. Wartości na siatce są zwracane przez `/api/surface`, a przeglądarka **interpoluje je** (×4, smoothstep) i dopiero potem koloruje — stąd gładka powierzchnia bez widocznych kwadratów. Po kliknięciu `/api/point` liczy dokładne liczby w okręgu zasięgu i ten sam wzór Huffa dla jednego punktu.
+**Model Huffa (1963):** każdy mieszkaniec wybiera między firmami, a bliższa przyciąga go mocniej; `E(g)` to szacowana liczba klientów **nowej** firmy w punkcie *g*. **Opcja zewnętrzna `A0`** reprezentuje „inne możliwości” (firmy spoza obu baz, zakupy gdzie indziej) i częściowo kompensuje ich niekompletność. Wartości na siatce są zwracane przez `/api/surface`, a przeglądarka **interpoluje je** (×4, smoothstep) i dopiero potem koloruje — stąd gładka powierzchnia bez widocznych kwadratów. Po kliknięciu `/api/point` liczy dokładne liczby w okręgu zasięgu i ten sam wzór Huffa dla jednego punktu.
 
 Najważniejsze decyzje metodyczne (szczegółowo w [docs/sciaga-do-obrony.md](docs/sciaga-do-obrony.md)):
 
 - **Metoda dasymetryczna:** ludność ze spisu (kwadraty 1 km, EPSG:3035) rozkładamy na heksagony H3 **res 9** (~0,1 km²) proporcjonalnie do wagi budynków mieszkalnych z OSM (powierzchnia × kondygnacje × współczynnik typu); przy dużym zasięgu źródła są grubsze (res 8/7), żeby było szybko.
 - **Powierzchnia ciągła zamiast heksagonów/choropletu:** wartości zmieniają się płynnie, więc pokazujemy izopletę-mgłę; drobne komórki dopiero po kliknięciu.
-- **Skala logarytmiczna YlOrRd z przezroczystością:** kolor zależy od wartości (5.–99. percentyl wartości dodatnich w okręgu), małe wartości są przezroczyste.
+- **Skala logarytmiczna YlOrRd z przezroczystością:** kolor zależy od wartości (górna granica = 99. percentyl wartości dodatnich w okręgu, dolna = 5. percentyl, ale nie niżej niż 1/100 górnej — skala obejmuje najwyżej 2 rzędy wielkości, żeby mapa nie była cała czerwona), małe wartości są przezroczyste.
+- **Firmy z dwóch źródeł (Overture Maps + OSM):** OSM ma dla usług kilka razy mniej firm niż Overture (we Wrocławiu 340 salonów kosmetycznych w OSM wobec ok. 1 260 w Overture), więc `poi` = OSM ∪ Overture. Ten sam salon bywa w obu bazach, dlatego **deduplikacja przestrzenna**: obiekt Overture odpada, gdy w ≤ 50 m jest punkt OSM tego samego typu albo w ≤ 150 m punkt o podobnej nazwie (`difflib`, próg 0,6).
+- **Podsumowanie i porównanie ze średnią krajową (normalizacja per capita):** surowa liczba firm nic nie mówi (duże miasto ma ich więcej), więc liczymy **klientów na jedną firmę** w okręgu i porównujemy z tym samym wskaźnikiem dla całej Polski. Powyżej 125% średniej → „mniej konkurencji niż przeciętnie”, poniżej 80% → „więcej”, w środku → „na poziomie średniej”.
+- **Mapa trendu (zmiana w czasie):** dla czynników z pozwoleń liczymy różnicę „ostatnie 12 miesięcy minus poprzednie 12” (okno względem najnowszych danych), też z rozpadem odległości; paleta **rozbieżna** (niebieski = ubywa, czerwony = przybywa, zero przezroczyste), bo zmiana ma znak.
+- **Rozdzielczość danych a sensowny zasięg:** ludność mamy w komórkach H3 res 9 (~300 m między środkami), więc zasięg poniżej 0,3 km nie dodaje informacji — suwak zaczyna się od 0,3 km.
+- **Nazwy ulic w top-5:** z pliku OSM stawiamy punkty co ok. 100 m wzdłuż nazwanych dróg; nazwa miejsca = najbliższa ulica (≤ 150 m) + osiedle/miejscowość.
 - **Odległości w metrach** (lokalny układ metryczny wokół miejsca, a dla danych EPSG:2180), nie w stopniach; bufor `4·zasięg` wokół okręgu usuwa efekt krawędzi.
 - **Top-5** z odstępem ≥ max(zasięg, promień/5) (non-maximum suppression), tylko w okręgu.
 - **Geokodowanie obrębów ewidencyjnych** (ULDK GUGiK) dla pozwoleń na budowę — dokładność do obrębu, stąd minimalny zasięg 1 km dla nowych domów.
@@ -66,7 +72,8 @@ Najważniejsze decyzje metodyczne (szczegółowo w [docs/sciaga-do-obrony.md](do
 | Dane | Źródło | Licencja / atrybucja |
 |---|---|---|
 | Ludność (siatka 1 km, spis 2021) | Eurostat GISCO, Census GRID 2021 (V3) | © EU, Eurostat GISCO — dane zmodyfikowane (agregacja do H3) |
-| Firmy i nazwy miejsc | OpenStreetMap (ekstrakt Geofabrik `poland-latest.osm.pbf`) | ODbL, © OpenStreetMap contributors |
+| Firmy, ulice i nazwy miejsc | OpenStreetMap (ekstrakt Geofabrik `poland-latest.osm.pbf`) | ODbL, © OpenStreetMap contributors |
+| Firmy (drugie źródło) | Overture Maps Foundation, Places (wydanie 2026-10-21.0) | CDLA Permissive 2.0, © Overture Maps Foundation |
 | Nowe budowy | GUNB — Rejestr Wniosków, Decyzji i Zgłoszeń (RWDZ), pliki CSV | dane publiczne GUNB |
 | Granice obrębów | GUGiK ULDK | dane publiczne GUGiK |
 | Podkład mapy | Esri World Light Gray (kafelki) | © Esri i współtwórcy |
@@ -80,9 +87,10 @@ Podkład: pierwotnie planowano CARTO Positron, ale darmowe kafelki CARTO wymagaj
             (raz + odświeżanie)                                     (na żądanie)
  ┌────────────── ETL (Python) ───────────────┐      ┌──────── Backend FastAPI ────────┐     ┌──── Frontend ────┐
  │ Eurostat Census GRID 2021 → hex_pop_r9     │      │ /api/catalog                    │     │ index.html       │
- │ Geofabrik poland.osm.pbf  → poi, places,   │ ───▶ │ /api/surface (mgła: siatka,     │ ──▶ │ Leaflet + h3-js  │
- │   building_weights (dasymetria)            │DuckDB│   Huff, top-5)                  │ JSON│ (bez buildowania)│
- │ GUNB RWDZ CSV + ULDK      → permits        │ plik │ /api/point (dymek punktu)       │     │                  │
+ │ Geofabrik poland.osm.pbf  → poi, places,   │ ───▶ │ /api/surface (mgła: siatka,     │ ──▶ │ Leaflet          │
+ │   streets, building_weights (dasymetria)   │DuckDB│   Huff, podsumowanie, trend,    │ JSON│ (bez buildowania)│
+ │ Overture Places (S3)      → poi (dedup.)   │ plik │   top-5)                        │     │                  │
+ │ GUNB RWDZ CSV + ULDK      → permits        │      │ /api/point (dymek punktu)       │     │                  │
  │ agregacja do H3 res 9 → 8 → 7 → 6 → 5      │      │ /api/poi /api/geocode /api/meta │     │                  │
  └────────────────────────────────────────────┘      └─────────────────────────────────┘     └──────────────────┘
 ```
@@ -94,7 +102,7 @@ Struktura repozytorium:
 ```
 backend/app/        FastAPI: main.py, config.py, db.py, catalog.py, api/routes.py,
                     analysis/{kernel,surface,service}.py, services/geocode.py
-etl/                download.py, osm_poi.py, buildings.py, population.py, permits.py,
+etl/                download.py, osm_poi.py, overture.py, streets.py, buildings.py, population.py, permits.py,
                     geocode_obreby.py, aggregate.py, meta.py, run_all.py, sanity.py
 frontend/           index.html, css/style.css, js/{app,api,map,ui,colors}.js
 tests/              pytest (małe fixture'y, baza testowa budowana w locie)
@@ -133,20 +141,19 @@ Aplikacja działa na komputerze domowym; z laptopa (np. na uczelni) otwierasz j�
 
 ## Ograniczenia danych
 
-- **OpenStreetMap jest niekompletny**, zwłaszcza dla małych usług (fryzjerzy, brukarze). Wynik „mało konkurencji” może oznaczać „mało wpisów w OSM”; dla typów z oceną „poor” aplikacja ostrzega, że to głównie mapa popytu.
+- **OpenStreetMap i Overture Maps są niekompletne**, zwłaszcza dla małych usług (brukarze, ogrodnicy). Overture wyraźnie uzupełnia salony, fryzjerów i markety, ale wynik „mało konkurencji” może nadal oznaczać „mało wpisów w bazach”; dla typów z oceną „poor” aplikacja ostrzega, że to głównie mapa popytu. Deduplikacja jest heurystyką (odległość + podobieństwo nazw) — część duplikatów może zostać, a część różnych firm w jednym budynku zostać połączona.
 - **Spis ludności jest z 2021 r.**; uzupełniają go pozwolenia na budowę.
 - **Pozwolenie na budowę ≠ wybudowany dom** (budowa trwa 1–3 lata, część nie rusza), a lokalizacja jest z dokładnością do obrębu ewidencyjnego (miasto: osiedle, wieś: cała wieś) — dlatego zasięg dla nowych domów wynosi co najmniej 1 km.
 - **Ludność w heksagonach to szacunek modelowy** (metoda dasymetryczna): spis podaje tylko kwadraty 1 km, a rozkład wewnątrz kwadratu wynika z wag budynków OSM (nie znamy liczby mieszkań w budynku).
-- **Kolory są względne dla okręgu** (skala logarytmiczna dopasowana do wartości w wybranym obszarze), a liczby „klientów na firmę” są zawyżone, bo OSM ma ok. 1/3–1/4 firm — mapę czytamy porównawczo.
+- **Kolory są względne dla okręgu** (skala logarytmiczna dopasowana do wartości w wybranym obszarze), a liczby „klientów na firmę” bywają zawyżone, bo żadna baza nie zawiera wszystkich firm — dlatego porównujemy je ze średnią krajową liczoną tak samo.
 - Liczba „nowych budynków wielorodzinnych” to liczba inwestycji, nie mieszkań (rejestr nie podaje liczby lokali).
 - Wynik jest rankingiem pomocniczym, nie prognozą zysku.
 
 ## Plany rozwoju (poza zakresem tej wersji)
 
-- **M6** warstwa „Trend” dla budowlanki (ostatnie 12 mies. vs poprzednie 12),
 - **M7** hot-spoty Getis-Ord Gi\*,
 - **M8** model ML „luki rynkowej” (gradient boosting, walidacja przestrzenna po województwach),
-- **M9** integracja CEIDG jako drugie źródło konkurencji (kody PKD są już w katalogu),
+- **M9** integracja CEIDG jako trzecie źródło konkurencji (kody PKD są już w katalogu),
 - **M10** dokładne geokodowanie działek dla ostatnich 24 miesięcy.
 
-Dokumentacja: [specyfikacja v1](docs/superpowers/specs/2026-10-26-gdzie-otworzyc-design.md), [specyfikacja v2](docs/superpowers/specs/2026-10-27-widok-dynamiczny-design.md), [plan v1](docs/superpowers/plans/2026-10-26-gdzie-otworzyc.md), [plan v2](docs/superpowers/plans/2026-10-27-widok-dynamiczny.md), [źródła danych](docs/zrodla-danych.md), [raport ETL](docs/raport-etl.md), [ściąga do obrony](docs/sciaga-do-obrony.md).
+Dokumentacja: [specyfikacja v3](docs/superpowers/specs/2026-10-27-v3-mgla-huff-design.md), [plan v3](docs/superpowers/plans/2026-10-27-v3-mgla-huff.md), [plan v3.1 (Overture, podsumowanie, trend)](docs/superpowers/plans/2026-10-27-v31-overture-podsumowanie.md), [specyfikacja v1](docs/superpowers/specs/2026-10-26-gdzie-otworzyc-design.md), [specyfikacja v2](docs/superpowers/specs/2026-10-27-widok-dynamiczny-design.md), [plan v1](docs/superpowers/plans/2026-10-26-gdzie-otworzyc.md), [plan v2](docs/superpowers/plans/2026-10-27-widok-dynamiczny.md), [źródła danych](docs/zrodla-danych.md), [raport ETL](docs/raport-etl.md), [ściąga do obrony](docs/sciaga-do-obrony.md).

@@ -1,10 +1,10 @@
-# Ściąga do obrony — „Gdzie otworzyć?” (wersja 3)
+# Ściąga do obrony — „Gdzie otworzyć?” (wersja 3.1)
 
 Prostym językiem: co robi aplikacja, jakie pojęcia z analizy danych przestrzennych w niej występują i **gdzie dokładnie w kodzie** je znaleźć. Każde pojęcie ma 3–6 zdań i wskazanie `plik:funkcja`.
 
 ## Jak to działa w jednym akapicie
 
-Wybierasz typ działalności (np. fryzjer) i/lub klientów (np. mieszkańcy), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (z jak daleka przychodzą klienci, 0,1–20 km), po czym klikasz „Pokaż mapę”. Dla okręgu wokół miejsca serwer liczy **powierzchnię ciągłą** na regularnej siatce (w metrach, EPSG:2180). Główna mapa **„Gdzie otworzyć”** pokazuje **szacowaną liczbę klientów nowej firmy** wg **modelu Huffa**; druga, **„Gdzie są klienci”**, pokazuje dostępny popyt. Kolor to żółto-czerwona „mgła” w skali logarytmicznej (małe wartości przezroczyste). Ruch mapy niczego nie przelicza; **kliknięcie** pokazuje szczegóły: okrąg zasięgu, drobne heksagony z ludnością, konkurentów i liczby. Dane (ludność ze spisu rozłożona na budynki OSM, firmy z OSM, pozwolenia z GUNB) przetwarzamy **raz** do bazy DuckDB (ETL).
+Wybierasz typ działalności (np. fryzjer) i/lub klientów (np. mieszkańcy), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (z jak daleka przychodzą klienci, 0,3–20 km), po czym klikasz „Pokaż mapę”. Dla okręgu wokół miejsca serwer liczy **powierzchnię ciągłą** na regularnej siatce (w metrach, EPSG:2180). Główna mapa **„Gdzie otworzyć”** pokazuje **szacowaną liczbę klientów nowej firmy** wg **modelu Huffa**; druga, **„Gdzie są klienci”**, pokazuje dostępny popyt. Kolor to żółto-czerwona „mgła” w skali logarytmicznej (małe wartości przezroczyste). Ruch mapy niczego nie przelicza; **kliknięcie w okręgu** pokazuje szczegóły (okrąg zasięgu, konkurenci, liczby), a **kliknięcie poza nim** wybiera nowe miejsce. Po prawej stronie jest **podsumowanie obszaru** (klienci na firmę na tle średniej krajowej) i top-5 z nazwami ulic. Dane (ludność ze spisu rozłożona na budynki OSM, firmy z OSM i Overture Maps, pozwolenia z GUNB) przetwarzamy **raz** do bazy DuckDB (ETL).
 
 Wzór: `E(g) = Σ_i d_i · f(d_ig) / (f(d_ig) + C_i + A0)`, `f(d) = exp(−d / zasięg)`, `C_i = Σ_k f(d_ik)`, `A0 = exp(−1)`.
 
@@ -58,7 +58,7 @@ Zasada projektowania wizualizacji „overview first, zoom and filter, then detai
 ## 8. Kolor: dlaczego nie tęcza, dlaczego log, dlaczego przezroczystość
 
 - **Nie tęcza:** do wartości rosnących w jedną stronę używa się skali **sekwencyjnej jednobarwnej** (ColorBrewer **YlOrRd**: żółty → pomarańczowy → czerwony — Brewer; Borland & Taylor 2007: tęcza wprowadza fałszywe granice i nie ma naturalnej kolejności). Czerwony = „więcej / lepiej”.
-- **Skala logarytmiczna:** ludność i liczba firm mają rozkład prawostronnie skośny, więc skala liniowa zrobiłaby z miasta jedną czerwoną plamę. `t = (log10(v) − log10(lo)) / (log10(hi) − log10(lo))`, `lo` = 5. percentyl, `hi` = 99. percentyl wartości dodatnich w okręgu. Każdy krok koloru to mniej więcej podwojenie wartości. Percentyl rankingowy odrzuciliśmy już w v2.1: ściska ogon rozkładu.
+- **Skala logarytmiczna:** ludność i liczba firm mają rozkład prawostronnie skośny, więc skala liniowa zrobiłaby z miasta jedną czerwoną plamę. `t = (log10(v) − log10(lo)) / (log10(hi) − log10(lo))`, `hi` = 99. percentyl wartości dodatnich w okręgu, `lo` = max(5. percentyl, `hi`/100) — od v3.1 skala obejmuje najwyżej 2 rzędy wielkości (przy 4 rzędach prawie wszystko było czerwone). Każdy krok koloru to mniej więcej podwojenie wartości. Percentyl rankingowy odrzuciliśmy już w v2.1: ściska ogon rozkładu.
 - **Przezroczystość:** α = 0 dla `t < 0,05`, rośnie do 0,85 przy `t = 0,5`; małe wartości znikają, zostaje efekt „mgły” i widać podkład (etykiety miast leżą nad mgłą).
 - Kolory są względne dla okręgu — dokładne liczby pokazują legenda (okrągłe wartości) i dymek. Przykład problemu normalizacji w mapach: xkcd 1138 („to tylko mapa ludności”) — dlatego główna mapa pokazuje odpowiedź na pytanie użytkownika (ilu klientów), a nie surowy popyt.
 - `frontend/js/colors.js` (`fogColor`, `logScale`, `niceLogTicks`).
@@ -99,6 +99,22 @@ Powierzchnia jest policzona na siatce i zaokrąglona, więc po kliknięciu backe
 - `backend/app/analysis/service.py:point_details`, `_expected_at`.
 
 ---
+
+## 16. Overture Maps i łączenie źródeł (deduplikacja przestrzenna)
+
+OSM to dane wolontariuszy — dla salonów kosmetycznych we Wrocławiu ma ok. 340 punktów, a Overture Maps Places (otwarty zbiór firm z wielu źródeł, licencja CDLA Permissive 2.0) ok. 1 260. Dlatego tabela `poi` to **suma dwóch źródeł**. Problem: ten sam salon jest w obu bazach, więc bez czyszczenia liczylibyśmy go dwa razy. Stosuję **deduplikację przestrzenną**: obiekt Overture odrzucam, jeśli istnieje punkt OSM **tego samego typu** w ≤ 50 m albo w ≤ 150 m **z podobną nazwą** (znormalizowane nazwy, `difflib.SequenceMatcher` ≥ 0,6). Sąsiadów szukam drzewem k-d (cKDTree) w metrach (EPSG:2180). To heurystyka, nie dokładne dopasowanie: próg 50 m może zlać dwa różne salony w jednym budynku. Przed połączeniem filtruję Overture: adres w Polsce, miejsce działa, `confidence` ≥ 0,5. Wynik: 104 087 dodatkowych firm po deduplikacji (z 173 987 przed).
+
+## 17. Normalizacja per capita i porównanie ze średnią krajową
+
+„W okręgu jest 36 salonów” nic nie mówi — w Warszawie będzie ich więcej niż w Brzegu, bo mieszka tam więcej ludzi. Dlatego **normalizuję**: liczę, ilu klientów (np. kobiet) przypada na jedną firmę w okręgu i porównuję z tym samym wskaźnikiem dla całej Polski (suma popytu w kraju / liczba firm typu w kraju). To ta sama idea co w xkcd 1138 („Heatmap”): mapa surowych liczb pokazuje tylko, gdzie mieszka najwięcej ludzi. Werdykt: > 125% średniej = mniej konkurencji niż przeciętnie, < 80% = więcej, pomiędzy = poziom średniej (progi ±20–25% to moja decyzja, nie wynik statystyczny). Średnia krajowa jest liczona raz i trzymana w pamięci podręcznej.
+
+## 18. Mapa trendu / zmiana w czasie, paleta rozbieżna
+
+Warstwa „Gdzie budowy przybywa” (dla czynników z pozwoleń) pokazuje **zmianę**: pozwolenia z ostatnich 12 miesięcy minus z poprzednich 12 (okno liczone od najnowszych danych w bazie, nie od dziś), z tym samym rozpadem odległości co reszta. Zmiana ma znak, więc używam palety **rozbieżnej** (niebieski = ubywa, czerwony = przybywa, środek przezroczysty), a nie sekwencyjnej żółto-czerwonej — sekwencyjna nie odróżniłaby spadku od braku zmian. Uwaga: to trend pozwoleń (z dokładnością do obrębu), nie wybudowanych domów, a krótkie szeregi bywają szumne.
+
+## 19. Rozdzielczość danych a sensowny zasięg (300 m)
+
+Ludność znam w komórkach H3 res 9 (środki oddalone o ok. 300 m). Zasięg klienta 100 m nie dodaje informacji — mgła byłaby „kanciasta”, a liczby przypadkowe. Dlatego zasięg ma minimum 0,3 km (w interfejsie i w API; starszy link z mniejszą wartością dostaje 0,3 i notatkę). Ta sama zasada: nie pokazuję dokładności, której dane nie mają (liczby w podsumowaniu zaokrąglam do setek/dziesiątek).
 
 ## Pytania, które może zadać prowadzący
 
