@@ -85,7 +85,7 @@ def surface(
     if not RADIUS_KM[0] <= radius_km <= RADIUS_KM[1]:
         raise _bad_request("Promień obszaru musi mieścić się w zakresie 1–30 km")
     if not REACH_KM[0] <= reach_km <= REACH_KM[1]:
-        raise _bad_request("Zasięg klienta (reach_km) musi mieścić się w zakresie 0,1–20 km")
+        raise _bad_request("Zasięg klienta (reach_km) musi mieścić się w zakresie 0,1–20 km (wartości poniżej 0,3 km są podnoszone do 0,3 km)")
     params = SurfaceParams(type_id or None, demand or None, lat, lng, radius_km, reach_km, months)
     try:
         return cached_surface(params)
@@ -105,7 +105,7 @@ def point(
     """Szczegóły klikniętego punktu: liczby w okręgu zasięgu, model Huffa, najbliższe firmy."""
     _check_selection(type_id, demand, months)
     if not REACH_KM[0] <= reach_km <= REACH_KM[1]:
-        raise _bad_request("Zasięg klienta (reach_km) musi mieścić się w zakresie 0,1–20 km")
+        raise _bad_request("Zasięg klienta (reach_km) musi mieścić się w zakresie 0,1–20 km (wartości poniżej 0,3 km są podnoszone do 0,3 km)")
     _check_in_poland(lat, lng, "Punkt")
     try:
         return point_details(cursor(), lat, lng, type_id or None, demand or None, reach_km, months)

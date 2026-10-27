@@ -98,10 +98,11 @@ def test_point_reach_below_min(make_client):
 # ---------------------------------------------------------------- trend budów ----
 
 def trend_client(make_client):
-    """Najnowsze dane: 2026-09. Przy środku przybywa pozwoleń (1 → 9), 3 km na północ bez zmian (5 → 5)."""
+    """Najnowsze dane: 2026-09 (miesiąc niepełny, trend go pomija). Przy środku przybywa pozwoleń (1 → 9), 3 km na północ bez zmian (5 → 5)."""
     north = LAT + 0.027
     permits = [(LAT, LNG, "2025-03-01", "sf", 1), (LAT, LNG, "2026-03-01", "sf", 9),
-               (north, LNG, "2025-03-01", "sf", 5), (north, LNG, "2026-09-01", "sf", 5)]
+               (north, LNG, "2025-03-01", "sf", 5), (north, LNG, "2026-08-01", "sf", 5),
+               (LAT + FAR, LNG, "2026-09-01", "sf", 1)]       # daleko stąd; wyznacza najnowszy miesiąc danych (2026-09)
     return make_client(pop=POP, pois=[("paving", LAT, LNG)], permits=permits)
 
 
@@ -117,13 +118,36 @@ def test_trend_maximum_where_construction_grows(make_client):
     j = surface(trend_client(make_client), type="", demand="new_sf", reach_km=1, radius_km=6).json()
     best = j["top"]["trend"][0]
     assert best["value"] > 0 and abs(best["lat"] - LAT) < 0.01 and abs(best["lng"] - LNG) < 0.02
-    assert all(abs(t["lat"] - (LAT + 0.027)) > 0.01 for t in j["top"]["trend"][:1])
     values = [x for x in j["values"]["trend"] if x is not None]
     assert max(values) > 0 and min(values) <= 0                      # na północy nie przybywa (5 → 5): ≈ 0 albo mniej
 
 
 def test_trend_negative_where_construction_falls(make_client):
-    permits = [(LAT, LNG, "2025-03-01", "sf", 9), (LAT, LNG, "2026-03-01", "sf", 1)]
+    permits = [(LAT, LNG, "2025-03-01", "sf", 9), (LAT, LNG, "2026-03-01", "sf", 1),
+               (LAT + FAR, LNG, "2026-09-01", "sf", 1)]          # daleko stąd; wyznacza najnowszy miesiąc danych
     j = surface(make_client(pop=POP, permits=permits), type="", demand="new_sf", reach_km=1, radius_km=3).json()
     assert min(x for x in j["values"]["trend"] if x is not None) < 0
     assert j["top"]["trend"] == []                                    # top-5 trendu = największy WZROST
+
+
+def test_trend_ignores_incomplete_newest_month(make_client):
+    """Najnowszy miesiąc w danych jest zwykle niepełny (dane z bieżącego miesiąca) — liczony jako pełny zaniżałby trend."""
+    permits = [(LAT, LNG, "2025-03-01", "sf", 1), (LAT, LNG, "2026-03-01", "sf", 1),
+               (LAT, LNG, "2026-09-01", "sf", 50)]            # 50 pozwoleń w ostatnim (niepełnym) miesiącu
+    j = surface(make_client(pop=POP, permits=permits), type="", demand="new_sf", reach_km=1, radius_km=3).json()
+    assert j["top"]["trend"] == []                            # 1 → 1: bez zmian, a nie „+50”
+
+
+def test_verdict_without_national_average_is_none(make_client):
+    """Brak danych o pozwoleniach w kraju: nie ma z czym porównać, więc nie ma też werdyktu „mniej konkurencji”."""
+    s = surface(make_client(pop=POP, pois=[("paving", LAT, LNG)]), type="paving", demand="new_sf",
+                reach_km=2).json()["summary"]
+    assert s["competitors"]["total"] == 1 and s["national_per_firm"] is None and s["verdict"] is None
+
+
+def test_top_names_use_street_labels(make_client):
+    # siatka ulic co ~100 m pokrywa cały obszar, więc każde miejsce z top-5 ma ulicę w promieniu 150 m
+    streets = [(f"Prosta {i}x{j}", LAT + i * 0.001, LNG + j * 0.0015) for i in range(-30, 31) for j in range(-30, 31)]
+    client = make_client(pop=POP, pois=[("beauty", LAT, LNG)], streets=streets)
+    names = [t["name"] for t in surface(client).json()["top"]["open"]]
+    assert names and all(n.startswith("ul. Prosta ") for n in names)

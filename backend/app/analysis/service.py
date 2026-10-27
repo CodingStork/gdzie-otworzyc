@@ -85,7 +85,8 @@ def nearest_place_name(con: duckdb.DuckDBPyConnection, lat: float, lng: float, m
 
 
 # Nazwy zaczynające się od tych słów już mówią, czym jest miejsce — „ul.” byłoby błędem („ul. Plac Solny”).
-NO_UL_PREFIX = re.compile(r"^(aleja|aleje|al|plac|pl|rondo|osiedle|os|bulwar|skwer)(\.|\s)", re.IGNORECASE)
+NO_UL_PREFIX = re.compile(
+    r"^(aleja|aleje|al|plac|pl|rondo|osiedle|os|bulwar|skwer|rynek|droga|most|park|wybrzeże|ul|ulica)(\.|\s|$)", re.IGNORECASE)
 STREET_MAX_M = 150
 
 
@@ -108,7 +109,8 @@ def street_label(con: duckdb.DuckDBPyConnection, lat: float, lng: float) -> str:
             if dist[best] <= STREET_MAX_M:
                 name = rows[best][0]
                 street = name if NO_UL_PREFIX.match(name) else f"ul. {name}"
-                if place and place.casefold() in name.casefold():
+                # nazwa miejsca jako CAŁE słowo („Wrocław” nie jest w „Wrocławska”)
+                if place and re.search(r"(?<!\w)" + re.escape(place) + r"(?!\w)", name, re.IGNORECASE):
                     place = None
     if street and place:
         return f"{street}, {place}"
@@ -217,17 +219,22 @@ def _shift_months(day: datetime.date, k: int) -> datetime.date:
 def load_trend(con, demand_id: str, res: int, box: list[float]):
     """Zmiana liczby nowych budów w komórkach: ostatnie 12 mies. MINUS poprzednie 12 mies.
 
-    Okna liczymy od najnowszych danych (jak `_permit_window`). Zwraca (tablica N×3: lat, lng, zmiana; okno 12 mies. lub None).
+    Okna liczymy od najnowszych danych (jak `_permit_window`), pomijając ostatni, niepełny miesiąc.
+    Zwraca (tablica N×3: lat, lng, zmiana; okno ostatnich 12 mies. lub None).
     """
-    window = _permit_window(con, res, 12)
+    window = _permit_window(con, res, 1)
     if window is None:
         return np.empty((0, 3)), None
+    # Najnowszy miesiąc w danych jest zwykle niepełny (plik z bieżącego miesiąca) — liczony jak pełny zaniżałby trend
+    # nawet o ok. 4% całości, czyli tyle, ile wynosi sam sygnał. Dlatego 12 miesięcy kończymy na poprzednim.
+    last = _shift_months(window[1], -1)
+    first = _shift_months(last, -11)
     kinds = DEMANDS[demand_id].kinds
     marks = ", ".join("?" for _ in kinds)
     rows = con.execute(f"SELECT lat, lng, SUM(CASE WHEN month >= ? THEN n ELSE -n END) FROM permits_r{res} "
-                       f"WHERE kind IN ({marks}) AND month >= ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? "
-                       "GROUP BY lat, lng", [window[0], *kinds, _shift_months(window[0], -12), *box]).fetchall()
-    return np.array(rows, dtype=float).reshape(-1, 3), window
+                       f"WHERE kind IN ({marks}) AND month >= ? AND month <= ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? "
+                       "GROUP BY lat, lng", [first, *kinds, _shift_months(first, -12), last, *box]).fetchall()
+    return np.array(rows, dtype=float).reshape(-1, 3), (first, last)
 
 
 # ---------------------------------------------------------------- podsumowanie obszaru ----
@@ -254,10 +261,15 @@ def national_per_firm(con, type_id: str, demand_id: str, months: int) -> float |
     return _national[key]
 
 
-def verdict(per_firm: float | None, national: float | None) -> str:
-    """„less” = mniej konkurencji niż przeciętnie (na firmę przypada >125% średniej), „more” = więcej (<80%)."""
-    if per_firm is None or national is None:      # brak firm w obszarze → konkurencji nie ma
+def verdict(per_firm: float | None, national: float | None) -> str | None:
+    """„less” = mniej konkurencji niż przeciętnie (na firmę przypada >125% średniej), „more” = więcej (<80%).
+
+    Brak firm w obszarze → „less”; brak średniej krajowej (np. brak danych o pozwoleniach) → None (nie ma z czym porównać).
+    """
+    if per_firm is None:
         return "less"
+    if national is None:
+        return None
     if per_firm > 1.25 * national:
         return "less"
     return "more" if per_firm < 0.8 * national else "similar"

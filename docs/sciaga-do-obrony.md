@@ -102,7 +102,7 @@ Powierzchnia jest policzona na siatce i zaokrąglona, więc po kliknięciu backe
 
 ## 16. Overture Maps i łączenie źródeł (deduplikacja przestrzenna)
 
-OSM to dane wolontariuszy — dla salonów kosmetycznych we Wrocławiu ma ok. 340 punktów, a Overture Maps Places (otwarty zbiór firm z wielu źródeł, licencja CDLA Permissive 2.0) ok. 1 260. Dlatego tabela `poi` to **suma dwóch źródeł**. Problem: ten sam salon jest w obu bazach, więc bez czyszczenia liczylibyśmy go dwa razy. Stosuję **deduplikację przestrzenną**: obiekt Overture odrzucam, jeśli istnieje punkt OSM **tego samego typu** w ≤ 50 m albo w ≤ 150 m **z podobną nazwą** (znormalizowane nazwy, `difflib.SequenceMatcher` ≥ 0,6). Sąsiadów szukam drzewem k-d (cKDTree) w metrach (EPSG:2180). To heurystyka, nie dokładne dopasowanie: próg 50 m może zlać dwa różne salony w jednym budynku. Przed połączeniem filtruję Overture: adres w Polsce, miejsce działa, `confidence` ≥ 0,5. Wynik: 104 087 dodatkowych firm po deduplikacji (z 173 987 przed).
+OSM to dane wolontariuszy — dla salonów kosmetycznych we Wrocławiu ma ok. 340 punktów, a Overture Maps Places (otwarty zbiór firm z wielu źródeł, licencja CDLA Permissive 2.0) ok. 1 260. Dlatego tabela `poi` to **suma dwóch źródeł**. Problem: ten sam salon jest w obu bazach, więc bez czyszczenia liczylibyśmy go dwa razy. Stosuję **deduplikację przestrzenną**: obiekt Overture odrzucam, jeśli istnieje punkt OSM **tego samego typu** w ≤ 50 m albo w ≤ 150 m **z podobną nazwą** (znormalizowane nazwy, `difflib.SequenceMatcher` ≥ 0,6). Sąsiadów szukam drzewem k-d (cKDTree) w metrach (EPSG:2180). To heurystyka, nie dokładne dopasowanie: próg 50 m może zlać dwa różne salony w jednym budynku. Przed połączeniem filtruję Overture: adres w Polsce, miejsce działa, `confidence` ≥ 0,5. Wynik: 104 087 dodatkowych wierszy typ×firma po deduplikacji (z 173 987 przed; to ok. 97 tys. różnych firm — jedna firma może należeć do dwóch typów, np. barber to także fryzjer).
 
 ## 17. Normalizacja per capita i porównanie ze średnią krajową
 
@@ -110,7 +110,7 @@ OSM to dane wolontariuszy — dla salonów kosmetycznych we Wrocławiu ma ok. 34
 
 ## 18. Mapa trendu / zmiana w czasie, paleta rozbieżna
 
-Warstwa „Gdzie budowy przybywa” (dla czynników z pozwoleń) pokazuje **zmianę**: pozwolenia z ostatnich 12 miesięcy minus z poprzednich 12 (okno liczone od najnowszych danych w bazie, nie od dziś), z tym samym rozpadem odległości co reszta. Zmiana ma znak, więc używam palety **rozbieżnej** (niebieski = ubywa, czerwony = przybywa, środek przezroczysty), a nie sekwencyjnej żółto-czerwonej — sekwencyjna nie odróżniłaby spadku od braku zmian. Uwaga: to trend pozwoleń (z dokładnością do obrębu), nie wybudowanych domów, a krótkie szeregi bywają szumne.
+Warstwa „Gdzie budowy przybywa” (dla czynników z pozwoleń) pokazuje **zmianę**: pozwolenia z ostatnich 12 miesięcy minus z poprzednich 12 (okno liczone od najnowszych danych w bazie, nie od dziś), z tym samym rozpadem odległości co reszta. Zmiana ma znak, więc używam palety **rozbieżnej** (niebieski = ubywa, czerwony = przybywa, środek przezroczysty), a nie sekwencyjnej żółto-czerwonej — sekwencyjna nie odróżniłaby spadku od braku zmian. Ostatni miesiąc w danych pomijam, bo jest niepełny (liczony jak pełny zaniżałby trend o tyle, ile wynosi sam sygnał). Uwaga: to trend pozwoleń (z dokładnością do obrębu), nie wybudowanych domów, a krótkie szeregi bywają szumne.
 
 ## 19. Rozdzielczość danych a sensowny zasięg (300 m)
 

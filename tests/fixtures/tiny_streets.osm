@@ -33,4 +33,9 @@
     <nd ref="5"/>
     <tag k="highway" v="residential"/>
   </way>
+  <!-- NIE: pojedynczy punkt (node) z tagami drogi — w prawdziwych danych się zdarza, ETL nie może się na nim wywrócić -->
+  <node id="6" version="1" lat="50.0200000" lon="17.0200000">
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Punkt udający ulicę"/>
+  </node>
 </osm>

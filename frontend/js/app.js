@@ -265,7 +265,7 @@ map.onMapClick(onMapClick);
 function onFormChange() {
   discardPoint();
   ui.showInfo(state.preview ? NEW_PLACE_INFO : '');
-  if (state.result || state.loading) scheduleRun(false);   // także w trakcie pierwszego zapytania
+  if (state.result || state.loading) scheduleRun(state.preview);   // także w trakcie pierwszego zapytania; przy podglądzie nowego miejsca dopasuj widok
   else if (state.place) map.setArea(state.place.lat, state.place.lng, ui.radiusKm(), { veil: false });
   writeHash();
 }

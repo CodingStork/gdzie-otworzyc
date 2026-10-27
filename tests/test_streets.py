@@ -62,7 +62,8 @@ def test_label_street_and_place(make_client):
 
 
 def test_label_no_ul_prefix_for_alley_square_etc(make_client):
-    for name in ("Aleja Róż", "al. Wojska Polskiego", "Plac Solny", "PL. Zbawiciela", "Rondo Radosława",
+    for name in ("Rynek", "Droga do Olczy", "Most Grunwaldzki", "ul. Krótka", "ulica Długa", "Park Szczytnicki",
+                 "Aleja Róż", "al. Wojska Polskiego", "Plac Solny", "PL. Zbawiciela", "Rondo Radosława",
                  "Osiedle Słoneczne", "os. Młodych", "Bulwar Nadodrzański", "skwer Kościuszki"):
         con = _con(make_client, [(name, LAT, LNG)])
         assert street_label(con, LAT, LNG) == name, name
@@ -72,6 +73,12 @@ def test_label_no_ul_prefix_for_alley_square_etc(make_client):
 def test_label_skips_place_already_in_street_name(make_client):
     con = _con(make_client, [("Zaodrze Wschodnie", LAT, LNG)], [("Zaodrze", "suburb", LAT, LNG)])
     assert street_label(con, LAT, LNG) == "ul. Zaodrze Wschodnie"
+
+
+def test_label_place_must_be_whole_word_in_street_name(make_client):
+    """„Wrocław” jest w „Wrocławska” tylko jako przedrostek — miejscowość nie może przez to zniknąć z etykiety."""
+    con = _con(make_client, [("Wrocławska", LAT, LNG)], [("Wrocław", "city", LAT, LNG)])
+    assert street_label(con, LAT, LNG) == "ul. Wrocławska, Wrocław"
 
 
 def test_label_street_too_far_falls_back_to_place(make_client):

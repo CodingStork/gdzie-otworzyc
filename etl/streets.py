@@ -49,6 +49,8 @@ def extract_streets(pbf_path) -> pd.DataFrame:
                  .with_locations()
                  .with_filter(osmium.filter.KeyFilter("highway")))
     for way in processor:
+        if not way.is_way():                       # KeyFilter przepuszcza też pojedyncze punkty z tagiem highway
+            continue
         name = way.tags.get("name")
         if not name or way.tags.get("highway") not in HIGHWAYS:
             continue

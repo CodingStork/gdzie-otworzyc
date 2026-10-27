@@ -132,12 +132,7 @@ export function initMap(elementId) {
   let clickCb = null;
   map.on('click', (e) => clickCb && clickCb(e.latlng.lat, e.latlng.lng));
   // Zamknięcie dymku (krzyżyk, Escape, kliknięcie w inne miejsce) usuwa szczegóły punktu.
-  map.on('popupclose', () => {
-    detailsLayer.clearLayers();
-    document.body.classList.remove('popup-open');
-  });
-  // Na telefonie kontrolki (warstwy, legenda) zasłaniałyby dymek — na czas jego otwarcia się chowają (patrz style.css).
-  map.on('popupopen', () => document.body.classList.add('popup-open'));
+  map.on('popupclose', () => detailsLayer.clearLayers());
 
   // Animowany lot opiera się na zdarzeniu końca przejścia CSS, które nie dochodzi, gdy karta jest w tle
   // albo rozmiar mapy zmienia się w trakcie. Dlatego: w tle → skok bez animacji; inaczej lot z awaryjnym domknięciem.
@@ -152,10 +147,7 @@ export function initMap(elementId) {
   return {
     leaflet: map,
     onMapClick(cb) { clickCb = cb; },
-    onMoveEnd(cb) { map.on('moveend', cb); },
     safeFlyTo,
-    // Ustawienie widoku z linku: bez animacji.
-    setView(lat, lng, zoom) { map.setView([lat, lng], zoom, { animate: false }); },
     invalidateSize() { map.invalidateSize(); },
     getView() {
       const c = map.getCenter();
@@ -207,7 +199,6 @@ export function initMap(elementId) {
         map.fitBounds(circle.getBounds(), { animate: false, padding: [20, 20] });
       }
     },
-    clearArea() { areaLayer.clearLayers(); },
 
     // Szczegóły punktu: okrąg zasięgu, konkurenci [{lat,lng,name,source}] i dymek (bez heksagonów — laikowi nic nie mówią).
     // Zamknięcie dymku usuwa wszystko, co tu narysowano.
@@ -225,7 +216,7 @@ export function initMap(elementId) {
       // Na wąskim ekranie przyciski zoomu zasłaniają lewy margines mapy — dymek ma się mieścić obok nich.
       const narrow = window.innerWidth < 768;
       L.popup({
-        className: 'hex-popup', maxWidth: narrow ? 220 : 300,
+        className: 'point-popup', maxWidth: narrow ? 220 : 300,
         autoPanPaddingTopLeft: narrow ? [50, 10] : [10, 10], autoPanPaddingBottomRight: [10, 10],
       }).setLatLng([lat, lng]).setContent(element).openOn(map);
     },

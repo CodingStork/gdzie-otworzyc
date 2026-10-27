@@ -227,3 +227,15 @@ Odchylenia od planu:
 - Dla grup usług, w których OSM jest słaby (salony, barberzy, siłownie, tatuaż, budowlanka), Overture daje 2–10× więcej firm niż OSM, dla sklepów i restauracji deduplikacja usuwa 60–70% (Overture zawiera sporo punktów, które są też w OSM).
 - Próg sanity: Overture ≥ 100 000 w `poi` (jest 104 087) — blisko progu, bo deduplikacja jest agresywna; `beauty` razem ≥ 25 000 (jest 31 339).
 - Plik wstępny `overture_places_pl.parquet` z sesji nadrzędnej zawierał też sąsiednie kraje i firmy zamknięte; krok `overture --force` zastąpił go wyciągiem już przefiltrowanym (tylko PL, otwarte, `confidence ≥ 0,5`).
+
+## v3.1 — odchylenia od planu w backendzie/frontendzie i poprawki po przeglądzie (2026-10-27)
+
+- **Task 1 i 2 w jednym commicie** (wspólne zmiany `run_all.py`, `catalog.py`, jedno uruchomienie ETL na prawdziwych danych).
+- **Minimalny zasięg:** API przyjmuje 0,1–20 km (poniżej: 422), wartości 0,1–0,3 km podnosi do 0,3 km z notatką „Dane o mieszkańcach mają rozdzielczość ok. 300 m…” — dzięki temu stare linki działają. Suwak w interfejsie ma zakres 0,3–20 km; stary link z mniejszym zasięgiem dostaje 0,3 i tę samą notatkę.
+- **Podsumowanie obszaru** liczy popyt zawsze z komórek res 9 (niezależnie od zasięgu), żeby liczba mieszkańców w okręgu nie zależała od suwaka zasięgu. Wiersz „Obszar: {miejsce}, promień r km” zastępuje zdanie „W promieniu r km od {miejsce}” (nazw miejscowości nie odmieniamy). Liczby (klienci, klienci na firmę) są zaokrąglane do setek/dziesiątek.
+- **`/api/poi` zwraca też `source`** (tooltip firmy: OpenStreetMap / Overture Maps); `/api/meta` zawiera wiersz `overture` (wydanie w URL).
+- **Teksty pytajników i ostrzeżeń** uzupełnione o Overture (zmiana względem spec v3 §5: „z OpenStreetMap i Overture Maps”); `POOR_WARNING` i ostrzeżenie o braku konkurencji też.
+- **Promień obszaru** nadal ma krok 1 km (suwak 1–30), więc 1,5 km z linku zaokrągla się do 2 km (zrzut v31-b).
+- **Warstwa trendu:** 12 pełnych miesięcy kończy się na miesiącu poprzedzającym najnowszy w danych (najnowszy jest niepełny — w danych z 2026-10 ma 4,5 tys. pozwoleń na domy jednorodzinne wobec ok. 8,5 tys. w pełnym miesiącu; bez tej korekty cały kraj wychodził lekko „na minus”). Zwykły popyt z pozwoleń nadal liczy okno do najnowszego miesiąca (jak w v3).
+- Poprawki po przeglądzie świeżym recenzentem: `etl/streets.py` pomija węzły (node) z tagiem `highway`; `verdict` zwraca `None`, gdy brak średniej krajowej; `street_label` zna więcej nazw bez „ul.” (Rynek, Droga, Most, Park, Wybrzeże, „ul.”/„ulica”) i porównuje nazwę miejsca jako całe słowo; podgląd nowego miejsca + zmiana ustawień dopasowuje widok; nazwa warstwy z linku nie trafia do selektora CSS; usunięty martwy kod.
+- Odłożone (drobne): deduplikacja „jeden do wielu” (jeden punkt OSM usuwa wszystkie punkty Overture tego typu w 50 m — dla sklepów spożywczych i restauracji odpada ok. 2/3), `/api/poi` bez `ORDER BY` przy limicie 5 000, próg `overture_min` liczy wiersze typ×firma, brak pliku `.release` daje „Overture Maps nieznane” w stopce, końce linii CRLF→LF w `download.py`/`osm_poi.py`.

@@ -112,10 +112,10 @@ label.disabled { opacity: .4; }
 #legend .note { margin-top: 6px; color: var(--muted); }
 
 /* Dymek klikniętego punktu */
-.hex-popup .strong { font-weight: 700; margin: 3px 0; }
-.hex-popup ul { margin: 2px 0 0; padding-left: 18px; }
-.hex-popup .note { margin-top: 6px; color: var(--muted); font-size: 12px; }
-.hex-popup .link-button {
+.point-popup .strong { font-weight: 700; margin: 3px 0; }
+.point-popup ul { margin: 2px 0 0; padding-left: 18px; }
+.point-popup .note { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.point-popup .link-button {
   margin-top: 8px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit;
   text-decoration: underline; cursor: pointer;
 }

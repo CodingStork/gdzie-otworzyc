@@ -303,8 +303,9 @@ export function currentLayer() {
   return checked ? checked.value : 'open';
 }
 
+// Nazwa warstwy z linku bywa dowolnym tekstem — szukamy jej wśród dostępnych radio, zamiast wstawiać do selektora.
 export function selectLayer(name) {
-  const el = document.querySelector(`input[name=layer][value="${name}"]`);
+  const el = [...document.querySelectorAll('input[name=layer]')].find((input) => input.value === name);
   if (el) el.checked = true;
 }
 
@@ -443,8 +444,6 @@ export function renderSummary(summary, ctx) {
   $('summary-box').hidden = false;
 }
 
-export const hideSummary = () => { $('summary-box').hidden = true; };
-
 // ---- Najlepsze miejsca ----
 
 const TOP_TITLES = { open: 'Najlepsze miejsca', demand: 'Najwięcej klientów', competition: 'Najwięcej firm', trend: 'Gdzie przybywa budów' };
@@ -468,11 +467,6 @@ export function renderTop(list, layer, permits, onClick) {
     li.addEventListener('click', () => onClick(place, i));
     ol.append(li);
   });
-}
-
-export function clearTop() {
-  $('top-title').hidden = true;
-  $('top-list').innerHTML = '';
 }
 
 // ---- Dymek klikniętego punktu (dokładne liczby z /api/point, spec v3 §4) ----
