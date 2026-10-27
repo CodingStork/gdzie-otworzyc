@@ -4,7 +4,7 @@ from functools import lru_cache
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.app.analysis.service import ViewParams, cached_view
+from backend.app.analysis.service import ViewParams, cached_view, point_details
 from backend.app.catalog import DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
 from backend.app.config import ATTRIBUTION, USER_AGENT
 from backend.app.db import DatabaseMissing, cursor
@@ -70,6 +70,34 @@ def view(
     params = ViewParams(type_id or None, demand or None, _parse_bbox(bbox), zoom, bandwidth_km, months)
     try:
         return cached_view(params)
+    except DatabaseMissing:
+        raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
+
+
+@router.get("/point")
+def point(
+    lat: float = Query(),
+    lng: float = Query(),
+    type_id: str = Query(default="", alias="type"),
+    demand: str = Query(default=""),
+    bandwidth_km: float = Query(),
+    months: int = 24,
+) -> dict:
+    """Dokładne liczby w okręgu zasięgu wokół klikniętego punktu (dymek na mapie)."""
+    if not type_id and not demand:
+        raise _bad_request("Wybierz typ działalności albo czynnik popytu")
+    if type_id and type_id not in TYPES:
+        raise _bad_request("Nieznany typ działalności")
+    if demand and demand not in DEMANDS:
+        raise _bad_request("Nieznany czynnik popytu")
+    if months not in MONTHS_OPTIONS:
+        raise _bad_request("Okres musi wynosić 12, 24 lub 36 miesięcy")
+    if not 0.1 <= bandwidth_km <= 20:
+        raise _bad_request("Zasięg klienta (bandwidth_km) musi mieścić się w zakresie 0,1–20 km")
+    if not (LAT_RANGE[0] <= lat <= LAT_RANGE[1] and LNG_RANGE[0] <= lng <= LNG_RANGE[1]):
+        raise _bad_request("Punkt poza Polską")
+    try:
+        return point_details(cursor(), lat, lng, type_id or None, demand or None, bandwidth_km, months)
     except DatabaseMissing:
         raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
 

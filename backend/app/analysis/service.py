@@ -328,3 +328,79 @@ def cached_view(p: ViewParams) -> dict:
 
 
 on_reset(_cached_core.cache_clear)   # zmiana/ponowne otwarcie bazy unieważnia wyniki
+
+
+# ---------------------------------------------------------------- /api/point ----
+
+def _haversine_m(lat: float, lng: float, lats: np.ndarray, lngs: np.ndarray) -> np.ndarray:
+    """Odległości [m] od punktu (lat, lng) do tablic punktów — wzór haversine na kuli o promieniu 6371 km."""
+    p1, p2 = math.radians(lat), np.radians(lats)
+    a = np.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * np.cos(p2) * np.sin(np.radians(lngs - lng) / 2) ** 2
+    return 2 * 6_371_000 * np.arcsin(np.sqrt(a))
+
+
+def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_id: str | None,
+                  demand_id: str | None, bandwidth_km: float, months: int) -> dict:
+    """Dokładne liczby w okręgu zasięgu wokół punktu (dymek po kliknięciu mapy).
+
+    Inaczej niż heatmapa (komórki + agregacja) liczymy tu na najdrobniejszych danych: popyt z komórek
+    res 9, których środek leży w okręgu, a firmy z tabeli `poi` po dokładnej odległości punktów.
+    """
+    if not type_id and not demand_id:
+        raise ValueError("Wybierz typ działalności albo czynnik popytu")
+    p = ViewParams(type_id, demand_id, (lng, lat, lng, lat), 13, bandwidth_km, months)
+    radius_km = effective_radius_km(p)
+    notes: list[str] = []
+    result: dict = {"radius_km": radius_km, "demand": None, "demand_name": None, "competitors": None,
+                    "type_name": None, "score": None, "nearest": [], "notes": notes}
+
+    dlat = radius_km / 110.54
+    dlng = radius_km / (111.32 * math.cos(math.radians(lat)))
+    box = [lat - dlat, lat + dlat, lng - dlng, lng + dlng]
+
+    if demand_id:
+        demand = DEMANDS[demand_id]
+        result["demand_name"] = demand.name
+        total = 0.0
+        if demand.source == "census":
+            if not table_exists(con, "hex_pop_r9"):
+                raise DatabaseMissing("brak tabeli hex_pop_r9")
+            rows = con.execute(f"SELECT lat, lng, {demand.column} FROM hex_pop_r9 "
+                               "WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?", box).fetchall()
+        else:
+            window = _permit_window(con, 9, months)
+            rows = []
+            if window is None:
+                notes.append(PERMITS_MISSING_WARNING)
+            else:
+                kinds = ", ".join("?" for _ in demand.kinds)
+                rows = con.execute(f"SELECT lat, lng, SUM(n) FROM permits_r9 WHERE kind IN ({kinds}) AND month >= ? "
+                                   "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? GROUP BY lat, lng",
+                                   [*demand.kinds, window[0], *box]).fetchall()
+                result["permits_period"] = _period(window)
+            if bandwidth_km < PERMITS_MIN_RADIUS_KM:
+                notes.append(PERMITS_NOTE)
+        if rows:
+            arr = np.array(rows, dtype=float)
+            inside = _haversine_m(lat, lng, arr[:, 0], arr[:, 1]) <= radius_km * 1000
+            total = float(arr[inside, 2].sum())
+        result["demand"] = total
+
+    if type_id:
+        result["type_name"] = TYPES[type_id].name
+        rows = []
+        if table_exists(con, "poi"):
+            rows = con.execute("SELECT name, lat, lng FROM poi WHERE type_id = ? "
+                               "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?", [type_id, *box]).fetchall()
+        competitors, nearest = 0, []
+        if rows:
+            dist = _haversine_m(lat, lng, np.array([r[1] for r in rows]), np.array([r[2] for r in rows]))
+            order = [i for i in np.argsort(dist, kind="stable") if dist[i] <= radius_km * 1000]
+            competitors = len(order)
+            nearest = [{"name": rows[i][0] or "bez nazwy", "distance_m": round(float(dist[i]))} for i in order[:5]]
+        result["competitors"] = competitors
+        result["nearest"] = nearest
+
+    if type_id and demand_id:
+        result["score"] = float(score(np.array([result["demand"]]), np.array([result["competitors"]]))[0])
+    return result
