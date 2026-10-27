@@ -2,55 +2,64 @@
 
 Aplikacja webowa, która na mapie Polski pokazuje, **gdzie jest dużo potencjalnych klientów i mało konkurencji**. Projekt zaliczeniowy z przedmiotu „Analiza danych przestrzennych”.
 
-Wybierasz typ działalności (16 typów) i/lub czynnik popytu (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę), ustawiasz **zasięg klienta** (0,1–20 km) i oglądasz mapę. Obszar analizy to **widoczny fragment mapy** — wynik odświeża się sam po przesunięciu lub przybliżeniu. Heksagony są tym drobniejsze, im bardziej przybliżysz mapę. Kolor to płynny gradient wg wartości w skali logarytmicznej (dopasowanej do widocznego obszaru), a kliknięcie mapy pokazuje dymek z dokładnymi liczbami dla klikniętego punktu.
+Wybierasz typ działalności (16 typów) i/lub klientów (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (0,1–20 km), po czym klikasz „Pokaż mapę”. W okręgu wokół miejsca dostajesz **mgłę** — płynną żółto-czerwoną mapę — a kliknięcie w nią pokazuje szczegóły.
 
-![Warszawa — fryzjer i mieszkańcy, zasięg 0,5 km](docs/screenshots/v2-warszawa-fryzjer-z13.png)
+![Pruszków — fryzjer i mieszkańcy, „Gdzie otworzyć”](docs/screenshots/v3-pruszkow-gdzie-otworzyc.png)
 
 ## Jak używać
 
-- **Tryby jednego wyboru:** sam typ działalności → mapa **konkurencji** („gdzie są fryzjerzy”); sam czynnik popytu → mapa **popytu** („gdzie mieszka dużo seniorów”); oba → warstwy **Okazja / Popyt / Konkurencja**. Pytajniki „?” obok warstw, zasięgu i legendy wyjaśniają, co pokazują.
-- **Zasięg klienta:** suwak logarytmiczny 0,1–20 km (salon: ok. 1,5 km, market budowlany: 10–20 km). Małe wartości dają ostrą mapę pojedynczych ulic.
-- **Poruszanie się:** przeciągnij i przybliżaj mapę albo wpisz adres w polu na górze panelu (mapa przeskoczy w to miejsce). Link w pasku adresu zapisuje cały widok.
-- **Promień od miejscowości (opcjonalnie):** po wybraniu miejsca z wyszukiwarki (albo „Ustaw jako środek” w dymku punktu) wpisz promień 1–50 km — na mapie pojawi się okrąg, zobaczysz tylko heksagony w jego środku, kolory i top-5 będą liczone tylko z nich. Przycisk „×” czyści promień.
-- **Klik w mapę:** dymek z liczbą mieszkańców i firm w okręgu zasięgu, wynikiem „klienci na firmę po otwarciu Twojej” i 5 najbliższymi konkurentami; na mapie rysuje się okrąg zasięgu.
-- **Najlepsze miejsca:** 5 ponumerowanych miejsc w widocznym obszarze (klik w znacznik lub listę przybliża mapę).
+1. **Wybierz branżę** („Typ działalności”) i/lub **klientów** („Twoi klienci to”); przy nowych domach wybierz okres pozwoleń.
+2. **Podaj miejsce:** wpisz miejscowość albo kliknij mapę. Ustaw **promień obszaru** (1–30 km) i **zasięg klienta** (suwak logarytmiczny 0,1–20 km; fryzjer ok. 1,5 km, market budowlany 10–20 km).
+3. Kliknij **„Pokaż mapę”**. Poza okręgiem mapa jest przygaszona, w okręgu widać mgłę, a w panelu top-5 miejsc. Zmiana ustawień przelicza mapę sama (po 300 ms); **ruch i przybliżanie mapy nie wysyłają żadnych zapytań**.
+4. **Warstwy:** typ + klienci → przełącznik **„Gdzie otworzyć”** (szacowana liczba Twoich klientów, model Huffa) i **„Gdzie są klienci”**; tylko typ → **„Gdzie są {firmy}”**; tylko klienci → **„Gdzie są klienci”**. Pytajniki przy nazwach wyjaśniają warstwy.
+5. **Kliknięcie w mapę** pokazuje szczegóły: okrąg zasięgu, drobne heksagony z ludnością, konkurentów i dymek („W promieniu 1,5 km: ok. 36 800 mieszkańców · Otwierając tu, zdobyłbyś ok. 1 600 klientów”) oraz link „Ustaw tu środek obszaru”. Zamknięcie dymku czyści szczegóły.
+6. Adres strony (hash) zapisuje cały widok — link można wysłać i odtworzy tę samą mapę.
 
 ## Przykłady użycia
 
-| Sam popyt: seniorzy, Kraków, 1 km | Sama konkurencja: fryzjerzy, Kraków, 1 km |
+| Gdzie są klienci (ta sama okolica) | Szczegóły po kliknięciu |
 |---|---|
-| ![Seniorzy](docs/screenshots/v2-krakow-seniorzy-popyt.png) | ![Fryzjerzy](docs/screenshots/v2-krakow-fryzjer-konkurencja.png) |
+| ![Gdzie są klienci](docs/screenshots/v3-pruszkow-gdzie-sa-klienci.png) | ![Szczegóły](docs/screenshots/v3-pruszkow-szczegoly-klik.png) |
 
-| Brukarz pod Wrocławiem (min. zasięg 1 km dla pozwoleń) | Cała Polska, zasięg 0,1 km |
+| Tylko klienci: seniorzy, Kraków (bez przełącznika) | Brukarz pod Wrocławiem, promień 30 km, zasięg 15 km |
 |---|---|
-| ![Brukarz](docs/screenshots/v2-wroclaw-brukarz-min-1km.png) | ![Polska](docs/screenshots/v2-polska-z6-zasieg-0-1km.png) |
+| ![Seniorzy](docs/screenshots/v3-krakow-seniorzy-bez-przelacznika.png) | ![Brukarz](docs/screenshots/v3-wroclaw-brukarstwo-30km.png) |
 
-| Dymek punktu z punktami firm | Telefon (375×812) |
+| Start (karta instrukcji) | Telefon (375×812) |
 |---|---|
-| ![Dymek](docs/screenshots/v2-dymek-z-punktami-firm.png) | ![Telefon](docs/screenshots/v2-mobile-dymek.png) |
+| ![Start](docs/screenshots/v3-start.png) | ![Telefon](docs/screenshots/v3-mobile-krakow-fryzjerzy.png) |
 
 ## Jak to działa (metoda)
 
-Dla każdego heksagonu *i* siatki H3 liczymy dwie sumy w **okręgu o promieniu równym zasięgowi klienta** *r* (klasyczny **2SFCA z progiem odległości**, w wersji uproszczonej):
+Dla okręgu wokół wybranego miejsca serwer buduje **regularną siatkę** w metrach (EPSG:2180; krok ok. promień/90, 50–300 m) i liczy na niej trzy wielkości. Każde źródło popytu *i* (komórka H3 z ludnością albo pozwoleniami, `d_i` osób) i każdy konkurent *k* (firma z OSM) wpływa na punkt siatki *g* z wagą malejącą z odległością — **rozpad wykładniczy** `f(d) = exp(−d / zasięg)`, obcięty dla `d > 4·zasięg`:
 
 ```
-D_i = Σ d_j     po komórkach j o środku w odległości ≤ r od i   (popyt, np. liczba mieszkańców)
-S_i = Σ s_j     po komórkach j o środku w odległości ≤ r od i   (konkurencja: liczba firm danego typu)
-
-wynik_i = D_i / (S_i + 1)           „klienci na firmę po otwarciu Twojej”
+Gdzie są klienci:  P(g) = Σ_i d_i · f(d_ig)
+Gdzie są firmy:    K(g) = Σ_k f(d_kg)
+Gdzie otworzyć:    E(g) = Σ_i d_i · f(d_ig) / ( f(d_ig) + C_i + A0 )     (model Huffa)
+                   C_i  = Σ_k f(d_ik)   (siła istniejących konkurentów dla mieszkańca i),  A0 = exp(−1)
 ```
 
-„+1” to Ty jako nowy konkurent (i brak dzielenia przez zero). Liczby są całkowite i sprawdzalne — po kliknięciu mapy dymek pokazuje dokładne zliczenia w okręgu.
+**Model Huffa (1963):** każdy mieszkaniec wybiera między firmami, a bliższa przyciąga go mocniej; `E(g)` to szacowana liczba klientów **nowej** firmy w punkcie *g*. **Opcja zewnętrzna `A0`** reprezentuje „inne możliwości” (firmy spoza OSM, zakupy gdzie indziej) i częściowo kompensuje niekompletność OSM. Wartości na siatce są zwracane przez `/api/surface`, a przeglądarka **interpoluje je** (×4, smoothstep) i dopiero potem koloruje — stąd gładka powierzchnia bez widocznych kwadratów. Po kliknięciu `/api/point` liczy dokładne liczby w okręgu zasięgu i ten sam wzór Huffa dla jednego punktu.
 
 Najważniejsze decyzje metodyczne (szczegółowo w [docs/sciaga-do-obrony.md](docs/sciaga-do-obrony.md)):
 
-- **Metoda dasymetryczna:** ludność ze spisu (kwadraty 1 km, EPSG:3035) rozkładamy na heksagony H3 **res 9** (~0,1 km²) proporcjonalnie do wagi budynków mieszkalnych z OpenStreetMap (powierzchnia × kondygnacje × współczynnik typu). Komórki bez budynków rozkładamy równomiernie.
-- **Poziomy szczegółowości (LOD):** siatka H3 res 9 → 5, rysowana w rozdzielczości zależnej od zoomu (zoom ≥ 12 → res 9, 10–11 → 8, 9 → 7, 7–8 → 6, ≤ 6 → 5). Liczymy na najdrobniejszej rozdzielczości, na jaką pozwala koszt, i agregujemy średnią ważoną liczbą mieszkańców; przy zmianie poziomu siatki płynnie się zamieniają.
-- **Gradient w skali logarytmicznej** (YlGnBu): kolor zależy od wartości (nie od rankingu), skala to 2.–98. percentyl dodatnich wartości widocznych heksagonów; każdy krok koloru ≈ podwojenie wartości. Legenda podaje „okrągłe” wartości (1–2–5 × 10^n). Percentyl ściskałby ogon rozkładu — miasto i przedmieścia dostawałyby ten sam kolor.
-- **Cache i przyciąganie bbox** do siatki: małe przesunięcie mapy nie liczy wyniku od nowa i nie zmienia kolorów.
-- **Odległości w EPSG:2180** (układ metryczny dla Polski), nie w stopniach; bufor *r* wokół widoku usuwa efekt krawędzi.
-- **Top-5** z odstępem ≥ max(2*r*, 1/6 przekątnej widoku) (non-maximum suppression) i z odrzuceniem terenów bez ludności.
+- **Metoda dasymetryczna:** ludność ze spisu (kwadraty 1 km, EPSG:3035) rozkładamy na heksagony H3 **res 9** (~0,1 km²) proporcjonalnie do wagi budynków mieszkalnych z OSM (powierzchnia × kondygnacje × współczynnik typu); przy dużym zasięgu źródła są grubsze (res 8/7), żeby było szybko.
+- **Powierzchnia ciągła zamiast heksagonów/choropletu:** wartości zmieniają się płynnie, więc pokazujemy izopletę-mgłę; drobne komórki dopiero po kliknięciu.
+- **Skala logarytmiczna YlOrRd z przezroczystością:** kolor zależy od wartości (5.–99. percentyl wartości dodatnich w okręgu), małe wartości są przezroczyste.
+- **Odległości w EPSG:2180** (układ metryczny dla Polski), nie w stopniach; bufor `4·zasięg` wokół okręgu usuwa efekt krawędzi.
+- **Top-5** z odstępem ≥ max(zasięg, promień/5) (non-maximum suppression), tylko w okręgu.
 - **Geokodowanie obrębów ewidencyjnych** (ULDK GUGiK) dla pozwoleń na budowę — dokładność do obrębu, stąd minimalny zasięg 1 km dla nowych domów.
+
+## Zasady wizualizacji, z których korzystamy
+
+- **Shneiderman (1996), „The Eyes Have It”:** *overview first, zoom and filter, then details-on-demand* → przepływ: wybór miejsca i promienia (zawężenie) → mapa okolicy (przegląd) → klik (szczegóły).
+- **Huff (1963), „A Probabilistic Analysis of Shopping Center Trade Areas”** (używany też w ArcGIS Business Analyst) → liczba klientów nowej firmy zamiast surowego popytu.
+- **Mapy izoplet / powierzchni ciągłej zamiast choropletów i hexbinów** dla wartości zmieniających się płynnie (mniej artefaktów granic, brak efektu MAUP w rysunku).
+- **Borland & Taylor (2007), „Rainbow Color Map (Still) Considered Harmful”** i **Brewer, ColorBrewer** → sekwencyjna, jednobarwna skala YlOrRd, nie tęcza.
+- **Skala logarytmiczna** dla skośnych rozkładów, **przezroczystość** małych wartości (efekt mgły, widać podkład i etykiety).
+- **xkcd 1138 („Heatmap”)** — ostrzeżenie: mapa „tylko ludności” niczego nie wyjaśnia; stąd główna mapa odpowiada na pytanie „ilu klientów zdobędę”.
+- Odrzucone: mapa dwuwymiarowa (bivariate) — trudna w odczycie; wtyczka Leaflet.heat — sumuje punkty w pikselach ekranu, więc obraz zależy od przybliżenia i nie odpowiada liczbom.
 
 ## Źródła danych i licencje
 
@@ -71,8 +80,8 @@ Podkład: pierwotnie planowano CARTO Positron, ale darmowe kafelki CARTO wymagaj
             (raz + odświeżanie)                                     (na żądanie)
  ┌────────────── ETL (Python) ───────────────┐      ┌──────── Backend FastAPI ────────┐     ┌──── Frontend ────┐
  │ Eurostat Census GRID 2021 → hex_pop_r9     │      │ /api/catalog                    │     │ index.html       │
- │ Geofabrik poland.osm.pbf  → poi, places,   │ ───▶ │ /api/view (okrąg zasięgu,       │ ──▶ │ Leaflet + h3-js  │
- │   building_weights (dasymetria)            │DuckDB│   LOD, percentyle, top-5)       │ JSON│ (bez buildowania)│
+ │ Geofabrik poland.osm.pbf  → poi, places,   │ ───▶ │ /api/surface (mgła: siatka,     │ ──▶ │ Leaflet + h3-js  │
+ │   building_weights (dasymetria)            │DuckDB│   Huff, top-5)                  │ JSON│ (bez buildowania)│
  │ GUNB RWDZ CSV + ULDK      → permits        │ plik │ /api/point (dymek punktu)       │     │                  │
  │ agregacja do H3 res 9 → 8 → 7 → 6 → 5      │      │ /api/poi /api/geocode /api/meta │     │                  │
  └────────────────────────────────────────────┘      └─────────────────────────────────┘     └──────────────────┘
@@ -84,7 +93,7 @@ Struktura repozytorium:
 
 ```
 backend/app/        FastAPI: main.py, config.py, db.py, catalog.py, api/routes.py,
-                    analysis/{kernel,scoring,resolution,service}.py, services/geocode.py
+                    analysis/{kernel,surface,service}.py, services/geocode.py
 etl/                download.py, osm_poi.py, buildings.py, population.py, permits.py,
                     geocode_obreby.py, aggregate.py, meta.py, run_all.py, sanity.py
 frontend/           index.html, css/style.css, js/{app,api,map,ui,colors}.js
@@ -128,7 +137,7 @@ Aplikacja działa na komputerze domowym; z laptopa (np. na uczelni) otwierasz j�
 - **Spis ludności jest z 2021 r.**; uzupełniają go pozwolenia na budowę.
 - **Pozwolenie na budowę ≠ wybudowany dom** (budowa trwa 1–3 lata, część nie rusza), a lokalizacja jest z dokładnością do obrębu ewidencyjnego (miasto: osiedle, wieś: cała wieś) — dlatego zasięg dla nowych domów wynosi co najmniej 1 km.
 - **Ludność w heksagonach to szacunek modelowy** (metoda dasymetryczna): spis podaje tylko kwadraty 1 km, a rozkład wewnątrz kwadratu wynika z wag budynków OSM (nie znamy liczby mieszkań w budynku).
-- **Kolory są względne dla widoku** (skala logarytmiczna dopasowana do widocznego obszaru), a liczby „klientów na firmę” są zawyżone, bo OSM ma ok. 1/3–1/4 firm — mapę czytamy porównawczo.
+- **Kolory są względne dla okręgu** (skala logarytmiczna dopasowana do wartości w wybranym obszarze), a liczby „klientów na firmę” są zawyżone, bo OSM ma ok. 1/3–1/4 firm — mapę czytamy porównawczo.
 - Liczba „nowych budynków wielorodzinnych” to liczba inwestycji, nie mieszkań (rejestr nie podaje liczby lokali).
 - Wynik jest rankingiem pomocniczym, nie prognozą zysku.
 

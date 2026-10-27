@@ -148,3 +148,37 @@ Wbudowana przeglądarka, okno 1280×800 i emulacja telefonu 375×812; zrzuty w `
 - Kolor heksagonu liczy teraz przeglądarka z **wartości w skali logarytmicznej** (zakres = 2.–98. percentyl dodatnich wartości rysowanych heksagonów), a nie z percentyla z API. Powód: dla dzieci w Warszawie (zasięg 2,5 km, zoom 10) punkt pod Pruszkowem (ok. 4 600) i centrum (ok. 19 000) miały percentyle 93 i 100, czyli prawie ten sam kolor. Pole `legend` i percentyle w odpowiedzi `/api/view` zostały (nic ich już nie koloruje; testy API bez zmian).
 - `/api/view` przyjmuje opcjonalne `area=lat,lng,promień_km` (promień 1–50 km, punkt w Polsce); działa wyłącznie przy wyborze top-5 (poza cache rdzenia), więc nie zmienia czasu odpowiedzi.
 - Weryfikacja w przeglądarce (okno 1024×768 — tyle ma panel podglądu): zrzuty `docs/screenshots/v21-*.png`. Rozkład wartości na kwartyle skali (dzieci, Warszawa, zasięg 2,5 km): z12 14/15/16/55%, z10 49/29/14/8%, z9 45/39/9/6%, z7 16/51/24/10% — na każdym poziomie widać zróżnicowanie.
+
+# v3 (2026-10-27) — mgła + model Huffa
+
+Dane i ETL bez zmian; zmienia się tylko analiza (`/api/surface`, `/api/point`) i frontend. Baza `data/app.duckdb` jak w v2.
+
+## Czasy `GET /api/surface` (prawdziwa baza, obliczenia na tym samym komputerze, bez pamięci podręcznej)
+
+Pomiar: `run_surface` na bazie produkcyjnej (czas serwera); w przeglądarce Wrocław 30 km / zasięg 15 km: 2,4 s łącznie z pobraniem i narysowaniem mgły.
+
+| Scenariusz | Czas | Siatka | Źródła popytu |
+|---|---|---|---|
+| Pruszków, fryzjer + mieszkańcy, promień 10 km, zasięg 1,5 km (scenariusz 2) | 1,4 s | 180×180 | res 9 |
+| Kraków, tylko seniorzy, promień 8 km, zasięg 2 km (scenariusz 5) | 1,7 s | 180×180 | res 9 |
+| Kraków, tylko fryzjer, promień 8 km, zasięg 1,5 km (scenariusz 5b) | 0,4 s | 180×180 | — |
+| Wrocław, brukarstwo + nowe domy jednorodzinne, promień 30 km, zasięg 15 km (scenariusz 6) | 2,3 s | 200×200 | res 7 |
+| Warszawa, fryzjer + mieszkańcy, promień 30 km, zasięg 2 km | 2,6 s | 200×200 | res 9 |
+| Warszawa, fryzjer + mieszkańcy, promień 30 km, zasięg 5 km | 3,2 s | 200×200 | res 8 |
+
+Wszystkie poniżej celu (< 3 s dla 10 km / 2 km, < 5 s dla scenariusza 6). Ruch i przybliżanie mapy nie wysyłają żadnych zapytań (sprawdzone w historii zasobów przeglądarki: po przeciągnięciu i przybliżeniu mapy liczba wywołań `/api/*` bez zmian).
+
+## Odchylenia od planu v3
+
+- **Siatka: krok = promień / 90 (a nie / 150).** Plan podawał `/150` (≈ 70 tys. punktów w okręgu), ale spec §3 mówi o ≤ ~23 tys. punktów; pierwszy pomiar przy `/150` dał 5–11 s. Przy `/90` (≈ 25 tys. punktów, krok 50–300 m) mgła wygląda tak samo płynnie, bo i tak jest interpolowana ×4.
+- **Jeden przebieg po parach (punkt siatki, źródło popytu) dla „Gdzie otworzyć” i „Gdzie są klienci”** (`huff_and_potential`): znajdowanie par w `cKDTree` jest najdroższe, więc obie warstwy liczymy razem — połowa czasu.
+- **Zaokrąglenie wartości do 3 cyfr znaczących (spec: 2).** Przy 2 cyfrach gładka powierzchnia miała widoczne „schodki” (pierścienie jednego koloru) po zamianie na mgłę.
+- **Mgła rysowana inaczej niż w planie:** zamiast powiększać gotowy obraz RGBA z `filter: blur`, interpolujemy *wartości* (smoothstep, ×4) i dopiero potem kolorujemy każdy piksel (tablica 256 kolorów); piksele poza okręgiem są przezroczyste. Interpolacja wartości nie daje ciemnych obwódek ani widocznych kwadratów siatki, a nie wymaga filtra.
+- **Rozdzielczość źródeł popytu:** `reach ≤ 2 km → r9`, `≤ 8 km → r8`, inaczej `r7` (jak w planie); konkurenci z `poi` w promieniu `promień + 8·zasięg` (żeby dostępność konkurencji `C_i` była poprawna także dla źródeł z bufora).
+- **Usunięty zbędny kod v2:** `resolution.py`, `scoring.py`, `catchment_sums`, `/api/view`, testy LOD; checkbox „Punkty firm” zastąpiony rysowaniem konkurentów w szczegółach punktu (ruch mapy nie może wysyłać zapytań).
+- Suwak zasięgu jest logarytmiczny o 100 krokach, więc np. 15 km zaokrągla się do 15,5 km (jak w v2.1).
+- Kliknięcie mapy w dymku: komórki res 9 pokazujemy tylko dla zasięgu ≤ 3 km (powyżej `cells = []`), konkurenci rysowani z `/api/poi`.
+
+## Weryfikacja w przeglądarce (v3)
+
+Wbudowana przeglądarka, panel podglądu (800×600) i emulacja telefonu 375×812; zrzuty `docs/screenshots/v3-*.png`: start (karta instrukcji), Pruszków fryzjer + mieszkańcy („Gdzie otworzyć” i „Gdzie są klienci”), szczegóły po kliknięciu (okrąg zasięgu, drobne heksagony, konkurenci, dymek), Kraków seniorzy (jedna mapa, bez przełącznika), Wrocław brukarstwo 30 km, telefon. Sprawdzone: przełączanie warstw bez nowego zapytania, komunikat „Wybierz branżę lub klientów.” przy „Pokaż mapę” bez wyboru, klik w pustą mapę ustawia miejsce (pinezka + okrąg podglądu), odtworzenie widoku z linku po przeładowaniu.
