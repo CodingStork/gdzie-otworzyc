@@ -17,7 +17,7 @@ import numpy as np
 
 from backend.app.analysis.kernel import to_latlng, to_metric
 from backend.app.analysis.surface import (
-    competition_density, demand_potential, huff_expected, make_grid, top_points,
+    competition_density, demand_potential, huff_and_potential, make_grid, top_points,
 )
 from backend.app.catalog import DEMANDS, POOR_WARNING, TYPES
 from backend.app.db import DatabaseMissing, cursor, on_reset
@@ -209,16 +209,18 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         elif "open" in layers:
             warnings.append(NO_COMPETITORS_WARNING)
 
-    computed = {
-        "open": lambda: huff_expected(g, dem_xy, dem_w, comp_xy, reach_m),
-        "demand": lambda: demand_potential(g, dem_xy, dem_w, reach_m),
-        "competition": lambda: competition_density(g, comp_xy, reach_m),
-    }
+    computed = {}
+    if "open" in layers:                                  # E i P liczymy razem — te same pary punkt–źródło
+        computed["open"], computed["demand"] = huff_and_potential(g, dem_xy, dem_w, comp_xy, reach_m)
+    elif "demand" in layers:
+        computed["demand"] = demand_potential(g, dem_xy, dem_w, reach_m)
+    else:
+        computed["competition"] = competition_density(g, comp_xy, reach_m)
     min_sep_m = max(reach_m, radius_m / 5)
     values, top = {}, {}
     for layer in layers:
         full = np.full(len(grid_xy), np.nan)             # NaN = poza okręgiem
-        full[mask] = _two_significant(computed[layer]())
+        full[mask] = _two_significant(computed[layer])
         values[layer] = [None if np.isnan(x) else x for x in full.tolist()]
         picks = top_points(np.nan_to_num(full), grid_xy, mask, min_sep_m)
         lat, lng = to_latlng(grid_xy[picks])

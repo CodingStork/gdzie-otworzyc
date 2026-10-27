@@ -44,7 +44,7 @@ def test_potential_and_density():
 
 def test_grid_covers_circle():
     xy, mask, cell, nx, ny = make_grid(np.array([0.0, 0.0]), 10_000)
-    assert cell == pytest.approx(10_000 / 150, rel=0.01) and mask.sum() == pytest.approx(math.pi * 150**2, rel=0.03)
+    assert cell == pytest.approx(10_000 / 90, rel=0.01) and mask.sum() == pytest.approx(math.pi * 90**2, rel=0.03)
     assert xy[0, 1] > xy[-1, 1]                                    # pierwszy wiersz = północ
     assert len(xy) == nx * ny == len(mask)
 

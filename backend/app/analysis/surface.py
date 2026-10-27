@@ -32,10 +32,10 @@ def decay(d_m: np.ndarray, reach_m: float) -> np.ndarray:
 def make_grid(center_xy: np.ndarray, radius_m: float):
     """Regularna siatka punktów pokrywająca okrąg. Zwraca (xy, maska „w okręgu”, cell_m, nx, ny).
 
-    Krok = promień/150 ograniczony do 50–300 m. Punkty leżą wierszami od północy (tak jak piksele
+    Krok = promień/90 ograniczony do 50–300 m (do ok. 25 tys. punktów w okręgu). Punkty leżą wierszami od północy (tak jak piksele
     obrazu), więc tablicę wartości można od razu narysować.
     """
-    cell = min(max(radius_m / 150, 50.0), 300.0)
+    cell = min(max(radius_m / 90, 50.0), 300.0)
     n = math.ceil(2 * radius_m / cell)
     half = n * cell / 2
     xs = center_xy[0] - half + cell / 2 + np.arange(n) * cell
@@ -46,13 +46,15 @@ def make_grid(center_xy: np.ndarray, radius_m: float):
     return xy, mask, cell, n, n
 
 
-def _sum_by_target(grid_xy, source_xy, weights, reach_m, per_pair=None) -> np.ndarray:
+def _sum_by_target(grid_xy, source_xy, columns, reach_m) -> np.ndarray:
     """Dla każdego punktu siatki: Σ_j w_j · f(d_j) po źródłach j w odległości ≤ 4·zasięg.
 
-    `per_pair(f, j)` (opcjonalnie) dodaje czynnik zależny od źródła j — używa go model Huffa.
-    Punkty siatki bierzemy porcjami po BLOCK, żeby lista par (punkt, źródło) nie rozrosła się w pamięci.
+    `columns` to lista wag źródeł (po jednej tablicy na wynik) — wiele wyników liczymy na
+    TYCH SAMYCH parach (punkt, źródło), bo znalezienie par jest najdroższą częścią obliczeń.
+    Punkty siatki bierzemy porcjami po BLOCK, żeby lista par nie rozrosła się w pamięci.
+    Zwraca tablicę (liczba punktów, liczba kolumn).
     """
-    out = np.zeros(len(grid_xy))
+    out = np.zeros((len(grid_xy), len(columns)))
     if len(source_xy) == 0 or len(grid_xy) == 0:
         return out
     tree = cKDTree(source_xy)
@@ -60,36 +62,53 @@ def _sum_by_target(grid_xy, source_xy, weights, reach_m, per_pair=None) -> np.nd
         part = grid_xy[s:s + BLOCK]
         pairs = cKDTree(part).sparse_distance_matrix(tree, CUTOFF * reach_m, output_type="ndarray")
         i, j = pairs["i"], pairs["j"]
-        f = decay(pairs["v"], reach_m)
-        w = weights[j] * (f if per_pair is None else f * per_pair(f, j))
-        out[s:s + BLOCK] = np.bincount(i, weights=w, minlength=len(part))
+        f = np.exp(-pairs["v"] / reach_m)                # pary są już obcięte do 4·zasięg (patrz decay)
+        for k, w in enumerate(columns):
+            out[s:s + BLOCK, k] = np.bincount(i, weights=w[j] * f, minlength=len(part))
     return out
 
 
 def demand_potential(grid_xy, demand_xy, demand_w, reach_m) -> np.ndarray:
     """P(g) = Σ_i d_i · f(d_ig) — ilu klientów jest „w zasięgu”, bliżsi liczą się bardziej."""
-    return _sum_by_target(grid_xy, demand_xy, np.asarray(demand_w, float), reach_m)
+    return _sum_by_target(grid_xy, demand_xy, [np.asarray(demand_w, float)], reach_m)[:, 0]
 
 
 def competition_density(grid_xy, comp_xy, reach_m) -> np.ndarray:
     """K(g) = Σ_k f(d_kg) — im więcej firm blisko, tym wyższa wartość."""
-    return _sum_by_target(grid_xy, comp_xy, np.ones(len(comp_xy)), reach_m)
+    return _sum_by_target(grid_xy, comp_xy, [np.ones(len(comp_xy))], reach_m)[:, 0]
 
 
-def huff_expected(grid_xy, demand_xy, demand_w, comp_xy, reach_m) -> np.ndarray:
-    """Model Huffa (1963): szacowana liczba klientów nowej firmy postawionej w punkcie g.
+def huff_and_potential(grid_xy, demand_xy, demand_w, comp_xy, reach_m) -> tuple[np.ndarray, np.ndarray]:
+    """Model Huffa (1963) E(g) oraz potencjał popytu P(g) w jednym przebiegu po parach (punkt, źródło).
 
     Mieszkaniec z komórki i wybiera między wszystkimi firmami; im bliżej firma, tym większa szansa.
     Szansa wyboru NOWEJ firmy: f(d_ig) / (f(d_ig) + C_i + A0), gdzie C_i = Σ_k f(d_ik) to
     „siła” istniejących konkurentów dla tego mieszkańca, a A0 to opcja zewnętrzna.
-    Wynik E(g) = Σ_i d_i · (ta szansa) — suma po wszystkich komórkach popytu.
+    Wynik E(g) = Σ_i d_i · (ta szansa) — suma po komórkach popytu. Mianownik jest zawsze ≥ A0 > 0,
+    więc konkurent leżący dokładnie w punkcie g nie powoduje dzielenia przez zero.
+    Ponieważ f/(f+C+A0) = 1/(1 + (C+A0)/f), liczymy to jako wagę zależną od pary: patrz niżej.
     """
     demand_w = np.asarray(demand_w, float)
+    out = np.zeros((len(grid_xy), 2))
+    if len(demand_xy) == 0 or len(grid_xy) == 0:
+        return out[:, 0], out[:, 1]
     # C_i liczymy raz dla każdej komórki popytu: konkurenci w zasięgu od jej środka.
-    C = _sum_by_target(demand_xy, comp_xy, np.ones(len(comp_xy)), reach_m)
-    # pozwala uniknąć dzielenia przez zero: mianownik zawsze ≥ A0 > 0
-    return _sum_by_target(grid_xy, demand_xy, demand_w, reach_m,
-                          per_pair=lambda f, j: 1.0 / (f + C[j] + A0))
+    C = _sum_by_target(demand_xy, comp_xy, [np.ones(len(comp_xy))], reach_m)[:, 0]
+    tree = cKDTree(demand_xy)
+    for s in range(0, len(grid_xy), BLOCK):
+        part = grid_xy[s:s + BLOCK]
+        pairs = cKDTree(part).sparse_distance_matrix(tree, CUTOFF * reach_m, output_type="ndarray")
+        i, j = pairs["i"], pairs["j"]
+        f = np.exp(-pairs["v"] / reach_m)
+        share = f / (f + C[j] + A0)                      # szansa, że mieszkaniec j wybierze nową firmę
+        out[s:s + BLOCK, 0] = np.bincount(i, weights=demand_w[j] * share, minlength=len(part))
+        out[s:s + BLOCK, 1] = np.bincount(i, weights=demand_w[j] * f, minlength=len(part))
+    return out[:, 0], out[:, 1]
+
+
+def huff_expected(grid_xy, demand_xy, demand_w, comp_xy, reach_m) -> np.ndarray:
+    """E(g) — szacowana liczba klientów nowej firmy w punkcie g (patrz `huff_and_potential`)."""
+    return huff_and_potential(grid_xy, demand_xy, demand_w, comp_xy, reach_m)[0]
 
 
 def top_points(values: np.ndarray, xy: np.ndarray, mask: np.ndarray, min_sep_m: float, n: int = 5) -> list[int]:
