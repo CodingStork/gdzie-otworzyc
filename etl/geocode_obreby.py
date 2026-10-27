@@ -12,7 +12,6 @@ from concurrent.futures import ThreadPoolExecutor
 import duckdb
 import h3
 import httpx
-import pandas as pd
 import shapely.wkt
 
 from backend.app.config import USER_AGENT

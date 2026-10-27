@@ -141,3 +141,14 @@ def test_view_cache_hit_on_small_pan(client, monkeypatch):
     b = view(client, bbox="20.991,52.211,21.051,52.261").json()      # przesunięcie o 0,01° → ten sam przyciągnięty bbox
     assert len(calls) == 1
     assert a["hexes"] == b["hexes"]
+
+
+def test_view_empty_area_keeps_top_metric(client):
+    """Nagłówek listy top-5 zależy od trybu także wtedy, gdy w widoku nic nie ma."""
+    j = view(client, bbox="18.0,55.0,18.5,55.3", demand="").json()
+    assert j["hexes"] == [] and j["top_metric"] == "S"
+
+
+def test_view_rejects_infinite_bbox(client):
+    assert view(client, bbox="-inf,49,inf,55").status_code == 422
+    assert view(client, bbox="nan,49,21,55").status_code == 422

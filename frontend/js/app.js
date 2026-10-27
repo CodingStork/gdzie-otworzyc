@@ -110,6 +110,13 @@ async function refresh() {
 // ---- Dymek klikniętego punktu ----
 
 let pointRequest = 0;
+
+// Dymek opisuje ustawienia z chwili kliknięcia: po zmianie formularza lub linku zamykamy go i ignorujemy spóźnioną odpowiedź.
+function discardPoint() {
+  pointRequest++;
+  map.closePoint();
+}
+
 async function showPointAt(lat, lng) {
   const params = ui.selectedParams();
   if (!params.type && !params.demand) { ui.showInfo(NOTHING_SELECTED); return; }
@@ -149,8 +156,7 @@ function applyHash() {
   const h = new URLSearchParams(location.hash.slice(1));
   if (!h.has('type') && !h.has('demand')) return false;
   ui.setSelection({ type: h.get('type'), demand: h.get('demand'), bandwidth: h.get('bw'), months: h.get('m') });
-  const layer = document.querySelector(`input[name=layer][value="${h.get('layer')}"]`);
-  if (layer) layer.checked = true;
+  if (h.get('layer') in LAYERS) document.querySelector(`input[name=layer][value="${h.get('layer')}"]`).checked = true;
   const lat = Number(h.get('lat'));
   const lng = Number(h.get('lng'));
   const z = Number(h.get('z'));
@@ -212,14 +218,14 @@ ui.renderHelp();
 ui.initSearch((place) => map.safeFlyTo(place.lat, place.lng, 14));
 
 // Wklejenie innego linku w tej samej karcie zmienia tylko hash (bez przeładowania) — odtwórz widok.
-window.addEventListener('hashchange', () => { if (applyHash()) refresh(); });
+window.addEventListener('hashchange', () => { if (applyHash()) { discardPoint(); scheduleRefresh(); } });
 
 getMeta().then(ui.renderFooter).catch(() => { /* stopka jest dodatkiem — brak metadanych nie przeszkadza */ });
 getCatalog()
   .then((catalog) => {
     // Zmiana formularza unieważnia dymek punktu (opisuje poprzednie ustawienia) i odświeża wynik.
-    ui.renderCatalog(catalog, () => { map.closePoint(); scheduleRefresh(); });
+    ui.renderCatalog(catalog, () => { discardPoint(); scheduleRefresh(); });
     applyHash();
-    refresh();   // pierwsze zapytanie od razu (po setView z linku moveend i tak da tylko cache)
+    scheduleRefresh();   // jedno zapytanie (z opóźnieniem 250 ms); setView z linku wywołuje moveend, który tylko je odnowi
   })
   .catch((e) => ui.showError(e.message));

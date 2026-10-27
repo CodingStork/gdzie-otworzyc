@@ -98,3 +98,10 @@ def test_permits_without_geocoding_are_reported():
     assert any("geokodowan" in p for p in check(con, SMALL))
     con.execute("INSERT INTO obreb_geom VALUES ('3',NULL,0,0,'region'), ('4',NULL,0,0,'region'), ('5',NULL,0,0,'region')")
     assert not any("geokodowan" in p for p in check(con, SMALL))
+
+
+def test_missing_latlng_columns_reported():
+    """Kolumny lat/lng dodaje krok aggregate; sama ludność (krok population) bez nich psuje /api/view."""
+    con = _good_db()
+    con.execute("ALTER TABLE hex_pop_r9 DROP COLUMN lat")
+    assert any("lat" in p and "hex_pop_r9" in p for p in check(con, SMALL))

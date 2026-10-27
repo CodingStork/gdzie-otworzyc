@@ -291,6 +291,9 @@ export function renderTop(list, metric, onClick) {
 const km = (r) => fmt(r, 1);
 const dist = (m) => (m >= 1000 ? `${fmt(m / 1000, 1)} km` : `${fmt(m)} m`);
 
+// Szacunek ludności: do setek, a dla małych liczb do dziesiątek (zaokrąglenie do 100 pokazałoby „ok. 0”).
+const roundEstimate = (n) => (n >= 1000 ? Math.round(n / 100) * 100 : Math.round(n / 10) * 10);
+
 // Zwraca element DOM (tekst wstawiamy przez textContent — nazwy firm z OSM nie są HTML-em).
 export function pointPopup(d) {
   const box = document.createElement('div');
@@ -306,7 +309,7 @@ export function pointPopup(d) {
     const permits = d.permits_period != null;
     add(permits
       ? `${d.demand_name}: ${fmt(d.demand)} (pozwolenia ${d.permits_period.from} – ${d.permits_period.to})`
-      : `${d.demand_name}: ok. ${fmt(Math.round(d.demand / 100) * 100)} (szacunek)`);
+      : `${d.demand_name}: ok. ${fmt(roundEstimate(d.demand))} (szacunek)`);
   }
   if (d.competitors != null) add(`${d.type_name} w OpenStreetMap: ${fmt(d.competitors)}`);
   if (d.score != null) add(`→ ok. ${fmt(d.score)} klientów na firmę po otwarciu Twojej`, true);

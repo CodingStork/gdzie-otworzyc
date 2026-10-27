@@ -1,4 +1,5 @@
 """Endpointy REST aplikacji (prefiks /api)."""
+import math
 from functools import lru_cache
 
 import httpx
@@ -40,7 +41,8 @@ def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
         min_lng, min_lat, max_lng, max_lat = (float(x) for x in bbox.split(","))
     except ValueError:
         raise _bad_request("Nieprawidłowy bbox")
-    if not (min_lng < max_lng and min_lat < max_lat):
+    if not all(math.isfinite(v) for v in (min_lng, min_lat, max_lng, max_lat)) \
+            or not (min_lng < max_lng and min_lat < max_lat):
         raise _bad_request("Nieprawidłowy bbox")
     return min_lng, min_lat, max_lng, max_lat
 

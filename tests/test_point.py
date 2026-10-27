@@ -69,3 +69,17 @@ def test_point_validation(client):
     assert point(client, bandwidth_km=0.01).status_code == 422
     assert point(client, type="xxx").status_code == 422
     assert point(client, lat=None).status_code == 422
+
+
+def test_point_small_radius_counts_own_cell(client):
+    """Okrąg 0,1 km zwykle nie obejmuje środka żadnej komórki — komórka klikniętego punktu liczy się zawsze (jak w heatmapie)."""
+    center_cell = h3.latlng_to_cell(LAT, LNG, 9)
+    c_lat, c_lng = h3.cell_to_latlng(center_cell)
+    for dlat, dlng in [(0.0011, 0), (-0.0011, 0), (0, 0.0018), (0, -0.0018)]:
+        lat, lng = c_lat + dlat, c_lng + dlng
+        if h3.latlng_to_cell(lat, lng, 9) == center_cell and _haversine_km(lat, lng, c_lat, c_lng) > 0.105:
+            break
+    else:
+        pytest.fail("nie znaleziono punktu w komórce, ale dalej niż 0,1 km od jej środka")
+    j = point(client, lat=lat, lng=lng, type="", bandwidth_km=0.1).json()
+    assert j["demand"] == pytest.approx(1000.0)      # tylko własna komórka (pop 1000)

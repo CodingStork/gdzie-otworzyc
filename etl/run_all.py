@@ -4,8 +4,9 @@ Uruchomienie:  uv run python -m etl.run_all [--only population,aggregate] [--for
 
 Kroki kosztowne (population, osm, permits) pomijają się, jeśli ich tabela już istnieje
 (chyba że --force). Download i geocode są wznawialne (nie pobierają/nie geokodują drugi raz tego
-samego). Kroki tanie i pochodne (permits_hex, aggregate) wykonują się zawsze, żeby tabele
-zbiorcze odpowiadały aktualnym danym źródłowym. UWAGA: serwer aplikacji musi być zatrzymany —
+samego). Kroki tanie i pochodne (permits_hex, aggregate) wykonują się zawsze, gdy nie podano --only;
+przy --only po zmianie „population”, „buildings” czy „permits_hex” dodaj też „aggregate” — dopiero on
+dodaje kolumny lat/lng i buduje grubsze rozdzielczości (kontrola jakości sanity to sprawdza). UWAGA: serwer aplikacji musi być zatrzymany —
 ETL zapisuje do pliku bazy, który serwer trzyma otwarty tylko do odczytu.
 """
 import argparse

@@ -45,6 +45,11 @@ def check(con: duckdb.DuckDBPyConnection, thresholds: dict = THRESHOLDS) -> list
         if not thresholds["pop_min"] <= total <= thresholds["pop_max"]:
             problems.append(f"Suma ludności {total:,.0f} poza zakresem "
                             f"[{thresholds['pop_min']:,}; {thresholds['pop_max']:,}]")
+    for table in ("hex_pop_r9", "poi_counts_r9", "permits_r9"):
+        # lat/lng dodaje dopiero krok aggregate; bez nich backend kończy się błędem SQL
+        if has(table) and "lat" not in {r[0] for r in con.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?", [table]).fetchall()}:
+            problems.append(f"Tabela {table} nie ma kolumn lat, lng — uruchom krok 'aggregate'")
     if has("building_weights"):
         n = _scalar(con, "SELECT COUNT(*) FROM building_weights")
         if n < thresholds["building_weights_min"]:

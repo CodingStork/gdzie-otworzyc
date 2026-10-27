@@ -134,7 +134,6 @@ def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 class ViewCore:
     """Wynik kroków 1–6 (to, co trafia do cache) + tablice potrzebne do wyboru top-5 dla dokładnego bbox."""
     response: dict
-    top_metric: str | None = None
     h3: np.ndarray | None = None          # heksagony display_res, które mamy w odpowiedzi
     lat: np.ndarray | None = None
     lng: np.ndarray | None = None
@@ -150,10 +149,13 @@ def _cells_query(con, table: str, columns: str, box: tuple[float, float, float, 
     return con.execute(sql, [*box, *(params or [])]).df()
 
 
+TOP_METRIC = {"full": "score", "demand": "D", "competition": "S"}   # metryka rankingu top-5 zależna od trybu
+
+
 def _empty_core(display_res: int, compute_res: int, radius_km: float, mode: str, notes: list[str],
                 warnings: list[str], window=None) -> ViewCore:
     response = {"mode": mode, "display_res": display_res, "compute_res": compute_res, "radius_km": radius_km,
-                "hexes": [], "legend": {}, "top_metric": None, "notes": notes, "warnings": warnings}
+                "hexes": [], "legend": {}, "top_metric": TOP_METRIC[mode], "notes": notes, "warnings": warnings}
     if window is not None:
         response["permits_period"] = _period(window)
     return ViewCore(response)
@@ -270,14 +272,14 @@ def _compute_core(con: duckdb.DuckDBPyConnection, p: ViewParams) -> ViewCore:
 
     hexes = [[out_h3[i], col(sc, "score", i), col(D, "D", i), col(S, "S", i),
               pct_of("score", i), pct_of("D", i), pct_of("S", i)] for i in range(len(out_h3))]
-    top_metric = {"full": "score", "demand": "D", "competition": "S"}[mode]
+    top_metric = TOP_METRIC[mode]
     response = {"mode": mode, "display_res": display_res, "compute_res": compute_res, "radius_km": radius_km,
                 "hexes": hexes, "legend": {name: legend_values(v) for name, v in metrics.items()},
                 "top_metric": top_metric, "notes": notes, "warnings": warnings}
     if window is not None:
         response["permits_period"] = _period(window)
     floor = S if mode == "competition" else D           # tryb competition: bez progu popytu (D := S)
-    return ViewCore(response, top_metric, out_h3, out_lat, out_lng, to_metric(out_lat, out_lng),
+    return ViewCore(response, out_h3, out_lat, out_lng, to_metric(out_lat, out_lng),
                     metrics[top_metric], floor)
 
 
@@ -354,8 +356,10 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
     result: dict = {"radius_km": radius_km, "demand": None, "demand_name": None, "competitors": None,
                     "type_name": None, "score": None, "nearest": [], "notes": notes}
 
-    dlat = radius_km / 110.54
-    dlng = radius_km / (111.32 * math.cos(math.radians(lat)))
+    # Prostokąt zawiera margines 0,2 km (promień komórki res 9), żeby do zapytania trafiła też komórka klikniętego punktu.
+    reach_km = radius_km + 0.2
+    dlat = reach_km / 110.54
+    dlng = reach_km / (111.32 * math.cos(math.radians(lat)))
     box = [lat - dlat, lat + dlat, lng - dlng, lng + dlng]
 
     if demand_id:
@@ -365,7 +369,7 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
         if demand.source == "census":
             if not table_exists(con, "hex_pop_r9"):
                 raise DatabaseMissing("brak tabeli hex_pop_r9")
-            rows = con.execute(f"SELECT lat, lng, {demand.column} FROM hex_pop_r9 "
+            rows = con.execute(f"SELECT lat, lng, {demand.column}, h3 FROM hex_pop_r9 "
                                "WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?", box).fetchall()
         else:
             window = _permit_window(con, 9, months)
@@ -374,15 +378,19 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
                 notes.append(PERMITS_MISSING_WARNING)
             else:
                 kinds = ", ".join("?" for _ in demand.kinds)
-                rows = con.execute(f"SELECT lat, lng, SUM(n) FROM permits_r9 WHERE kind IN ({kinds}) AND month >= ? "
-                                   "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? GROUP BY lat, lng",
+                rows = con.execute(f"SELECT lat, lng, SUM(n), h3 FROM permits_r9 WHERE kind IN ({kinds}) AND month >= ? "
+                                   "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? GROUP BY lat, lng, h3",
                                    [*demand.kinds, window[0], *box]).fetchall()
                 result["permits_period"] = _period(window)
             if bandwidth_km < PERMITS_MIN_RADIUS_KM:
                 notes.append(PERMITS_NOTE)
         if rows:
-            arr = np.array(rows, dtype=float)
+            arr = np.array([r[:3] for r in rows], dtype=float)
             inside = _haversine_m(lat, lng, arr[:, 0], arr[:, 1]) <= radius_km * 1000
+            # Komórka res 9 ma ~0,3 km między środkami, więc przy małym zasięgu okrąg często nie obejmuje żadnego
+            # środka. Komórka, w której kliknięto, liczy się zawsze — tak samo jak własna komórka w heatmapie.
+            own = h3.latlng_to_cell(lat, lng, 9)
+            inside |= np.array([r[3] == own for r in rows])
             total = float(arr[inside, 2].sum())
         result["demand"] = total
 

@@ -5,10 +5,6 @@ metoda 2SFCA (two-step floating catchment area) z progiem odległości: dla każ
 zasięgu „pływa” po mapie, a my zliczamy w nim popyt (mieszkańców) i podaż (konkurentów). Liczby są
 całkowite i sprawdzalne — w odróżnieniu od v1, gdzie źródła ważyło jądro Gaussa (K(d) = exp(-d²/2h²)):
 dla klienta „kilka razy dalej niż zasięg” waga wciąż była niezerowa, a sumy nie dało się zweryfikować.
-
-Dla punktu docelowego i sumujemy wartości źródeł j z wagą zależną od odległości:
-    K(d) = exp(-d² / (2h²)),   d = odległość, h = szerokość pasma ("zasięg klienta")
-Źródła dalsze niż 3h pomijamy — ich waga jest już praktycznie zerowa (< 1,2%).
 """
 import numpy as np
 from pyproj import Transformer
