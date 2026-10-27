@@ -152,3 +152,28 @@ def test_view_empty_area_keeps_top_metric(client):
 def test_view_rejects_infinite_bbox(client):
     assert view(client, bbox="-inf,49,inf,55").status_code == 422
     assert view(client, bbox="nan,49,21,55").status_code == 422
+
+
+# ---- parametr area: top-5 tylko w okręgu wokół wybranej miejscowości ----
+
+def _dist_km(t):
+    return service._haversine_km(LAT, LNG, t["lat"], t["lng"])
+
+
+def test_view_area_limits_top_to_circle(client):
+    without = view(client).json()["top"]
+    inside = view(client, area=f"{LAT},{LNG},1").json()["top"]
+    assert any(_dist_km(t) > 1 for t in without)            # bez area ranking sięga dalej niż 1 km
+    assert inside and all(_dist_km(t) <= 1 for t in inside)
+
+
+def test_view_area_does_not_change_hexes(client):
+    """Okrąg obszaru zawęża tylko top-5; heksagony do narysowania filtruje przeglądarka."""
+    assert view(client).json()["hexes"] == view(client, area=f"{LAT},{LNG},1").json()["hexes"]
+
+
+@pytest.mark.parametrize("area", ["1,2", "abc,2,3", f"{LAT},{LNG},0.5", f"{LAT},{LNG},51", "10,10,5",
+                                  f"nan,{LNG},5", f"{LAT},{LNG},inf"])
+def test_view_area_validation(client, area):
+    r = view(client, area=area)
+    assert r.status_code == 422 and "area" in str(r.json()["detail"])

@@ -283,12 +283,17 @@ def _compute_core(con: duckdb.DuckDBPyConnection, p: ViewParams) -> ViewCore:
                     metrics[top_metric], floor)
 
 
-def _pick_top(con, core: ViewCore, bbox, radius_km: float) -> list[dict]:
-    """Top-5 wśród heksagonów w DOKŁADNYM bbox widoku, z odstępem min. max(2r, 1/6 przekątnej widoku)."""
+def _pick_top(con, core: ViewCore, bbox, radius_km: float, area=None) -> list[dict]:
+    """Top-5 wśród heksagonów w DOKŁADNYM bbox widoku, z odstępem min. max(2r, 1/6 przekątnej widoku).
+
+    `area` = (lat, lng, promień_km) — opcjonalny okrąg wokół wyszukanej miejscowości; wtedy bierzemy tylko heksagony w nim.
+    """
     if core.h3 is None:
         return []
     min_lng, min_lat, max_lng, max_lat = bbox
     inside = (core.lat >= min_lat) & (core.lat <= max_lat) & (core.lng >= min_lng) & (core.lng <= max_lng)
+    if area is not None:
+        inside &= _haversine_m(area[0], area[1], core.lat, core.lng) <= area[2] * 1000
     idx = np.flatnonzero(inside)
     if len(idx) == 0:
         return []
@@ -305,10 +310,10 @@ def _pick_top(con, core: ViewCore, bbox, radius_km: float) -> list[dict]:
     return top
 
 
-def run_view(con: duckdb.DuckDBPyConnection, p: ViewParams) -> dict:
+def run_view(con: duckdb.DuckDBPyConnection, p: ViewParams, area=None) -> dict:
     """Pełna odpowiedź /api/view dla bbox dokładnie takiego, jaki podano (bez przyciągania i bez cache)."""
     core = _compute_core(con, p)
-    return {**core.response, "top": _pick_top(con, core, p.bbox, core.response["radius_km"])}
+    return {**core.response, "top": _pick_top(con, core, p.bbox, core.response["radius_km"], area)}
 
 
 @functools.lru_cache(maxsize=64)
@@ -316,17 +321,18 @@ def _cached_core(key: ViewParams) -> ViewCore:
     return _compute_core(cursor(), key)
 
 
-def cached_view(p: ViewParams) -> dict:
+def cached_view(p: ViewParams, area=None) -> dict:
     """run_view z pamięcią podręczną rdzenia (LRU 64) na bbox przyciągniętym do siatki.
 
     Małe przesunięcie mapy daje ten sam przyciągnięty bbox → wynik z cache. Top-5 liczymy za każdym
-    razem dla dokładnego bbox widoku (tanie: tylko ranking gotowych heksagonów). Błędy nie są cache'owane.
+    razem dla dokładnego bbox widoku (tanie: tylko ranking gotowych heksagonów); okrąg `area` też działa
+    tylko na top-5, więc nie wchodzi do klucza cache. Błędy nie są cache'owane.
     """
     display_res = display_res_for_zoom(p.zoom)
     key = ViewParams(p.type_id, p.demand_id, snap_bbox(p.bbox, display_res), _ZOOM_OF_RES[display_res],
                      round(p.bandwidth_km, 2), p.months)
     core = _cached_core(key)
-    return {**core.response, "top": _pick_top(cursor(), core, p.bbox, core.response["radius_km"])}
+    return {**core.response, "top": _pick_top(cursor(), core, p.bbox, core.response["radius_km"], area)}
 
 
 on_reset(_cached_core.cache_clear)   # zmiana/ponowne otwarcie bazy unieważnia wyniki

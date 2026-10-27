@@ -47,6 +47,26 @@ def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
     return min_lng, min_lat, max_lng, max_lat
 
 
+AREA_RADIUS_KM = (1, 50)
+
+
+def _parse_area(area: str) -> tuple[float, float, float] | None:
+    """„lat,lng,promień_km” → krotka; pusty napis = brak obszaru. Punkt musi leżeć w Polsce, promień 1–50 km."""
+    if not area:
+        return None
+    try:
+        lat, lng, radius = (float(x) for x in area.split(","))
+    except ValueError:
+        raise _bad_request("Nieprawidłowy parametr area (oczekiwano: lat,lng,promień_km)")
+    if not all(math.isfinite(v) for v in (lat, lng, radius)):
+        raise _bad_request("Nieprawidłowy parametr area (oczekiwano: lat,lng,promień_km)")
+    if not (LAT_RANGE[0] <= lat <= LAT_RANGE[1] and LNG_RANGE[0] <= lng <= LNG_RANGE[1]):
+        raise _bad_request("Parametr area: punkt poza Polską")
+    if not AREA_RADIUS_KM[0] <= radius <= AREA_RADIUS_KM[1]:
+        raise _bad_request("Parametr area: promień musi mieścić się w zakresie 1–50 km")
+    return lat, lng, radius
+
+
 @router.get("/view")
 def view(
     type_id: str = Query(default="", alias="type"),
@@ -55,8 +75,12 @@ def view(
     zoom: int = Query(),
     bandwidth_km: float = Query(),
     months: int = 24,
+    area: str = Query(default=""),
 ) -> dict:
-    """Heatmapa widocznego fragmentu mapy. Puste `type` / `demand` = brak wyboru (co najmniej jedno wymagane)."""
+    """Heatmapa widocznego fragmentu mapy. Puste `type` / `demand` = brak wyboru (co najmniej jedno wymagane).
+
+    `area` (opcjonalnie, „lat,lng,promień_km”) zawęża do okręgu tylko listę top-5.
+    """
     if not type_id and not demand:
         raise _bad_request("Wybierz typ działalności albo czynnik popytu")
     if type_id and type_id not in TYPES:
@@ -70,8 +94,9 @@ def view(
     if not 0.1 <= bandwidth_km <= 20:
         raise _bad_request("Zasięg klienta (bandwidth_km) musi mieścić się w zakresie 0,1–20 km")
     params = ViewParams(type_id or None, demand or None, _parse_bbox(bbox), zoom, bandwidth_km, months)
+    top_area = _parse_area(area)
     try:
-        return cached_view(params)
+        return cached_view(params, top_area)
     except DatabaseMissing:
         raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
 
