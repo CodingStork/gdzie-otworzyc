@@ -15,7 +15,7 @@ Wzór: `E(g) = Σ_i d_i · f(d_ig) / (f(d_ig) + C_i + A0)`, `f(d) = exp(−d / z
 Układ współrzędnych mówi, jak liczby opisują miejsce na Ziemi. **EPSG:4326 (WGS84)** to stopnie szerokości i długości geograficznej — tak mówią OSM, ULDK i H3. **EPSG:3035 (ETRS89-LAEA)** to europejski układ w metrach, w którym Eurostat publikuje siatkę spisu (kwadraty 1 km × 1 km). **EPSG:2180 (PUWG 1992)** to polski układ metryczny. Odległości liczymy w metrach (2180), bo stopień długości geograficznej ma inną długość w Polsce niż na równiku — odległość „na stopniach” byłaby zniekształcona.
 - Spis 3035 → 4326: `etl/population.py:cells_to_hex` (`Transformer.from_crs(3035, 4326)`).
 - Budynki 4326 → 3035 (przypisanie do komórki spisu): `etl/buildings.py:build_building_weights`.
-- 4326 → 2180 do odległości: `backend/app/analysis/kernel.py:to_metric`.
+- 4326 → metry do odległości: `backend/app/analysis/kernel.py:LocalFrame` (lokalny układ wokół wybranego miejsca, osie na północ/wschód — siatka mgły musi być wyrównana do południków, bo w EPSG:2180 byłaby obrócona nawet o ok. 4°) oraz `to_metric` (EPSG:2180).
 
 ## 2. Siatka H3 jako magazyn danych (a nie sposób rysowania)
 
@@ -24,7 +24,7 @@ H3 (Uber) dzieli Ziemię na heksagony w wielu rozdzielczościach; każdy ma 6 r�
 
 ## 3. MAUP (problem modyfikowalnej jednostki przestrzennej)
 
-Wynik analizy zależy od tego, jak potniemy mapę na jednostki: te same dane w granicach gmin, powiatów czy heksagonów dadzą różne obrazy. Dlatego nie liczymy „na gminę”. Wartość w każdym punkcie siatki to suma po **wszystkich** źródłach w okolicy z wagą malejącą z odległością, więc nie zależy od tego, gdzie leży granica komórki. Siatka obliczeniowa (krok ok. promień/90, 50–300 m) jest tylko próbkowaniem gładkiej powierzchni, a obraz jest dodatkowo interpolowany.
+Wynik analizy zależy od tego, jak potniemy mapę na jednostki: te same dane w granicach gmin, powiatów czy heksagonów dadzą różne obrazy. Dlatego nie liczymy „na gminę”. Wartość w każdym punkcie siatki to suma po **wszystkich** źródłach w okolicy z wagą malejącą z odległością, więc nie zależy od tego, gdzie leży granica komórki. Siatka obliczeniowa (krok ok. promień/90, 50–300 m, do ok. 31 tys. punktów) jest tylko próbkowaniem gładkiej powierzchni, a obraz jest dodatkowo interpolowany.
 - `backend/app/analysis/surface.py:make_grid`, `huff_and_potential`.
 
 ## 4. Interpolacja powierzchniowa i **metoda dasymetryczna**
@@ -130,7 +130,7 @@ Nie działki (to miliony zapytań), tylko obręby ewidencyjne przez ULDK GUGiK: 
 Rozkłady są skośne, więc skala liniowa zalałaby mapę jednym kolorem; logarytm zachowuje proporcje (krok koloru ≈ podwojenie wartości). Paleta jednobarwna (YlOrRd) czyta się jako „więcej”, a tęcza (Borland & Taylor 2007) wprowadza fałszywe granice. Przezroczystość pozwala małym wartościom „zniknąć”, a etykiety miast zostają czytelne.
 
 **10. Jak zapewniłeś, że wyniki są szybkie?**
-Dane są przetwarzane raz (ETL → DuckDB). Zapytanie dotyczy tylko okręgu (≤ 30 km), siatka ma ok. 25 tys. punktów w okręgu, pary (punkt, źródło) znajduje drzewo cKDTree porcjami po 2 000 punktów, a obie warstwy („Gdzie otworzyć” i „Gdzie są klienci”) liczone są w jednym przebiegu. Przy dużym zasięgu źródła popytu są grubsze (res 8/7). Czasy: 0,4–3,2 s (patrz `docs/raport-etl.md`, sekcja v3), a ostatnie wyniki są w pamięci podręcznej (LRU 32). Ruch mapy w ogóle nie wysyła zapytań.
+Dane są przetwarzane raz (ETL → DuckDB). Zapytanie dotyczy tylko okręgu (≤ 30 km), siatka ma 25–31 tys. punktów w okręgu, pary (punkt, źródło) znajduje drzewo cKDTree porcjami po 2 000 punktów, a obie warstwy („Gdzie otworzyć” i „Gdzie są klienci”) liczone są w jednym przebiegu. Przy dużym zasięgu źródła popytu są grubsze (res 8/7). Czasy: 0,4–3,2 s (patrz `docs/raport-etl.md`, sekcja v3), a ostatnie wyniki są w pamięci podręcznej (LRU 32). Ruch mapy w ogóle nie wysyła zapytań.
 
 **11. Dlaczego przepływ „miejsce + promień → mapa → klik”?**
 Zasada Shneidermana (1996): przegląd → zawężenie → szczegóły na żądanie. Wcześniejszy dynamiczny widok całej mapy był męczący i trudny do odczytania; teraz użytkownik zawęża zadanie, widzi okolicę, a liczby poznaje dopiero po kliknięciu.

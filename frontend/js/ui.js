@@ -107,6 +107,7 @@ export function setRadius(km) {
 const NONE = '— nie wybieraj —';
 
 function currentType() {
+  if (!catalog) return null;   // katalog jeszcze się nie wczytał
   for (const group of catalog.groups) {
     const type = group.types.find((t) => t.id === $('type-select').value);
     if (type) return type;
@@ -117,6 +118,7 @@ function currentType() {
 export const currentTypeInfo = currentType;
 
 export function currentDemand() {
+  if (!catalog) return null;
   return catalog.demands.find((d) => d.id === $('demand-select').value) || null;
 }
 

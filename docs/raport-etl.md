@@ -182,3 +182,11 @@ Wszystkie poniżej celu (< 3 s dla 10 km / 2 km, < 5 s dla scenariusza 6). Ruch 
 ## Weryfikacja w przeglądarce (v3)
 
 Wbudowana przeglądarka, panel podglądu (800×600) i emulacja telefonu 375×812; zrzuty `docs/screenshots/v3-*.png`: start (karta instrukcji), Pruszków fryzjer + mieszkańcy („Gdzie otworzyć” i „Gdzie są klienci”), szczegóły po kliknięciu (okrąg zasięgu, drobne heksagony, konkurenci, dymek), Kraków seniorzy (jedna mapa, bez przełącznika), Wrocław brukarstwo 30 km, telefon. Sprawdzone: przełączanie warstw bez nowego zapytania, komunikat „Wybierz branżę lub klientów.” przy „Pokaż mapę” bez wyboru, klik w pustą mapę ustawia miejsce (pinezka + okrąg podglądu), odtworzenie widoku z linku po przeładowaniu.
+
+## Poprawki po przeglądzie (v3)
+
+- **Siatka w lokalnym układzie metrycznym** (`LocalFrame`, odwzorowanie poprzeczne Merkatora wokół wybranego miejsca) zamiast EPSG:2180: w 2180 siatka jest obrócona względem południków (do ok. 4° na zachodzie/wschodzie kraju), więc obraz mgły rozciągany prostokątem w stopniach był przesunięty nawet o ok. 2 km przy promieniu 30 km. Spec §3 mówił „EPSG:2180” — to odchylenie.
+- **Zasięg > 12 km → źródła popytu res 6** (wcześniej res 7): syntetyczny pomiar najgorszego przypadku (spis, zasięg 20 km, promień 30 km) dawał ok. 7 s.
+- Siatka ma 25–31 tys. punktów w okręgu (krok jest obcinany do 300 m od promienia ok. 27 km).
+- Znane drobiazgi bez zmian: format dymku („Mieszkańcy: ok. X (szacunek)”, „Fryzjer w OSM: N”) różni się od przykładu w spec §4; tekst legendy „krok koloru ≈ podwojenie wartości” jest dosłowny ze spec §5, a ściśle zależy od rozpiętości skali; kilka nieużywanych metod w `map.js`/`ui.js`.
+- Czasy po poprawkach (prawdziwa baza): Wrocław 30 km / zasięg 15 km (pozwolenia) 0,9 s; **najgorszy przypadek — Warszawa, market budowlany + mieszkańcy, promień 30 km, zasięg 20 km: 1,4 s**; pozostałe scenariusze bez zmian (0,4–3,2 s).

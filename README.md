@@ -31,7 +31,7 @@ Wybierasz typ działalności (16 typów) i/lub klientów (ludność ze spisu 202
 
 ## Jak to działa (metoda)
 
-Dla okręgu wokół wybranego miejsca serwer buduje **regularną siatkę** w metrach (EPSG:2180; krok ok. promień/90, 50–300 m) i liczy na niej trzy wielkości. Każde źródło popytu *i* (komórka H3 z ludnością albo pozwoleniami, `d_i` osób) i każdy konkurent *k* (firma z OSM) wpływa na punkt siatki *g* z wagą malejącą z odległością — **rozpad wykładniczy** `f(d) = exp(−d / zasięg)`, obcięty dla `d > 4·zasięg`:
+Dla okręgu wokół wybranego miejsca serwer buduje **regularną siatkę** w metrach (lokalny układ metryczny wyrównany do północy; krok ok. promień/90, 50–300 m) i liczy na niej trzy wielkości. Każde źródło popytu *i* (komórka H3 z ludnością albo pozwoleniami, `d_i` osób) i każdy konkurent *k* (firma z OSM) wpływa na punkt siatki *g* z wagą malejącą z odległością — **rozpad wykładniczy** `f(d) = exp(−d / zasięg)`, obcięty dla `d > 4·zasięg`:
 
 ```
 Gdzie są klienci:  P(g) = Σ_i d_i · f(d_ig)
@@ -47,7 +47,7 @@ Najważniejsze decyzje metodyczne (szczegółowo w [docs/sciaga-do-obrony.md](do
 - **Metoda dasymetryczna:** ludność ze spisu (kwadraty 1 km, EPSG:3035) rozkładamy na heksagony H3 **res 9** (~0,1 km²) proporcjonalnie do wagi budynków mieszkalnych z OSM (powierzchnia × kondygnacje × współczynnik typu); przy dużym zasięgu źródła są grubsze (res 8/7), żeby było szybko.
 - **Powierzchnia ciągła zamiast heksagonów/choropletu:** wartości zmieniają się płynnie, więc pokazujemy izopletę-mgłę; drobne komórki dopiero po kliknięciu.
 - **Skala logarytmiczna YlOrRd z przezroczystością:** kolor zależy od wartości (5.–99. percentyl wartości dodatnich w okręgu), małe wartości są przezroczyste.
-- **Odległości w EPSG:2180** (układ metryczny dla Polski), nie w stopniach; bufor `4·zasięg` wokół okręgu usuwa efekt krawędzi.
+- **Odległości w metrach** (lokalny układ metryczny wokół miejsca, a dla danych EPSG:2180), nie w stopniach; bufor `4·zasięg` wokół okręgu usuwa efekt krawędzi.
 - **Top-5** z odstępem ≥ max(zasięg, promień/5) (non-maximum suppression), tylko w okręgu.
 - **Geokodowanie obrębów ewidencyjnych** (ULDK GUGiK) dla pozwoleń na budowę — dokładność do obrębu, stąd minimalny zasięg 1 km dla nowych domów.
 

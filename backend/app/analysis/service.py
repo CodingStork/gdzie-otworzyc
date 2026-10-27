@@ -15,7 +15,7 @@ import duckdb
 import h3
 import numpy as np
 
-from backend.app.analysis.kernel import to_latlng, to_metric
+from backend.app.analysis.kernel import LocalFrame
 from backend.app.analysis.surface import (
     competition_density, demand_potential, huff_and_potential, make_grid, top_points,
 )
@@ -123,7 +123,7 @@ def surface_layers(p: SurfaceParams) -> list[str]:
 
 def demand_res(reach_km: float) -> int:
     """Rozdzielczość H3 źródeł popytu: duży zasięg nie wymaga drobnych komórek (a byłoby ich za dużo)."""
-    return 9 if reach_km <= 2 else 8 if reach_km <= 8 else 7
+    return 9 if reach_km <= 2 else 8 if reach_km <= 8 else 7 if reach_km <= 12 else 6
 
 
 def _box(lat: float, lng: float, radius_km: float) -> list[float]:
@@ -191,7 +191,8 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     if p.demand_id and DEMANDS[p.demand_id].source == "permits" and p.reach_km < PERMITS_MIN_REACH_KM:
         notes.append(PERMITS_NOTE)
 
-    center = to_metric(np.array([p.lat]), np.array([p.lng]))[0]
+    frame = LocalFrame(p.lat, p.lng)                     # metry względem wybranego miejsca (osie na północ i wschód)
+    center = np.zeros(2)
     grid_xy, mask, cell_m, nx, ny = make_grid(center, radius_m)
     g = grid_xy[mask]                                    # liczymy tylko punkty w okręgu
 
@@ -203,13 +204,13 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         if DEMANDS[p.demand_id].source == "permits" and window is None:
             warnings.append(PERMITS_MISSING_WARNING)
         if len(arr):
-            dem_xy, dem_w = to_metric(arr[:, 0], arr[:, 1]), arr[:, 2]
+            dem_xy, dem_w = frame.to_metric(arr[:, 0], arr[:, 1]), arr[:, 2]
     # Konkurenci: dalej (8·zasięg), bo dostępność konkurencji C_i liczymy także dla źródeł z bufora.
     comp_xy = np.empty((0, 2))
     if p.type_id:
         comp = load_competitors(con, p.type_id, _box(p.lat, p.lng, p.radius_km + 8 * reach_km))
         if len(comp):
-            comp_xy = to_metric(comp[:, 0], comp[:, 1])
+            comp_xy = frame.to_metric(comp[:, 0], comp[:, 1])
         elif "open" in layers:
             warnings.append(NO_COMPETITORS_WARNING)
 
@@ -227,14 +228,14 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         full[mask] = _round_significant(computed[layer])
         values[layer] = [None if np.isnan(x) else x for x in full.tolist()]
         picks = top_points(np.nan_to_num(full), grid_xy, mask, min_sep_m)
-        lat, lng = to_latlng(grid_xy[picks])
+        lat, lng = frame.to_latlng(grid_xy[picks])
         top[layer] = [{"lat": float(a), "lng": float(b), "value": float(full[i]),
                        "name": nearest_place_name(con, float(a), float(b)) or f"okolice {a:.3f}, {b:.3f}"}
                       for i, a, b in zip(picks, lat, lng)]
 
     # Prostokąt obrazu w stopniach: krawędzie kwadratu siatki (przy promieniu ≤ 30 km zniekształcenie jest pomijalne).
     half = nx * cell_m / 2
-    edges = to_latlng(np.array([[center[0] - half, center[1]], [center[0] + half, center[1]],
+    edges = frame.to_latlng(np.array([[center[0] - half, center[1]], [center[0] + half, center[1]],
                                 [center[0], center[1] - half], [center[0], center[1] + half]]))
     response = {"layers": layers, "reach_km": reach_km,
                 "grid": {"west": float(edges[1][0]), "east": float(edges[1][1]),
@@ -355,6 +356,7 @@ def _expected_at(con, lat: float, lng: float, type_id: str, demand_id: str, reac
     if not len(arr):
         return 0.0
     comp = load_competitors(con, type_id, _box(lat, lng, 8 * reach_km))
-    comp_xy = to_metric(comp[:, 0], comp[:, 1]) if len(comp) else np.empty((0, 2))
-    here = to_metric(np.array([lat]), np.array([lng]))
-    return float(huff_and_potential(here, to_metric(arr[:, 0], arr[:, 1]), arr[:, 2], comp_xy, reach_km * 1000)[0][0])
+    frame = LocalFrame(lat, lng)
+    comp_xy = frame.to_metric(comp[:, 0], comp[:, 1]) if len(comp) else np.empty((0, 2))
+    here = np.zeros((1, 2))
+    return float(huff_and_potential(here, frame.to_metric(arr[:, 0], arr[:, 1]), arr[:, 2], comp_xy, reach_km * 1000)[0][0])

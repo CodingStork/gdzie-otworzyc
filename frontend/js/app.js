@@ -13,7 +13,7 @@ const $ = (id) => document.getElementById(id);
 const map = initMap('map');
 
 // place: wybrane miejsce {lat, lng, name}; result: ostatnia odpowiedź /api/surface; used: ustawienia, dla których ją policzono.
-const state = { place: null, result: null, used: null, controller: null, requestId: 0 };
+const state = { loading: false, place: null, result: null, used: null, controller: null, requestId: 0 };
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 const NEED_SELECTION = 'Wybierz branżę lub klientów.';
@@ -120,6 +120,7 @@ async function run({ fit }) {
   const mine = ++state.requestId;
   const used = { ...p, lat: state.place.lat, lng: state.place.lng };
   ui.setLoading(true);
+  state.loading = true;
   try {
     const result = await surface({
       type: p.type, demand: p.demand, lat: used.lat, lng: used.lng,
@@ -136,7 +137,7 @@ async function run({ fit }) {
     if (mine !== state.requestId) return;
     ui.showError(e.message);
   } finally {
-    if (mine === state.requestId) ui.setLoading(false);
+    if (mine === state.requestId) { ui.setLoading(false); state.loading = false; }
   }
 }
 
@@ -233,7 +234,7 @@ map.onMapClick(onMapClick);
 function onFormChange() {
   discardPoint();
   ui.showInfo('');
-  if (state.result) scheduleRun(false);
+  if (state.result || state.loading) scheduleRun(false);   // także w trakcie pierwszego zapytania
   else if (state.place) map.setArea(state.place.lat, state.place.lng, ui.radiusKm(), { veil: false });
   writeHash();
 }
