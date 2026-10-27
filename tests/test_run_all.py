@@ -21,7 +21,7 @@ def _db_with_hex_pop_only(data_dir):
 
 
 def test_steps_order():
-    assert STEPS == ("download", "population", "osm", "permits", "geocode", "permits_hex", "aggregate")
+    assert STEPS == ("download", "osm", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate")
 
 
 def test_run_aggregate_builds_coarse_tables(tmp_path):

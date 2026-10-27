@@ -1,4 +1,4 @@
-"""Orkiestracja ETL: pobieranie → ludność → OSM → pozwolenia → geokodowanie → agregacja.
+"""Orkiestracja ETL: pobieranie → OSM → budynki → ludność → pozwolenia → geokodowanie → agregacja.
 
 Uruchomienie:  uv run python -m etl.run_all [--only population,aggregate] [--force]
 
@@ -19,12 +19,14 @@ import httpx
 from backend.app.config import DATA_DIR, USER_AGENT
 from etl import download as dl
 from etl.aggregate import build_aggregates, table_exists
+from etl.buildings import build_building_weights
 from etl.geocode_obreby import ULDK_URL, UldkClient, build_permits_hex, count_ungeocoded, geocode_missing
 from etl.osm_poi import build_poi_tables
 from etl.permits import build_permits_raw
 from etl.population import build_hex_pop
 
-STEPS = ("download", "population", "osm", "permits", "geocode", "permits_hex", "aggregate")
+# „buildings” przed „population”: ludność jest rozkładana na budynki (metoda dasymetryczna).
+STEPS = ("download", "osm", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate")
 
 
 def _record_meta(con, source: str, url: str, rows: int, when: datetime.datetime | None = None) -> None:
@@ -81,6 +83,13 @@ def _run_step(step: str, con, raw: dict, force: bool, data_dir: Path) -> object:
         counts = build_poi_tables(raw["osm_pbf"], con)
         _record_meta(con, "osm", dl.OSM_URL, counts["poi"], _mtime(raw["osm_pbf"]))
         return counts
+
+    if step == "buildings":
+        if table_exists(con, "building_weights") and not force:
+            return "pominięto (building_weights istnieje)"
+        n = build_building_weights(raw["osm_pbf"], con)
+        _record_meta(con, "buildings", dl.OSM_URL, n, _mtime(raw["osm_pbf"]))
+        return f"{n} wierszy building_weights"
 
     if step == "permits":
         if table_exists(con, "permits_raw") and not force:
