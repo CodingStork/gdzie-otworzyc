@@ -217,7 +217,8 @@ window.addEventListener('hashchange', () => { if (applyHash()) refresh(); });
 getMeta().then(ui.renderFooter).catch(() => { /* stopka jest dodatkiem — brak metadanych nie przeszkadza */ });
 getCatalog()
   .then((catalog) => {
-    ui.renderCatalog(catalog, scheduleRefresh);
+    // Zmiana formularza unieważnia dymek punktu (opisuje poprzednie ustawienia) i odświeża wynik.
+    ui.renderCatalog(catalog, () => { map.closePoint(); scheduleRefresh(); });
     applyHash();
     refresh();   // pierwsze zapytanie od razu (po setView z linku moveend i tak da tylko cache)
   })
