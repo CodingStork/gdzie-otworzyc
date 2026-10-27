@@ -73,3 +73,43 @@ uv run python -m etl.sanity
 | Sklep spożywczy / cała Polska | ~0,2 s | 9 678 |
 
 Wszystkie poniżej 3 s. Weryfikację w przeglądarce wykonano w wbudowanej przeglądarce (okno ok. 800×520 i emulacja telefonu 375×812). **Nie sprawdzono:** dostępu z drugiego urządzenia przez Tailscale ani reguły zapory Windows (wymagają działań właściciela — instrukcja w README).
+
+---
+
+# v2 (2026-10-27) — budynki, ludność dasymetryczna w res 9, agregaty 9 → 5
+
+Polecenie: `uv run python -m etl.run_all --only buildings,population,permits_hex,aggregate --force` (log: `data/etl_v2.log`).
+
+## Czasy kroków
+
+| Krok | Czas | Wynik |
+|---|---|---|
+| buildings | 951 s | 13 979 149 budynków z wagą > 0 (z 17,8 mln obiektów `building`), suma wag 1 909 377 590, `building_weights` 1 226 407 wierszy |
+| population | 8 s | `hex_pop_r9` 938 150 heksagonów, ludność 37 092 675 (suma zachowana) |
+| permits_hex | < 1 s | `permits_r9` 714 645 wierszy |
+| aggregate | 15 s | `hex_pop_r8..r5`, `poi_counts_r9..r5`, `permits_r9..r5` (wszystkie z kolumnami `lat, lng`) |
+
+Rozmiar `data/app.duckdb`: ok. 277 MB (v1: 93 MB).
+
+## Jakość
+
+- **Udział ludności rozłożonej przez budynki: 100,0%** (próg ≥ 85%): w każdej komórce spisu z ludnością jest co najmniej jeden budynek z wagą > 0, więc rozkład równomierny (zapas) nie był potrzebny.
+- `uv run python -m etl.sanity` → **OK**. Suma `hex_pop_r9.pop_total` 37 092 675 (próg 36,9–37,2 mln), `building_weights` 1,23 mln wierszy (próg ≥ 1 mln).
+- Mediana ludności heksagonu res 9: ok. 10 osób, maksimum 5 448 (zabudowa wielorodzinna) — ludność jest skupiona w budynkach, nie rozmyta po kwadracie.
+
+## Liczby wierszy
+
+| Tabela | Wiersze |
+|---|---|
+| hex_pop_r9 / r8 / r7 / r6 / r5 | 938 150 / 275 775 / 60 029 / 9 607 / 1 445 |
+| poi_counts_r9 / r8 / r7 / r6 / r5 | 93 747 / 63 764 / 40 576 / 22 814 / 9 475 |
+| permits_r9 / r8 / r7 / r6 / r5 | 714 645 / 712 717 / 681 076 / 457 012 / 166 522 |
+| building_weights | 1 226 407 |
+
+## Odchylenia od planu (v2)
+
+- **Kolumny `lat, lng` także w `poi_counts_r*` i `permits_r*`** (plan: tylko w `hex_pop_r*`). Dzięki temu zapytania o komórki w prostokącie widoku są jednakowe dla wszystkich tabel i nie trzeba liczyć środków heksagonów w Pythonie.
+- **Stare funkcje v1 (`kernel_sums`, `quantile_breaks`, `choose_resolution`, `effective_bandwidth_km`)** zostały usunięte dopiero w Task 5 (razem z przepisaniem `service.py`), a nie w Task 4 — do tego czasu korzystał z nich stary serwis i stare testy.
+- **Brak notatki o „najmniejszym liczonym zasięgu” przy `compute_res = 9`**: drobniejszej siatki nie ma, więc prośba „przybliż mapę” wprowadzałaby w błąd. Notatka pojawia się tylko przy grubszym `compute_res`.
+- **Obsługa zablokowanej bazy** jest globalnym handlerem wyjątku `DatabaseBusy` w `main.py` (obejmuje wszystkie endpointy), a nie obsługą w każdym endpoincie osobno.
+- **`poi.h3` zostaje w res 8** (kolumna z v1, niewykorzystywana przez v2); `poi_counts_r9` liczone jest z `poi.lat/lng`.

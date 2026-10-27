@@ -86,3 +86,15 @@ Dokument roboczy dla zespołu (czaty Claude). Wszystko zweryfikowane ręcznie w 
 
 - Kafelki OSM (Leaflet) — atrybucja wymagana; przy większym ruchu użyć np. CARTO light.
 - Granice administracyjne: PRG GUGiK (gminy, powiaty, województwa) — do agregacji i wyboru "miasto/gmina".
+
+## 8. Budynki OSM jako wagi ludności (v2, dasymetria)
+
+Z tego samego pliku `poland-latest.osm.pbf` (krok ETL `buildings`) czytamy obiekty z tagiem `building` — tylko drogi (ways), relacje (multipoligony) pomijamy. Dla każdego budynku: środek (średnia wierzchołków), powierzchnia rzutu (wzór Gaussa w lokalnym rzucie równoodległościowym), liczba kondygnacji (`building:levels`, przycięta do 1–40; domyślnie `apartments` 5, `residential` 2, reszta 1) i współczynnik typu:
+
+| Współczynnik | Typy `building=` |
+|---|---|
+| 1,0 | `house, detached, semidetached_house, terrace, bungalow, residential, apartments, farm, dormitory` |
+| 0,5 | `yes` (nieokreślony — w Polsce w większości domy, ale też budynki gospodarcze) |
+| 0 | wszystko inne (garaże, stodoły, budynki gospodarcze, przemysłowe…) |
+
+Waga budynku = powierzchnia × kondygnacje × współczynnik; rzuty < 20 m² pomijamy. Wagi sumujemy w tabeli `building_weights(cell_e, cell_n, h3, w)`: komórka spisu 1 km w EPSG:3035 × heksagon H3 res 9. Ludność komórki spisu jest następnie rozkładana na jej heksagony proporcjonalnie do `w` (metoda dasymetryczna, `etl/population.py:dasymetric_to_hex`); komórki bez budynków — równomiernie. Udział ludności rozłożonej przez budynki zapisujemy w `meta` (`source = "dasymetria"`, `rows` w promilach).
