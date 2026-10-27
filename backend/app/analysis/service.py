@@ -9,6 +9,7 @@ Przepływ `run_surface` (spec v3 §3):
 import datetime
 import functools
 import math
+import re
 from dataclasses import dataclass
 
 import duckdb
@@ -79,6 +80,37 @@ def nearest_place_name(con: duckdb.DuckDBPyConnection, lat: float, lng: float, m
         if best is None or key < best[0]:
             best = (key, name)
     return best[1] if best else None
+
+
+# Nazwy zaczynające się od tych słów już mówią, czym jest miejsce — „ul.” byłoby błędem („ul. Plac Solny”).
+NO_UL_PREFIX = re.compile(r"^(aleja|aleje|al|plac|pl|rondo|osiedle|os|bulwar|skwer)(\.|\s)", re.IGNORECASE)
+STREET_MAX_M = 150
+
+
+def street_label(con: duckdb.DuckDBPyConnection, lat: float, lng: float) -> str:
+    """Nazwa lokalizacji do listy „Najlepsze miejsca”: „ul. Długa, Zaodrze”.
+
+    Ulica = najbliższy punkt z tabeli `streets` w promieniu 150 m; za nią dopisujemy nazwę
+    miejscowości/osiedla (o ile jej nazwa nie wchodzi już w nazwę ulicy). Gdy ulicy nie ma:
+    sama nazwa miejsca, a gdy i jej brak — współrzędne.
+    """
+    place = nearest_place_name(con, lat, lng)
+    street = None
+    if table_exists(con, "streets"):
+        # prostokąt ±0,0015° szerokości (~170 m) i ±0,0025° długości (~170 m), potem dokładna odległość
+        rows = con.execute("SELECT name, lat, lng FROM streets WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                           [lat - 0.0015, lat + 0.0015, lng - 0.0025, lng + 0.0025]).fetchall()
+        if rows:
+            dist = _haversine_m(lat, lng, np.array([r[1] for r in rows]), np.array([r[2] for r in rows]))
+            best = int(np.argmin(dist))
+            if dist[best] <= STREET_MAX_M:
+                name = rows[best][0]
+                street = name if NO_UL_PREFIX.match(name) else f"ul. {name}"
+                if place and place.casefold() in name.casefold():
+                    place = None
+    if street and place:
+        return f"{street}, {place}"
+    return street or place or f"okolice {lat:.3f}, {lng:.3f}"
 
 
 def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -230,7 +262,7 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         picks = top_points(np.nan_to_num(full), grid_xy, mask, min_sep_m)
         lat, lng = frame.to_latlng(grid_xy[picks])
         top[layer] = [{"lat": float(a), "lng": float(b), "value": float(full[i]),
-                       "name": nearest_place_name(con, float(a), float(b)) or f"okolice {a:.3f}, {b:.3f}"}
+                       "name": street_label(con, float(a), float(b))}
                       for i, a, b in zip(picks, lat, lng)]
 
     # Prostokąt obrazu w stopniach: krawędzie kwadratu siatki (przy promieniu ≤ 30 km zniekształcenie jest pomijalne).

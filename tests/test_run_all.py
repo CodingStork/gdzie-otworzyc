@@ -21,7 +21,7 @@ def _db_with_hex_pop_only(data_dir):
 
 
 def test_steps_order():
-    assert STEPS == ("download", "osm", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate")
+    assert STEPS == ("download", "osm", "overture", "streets", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate")
 
 
 def test_run_aggregate_builds_coarse_tables(tmp_path):
@@ -99,3 +99,19 @@ def test_incomplete_geocoding_fails_loudly(tmp_path, monkeypatch):
         run(["geocode"], data_dir=tmp_path)
     con = duckdb.connect(str(tmp_path / "app.duckdb"))
     assert not table_exists(con, "meta") or con.execute("SELECT COUNT(*) FROM meta WHERE source='uldk'").fetchall()[0][0] == 0
+
+
+def test_overture_step_requires_poi(tmp_path):
+    _db_with_hex_pop_only(tmp_path)
+    with pytest.raises(RuntimeError, match="osm"):
+        run(["overture"], data_dir=tmp_path)
+
+
+def test_overture_step_is_skipped_when_already_done(tmp_path):
+    """Gdy w `poi` są już firmy z Overture, krok nie pobiera niczego (brak pliku w data/raw nie przeszkadza)."""
+    _db_with_hex_pop_only(tmp_path)
+    con = duckdb.connect(str(tmp_path / "app.duckdb"))
+    con.execute("CREATE TABLE poi (source_id VARCHAR, type_id VARCHAR, name VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR, source VARCHAR)")
+    con.execute("INSERT INTO poi VALUES ('x', 'beauty', 'A', 50, 17, 'h', 'overture')")
+    con.close()
+    run(["overture"], data_dir=tmp_path)

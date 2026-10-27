@@ -128,6 +128,7 @@ def raw_paths(raw_dir: Path = RAW_DIR) -> dict:
         "census_zip": raw_dir / "census.zip",
         "census_parquet": raw_dir / "census.parquet",
         "osm_pbf": raw_dir / "poland-latest.osm.pbf",
+        "overture_parquet": raw_dir / "overture_places_pl.parquet",   # pobiera go krok 'overture', nie 'download'
         "gunb_permits": [raw_dir / "gunb" / f"wynik_{woj}.csv" for woj in GUNB_VOIVODESHIPS],
         "gunb_notifications": [raw_dir / "gunb" / name.replace(".zip", ".csv") for name in GUNB_NOTIFICATION_FILES],
     }

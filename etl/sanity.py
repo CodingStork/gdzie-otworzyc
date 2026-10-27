@@ -22,6 +22,8 @@ THRESHOLDS = {
     "permits_sf_12m_min": 50_000,     # nowe domy jednorodzinne w ostatnich 12 miesiącach danych
     "dasymetry_share_min": 0.85,      # udział ludności rozłożonej przez budynki OSM (reszta: równomiernie)
     "building_weights_min": 1_000_000,  # wierszy w building_weights (komórka spisu × heksagon)
+    "overture_min": 100_000,          # firm z Overture w `poi` (po deduplikacji względem OSM)
+    "beauty_total_min": 25_000,       # salony kosmetyczne łącznie (OSM + Overture)
 }
 REQUIRED_TABLES = ["hex_pop_r9", "poi", "places", "obreb_geom", "permits_r9", "building_weights",
                    "poi_counts_r9", "hex_pop_r5", "poi_counts_r5", "permits_r5"]
@@ -68,6 +70,15 @@ def check(con: duckdb.DuckDBPyConnection, thresholds: dict = THRESHOLDS) -> list
         n = _scalar(con, "SELECT COUNT(*) FROM poi WHERE type_id = 'hairdresser'")
         if n < thresholds["hairdressers_min"]:
             problems.append(f"Za mało punktów poi typu hairdresser: {n} (próg {thresholds['hairdressers_min']})")
+    if has("poi"):
+        columns = {r[0] for r in con.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'poi'").fetchall()}
+        n = _scalar(con, "SELECT COUNT(*) FROM poi WHERE source = 'overture'") if "source" in columns else 0
+        if n < thresholds["overture_min"]:
+            problems.append(f"Za mało firm z Overture w poi: {n} (próg {thresholds['overture_min']:,}) — uruchom krok 'overture'")
+        n = _scalar(con, "SELECT COUNT(*) FROM poi WHERE type_id = 'beauty'")
+        if n < thresholds["beauty_total_min"]:
+            problems.append(f"Za mało punktów poi typu beauty: {n} (próg {thresholds['beauty_total_min']:,})")
     if has("places"):
         n = _scalar(con, "SELECT COUNT(*) FROM places")
         if n < thresholds["places_min"]:

@@ -39,3 +39,11 @@ def test_build_poi_tables_writes_h3_res8():
     cells = [r[0] for r in con.execute("SELECT h3 FROM poi").fetchall()]
     assert len(cells) == 4 and all(h3.get_resolution(c) == 8 for c in cells)
     assert con.execute("SELECT h3 FROM places").fetchall()[0][0] == h3.latlng_to_cell(50.03, 17.03, 8)
+
+
+def test_build_poi_tables_marks_source_osm():
+    con = duckdb.connect()
+    build_poi_tables(TINY, con)
+    cols = {r[0] for r in con.execute("SELECT column_name FROM information_schema.columns WHERE table_name='poi'").fetchall()}
+    assert {"source_id", "source"} <= cols and "osm_id" not in cols
+    assert con.execute("SELECT DISTINCT source FROM poi").fetchall() == [("osm",)]

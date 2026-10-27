@@ -61,8 +61,12 @@ def _with_h3(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_poi_tables(pbf_path, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-    """Zapisuje tabele poi(osm_id, type_id, name, lat, lng, h3) i places(name, kind, lat, lng, h3)."""
+    """Zapisuje tabele poi(source_id, type_id, name, lat, lng, h3, source) i places(name, kind, lat, lng, h3).
+
+    `source` mówi, skąd jest firma ('osm'); firmy z Overture dopisuje później `etl.overture`.
+    """
     poi, places = extract(pbf_path)
+    poi = poi.rename(columns={"osm_id": "source_id"}).assign(source="osm")
     for table, df in (("poi", _with_h3(poi)), ("places", _with_h3(places))):
         con.register("df_in", df)
         con.execute(f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM df_in")

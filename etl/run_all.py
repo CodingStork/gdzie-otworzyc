@@ -1,4 +1,4 @@
-"""Orkiestracja ETL: pobieranie → OSM → budynki → ludność → pozwolenia → geokodowanie → agregacja.
+"""Orkiestracja ETL: pobieranie → OSM → Overture → ulice → budynki → ludność → pozwolenia → geokodowanie → agregacja.
 
 Uruchomienie:  uv run python -m etl.run_all [--only population,aggregate] [--force]
 
@@ -24,11 +24,13 @@ from etl.buildings import build_building_weights
 from etl.geocode_obreby import ULDK_URL, UldkClient, build_permits_hex, count_ungeocoded, geocode_missing
 from etl.meta import record_meta
 from etl.osm_poi import build_poi_tables
+from etl.overture import S3_PLACES, build_overture_poi, download_places
 from etl.permits import build_permits_raw
 from etl.population import build_hex_pop
+from etl.streets import build_streets_table
 
 # „buildings” przed „population”: ludność jest rozkładana na budynki (metoda dasymetryczna).
-STEPS = ("download", "osm", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate")
+STEPS = ("download", "osm", "overture", "streets", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate")
 
 
 def _mtime(path: Path) -> datetime.datetime:
@@ -78,6 +80,24 @@ def _run_step(step: str, con, raw: dict, force: bool, data_dir: Path) -> object:
         counts = build_poi_tables(raw["osm_pbf"], con)
         record_meta(con, "osm", dl.OSM_URL, counts["poi"], _mtime(raw["osm_pbf"]))
         return counts
+
+    if step == "overture":
+        if not table_exists(con, "poi"):
+            raise RuntimeError("Brak tabeli poi — najpierw uruchom krok 'osm'")
+        done = con.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'poi' AND column_name = 'source'").fetchone()[0]
+        if done and con.execute("SELECT COUNT(*) FROM poi WHERE source = 'overture'").fetchone()[0] and not force:
+            return "pominięto (poi zawiera już firmy z Overture)"
+        parquet, release = download_places(raw["overture_parquet"], force)
+        counts = build_overture_poi(parquet, con)
+        record_meta(con, "overture", S3_PLACES.format(release=release), counts["after_dedup"], _mtime(parquet))
+        return {"release": release, **counts}
+
+    if step == "streets":
+        if table_exists(con, "streets") and not force:
+            return "pominięto (streets istnieje)"
+        n = build_streets_table(raw["osm_pbf"], con)
+        record_meta(con, "streets", dl.OSM_URL, n, _mtime(raw["osm_pbf"]))
+        return f"{n} punktów wzdłuż ulic"
 
     if step == "buildings":
         if table_exists(con, "building_weights") and not force:

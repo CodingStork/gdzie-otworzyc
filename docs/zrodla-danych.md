@@ -98,3 +98,35 @@ Z tego samego pliku `poland-latest.osm.pbf` (krok ETL `buildings`) czytamy obiek
 | 0 | wszystko inne (garaże, stodoły, budynki gospodarcze, przemysłowe…) |
 
 Waga budynku = powierzchnia × kondygnacje × współczynnik; rzuty < 20 m² pomijamy. Wagi sumujemy w tabeli `building_weights(cell_e, cell_n, h3, w)`: komórka spisu 1 km w EPSG:3035 × heksagon H3 res 9. Ludność komórki spisu jest następnie rozkładana na jej heksagony proporcjonalnie do `w` (metoda dasymetryczna, `etl/population.py:dasymetric_to_hex`); komórki bez budynków — równomiernie. Udział ludności rozłożonej przez budynki zapisujemy w `meta` (`source = "dasymetria"`, `rows` w promilach).
+
+## 9. Firmy z Overture Maps Places (v3.1)
+
+- Źródło: Overture Maps Foundation, motyw `places`, wydanie `2026-10-21.0` (numer najnowszego wydania ETL czyta z `https://stac.overturemaps.org/catalog.json`, pole `latest`). Licencja **CDLA Permissive 2.0** — wymagana atrybucja „© Overture Maps Foundation” (mapa, README, `/api/meta`).
+- Pobranie: DuckDB (`httpfs`) czyta pliki Parquet z `s3://overturemaps-us-west-2/release/{wydanie}/theme=places/type=place/*`; filtr: prostokąt Polski, `addresses[1].country = 'PL'`, status działalności ≠ zamknięte (wartości w danych: `open`, `permanently_closed`, `temporarily_closed`, brak — brak traktujemy jak „działa”), `confidence ≥ 0,5`. Zapis do `data/raw/overture_places_pl.parquet` (≈ 125 MB, kilkanaście sekund). Kategoria = `taxonomy.primary`.
+- Deduplikacja względem OSM (`etl/overture.py:dedupe`): obiekt Overture odpada, gdy w ≤ 50 m jest punkt OSM tego samego typu albo w ≤ 150 m punkt OSM tego typu o podobnej nazwie (`difflib`, próg 0,6).
+- Mapowanie kategorii Overture → typ działalności (`backend/app/catalog.py`, pole `overture`):
+
+| Typ | Kategorie Overture |
+|---|---|
+| hairdresser | hair_salon, barber, hair_stylist |
+| barber | barber |
+| beauty | beauty_salon, skin_care_and_makeup, nail_salon |
+| nails | nail_salon |
+| tattoo | tattoo_and_piercing |
+| paving | paving_contractor, masonry_concrete |
+| garden | gardener, landscaping, nursery_and_gardening_store |
+| windows | window_supplier, door_supplier, windows_installation, door_sales_service |
+| diy | building_supply_store, hardware_store, home_improvement_store, hardware_home_and_garden_store |
+| kitchen | carpenter, cabinetry, kitchen_and_bath_store |
+| installer | plumbing, electrician, hvac_service |
+| grocery | grocery_store, convenience_store, supermarket, organic_grocery_store |
+| cafe | cafe, coffee_shop |
+| restaurant | restaurant, pizza_restaurant, fast_food_restaurant, polish_restaurant, italian_restaurant, doner_kebab_restaurant, sushi_restaurant, burger_restaurant, diner, … (32 kategorie kuchni i barów szybkiej obsługi) |
+| fitness | gym, yoga_studio, pilates_studio |
+| kindergarten | preschool, day_care_preschool, child_care_and_day_care, kindergarten |
+
+  Kategorie `door_supplier`, `supermarket`, `cabinetry` i `masonry_concrete` w wydaniu 2026-10-21.0 mają w Polsce 0 lub kilkaset obiektów — zostawiamy je na wypadek zmian taksonomii. Pominięte celowo: `sport_or_fitness_facility` (hale, boiska), `fitness_trainer` (osoby), `contractor` i `building_or_construction_service` (zbyt ogólne).
+
+## 10. Nazwy ulic (v3.1)
+
+Z tego samego pliku OSM (krok `streets`): drogi z nazwą o `highway` ∈ {primary, secondary, tertiary, unclassified, residential, living_street, pedestrian}; wzdłuż każdej stawiamy punkty co ok. 100 m (środki równych odcinków). Tabela `streets(name, lat, lng)` posortowana po `lat`. Nazwa lokalizacji w „Najlepszych miejscach”: najbliższa ulica ≤ 150 m + nazwa osiedla/miejscowości.

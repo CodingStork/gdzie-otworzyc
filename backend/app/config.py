@@ -14,6 +14,7 @@ USER_AGENT = "GdzieOtworzyc/0.1 (projekt studencki)"
 
 ATTRIBUTION = (
     "© OpenStreetMap contributors © Esri | "
+    "Firmy: © Overture Maps Foundation (CDLA Permissive 2.0) | "
     "Ludność: © EU, Eurostat GISCO (Census 2021, zmodyfikowane) | "
     "Pozwolenia: GUNB RWDZ | Geokodowanie: GUGiK ULDK"
 )

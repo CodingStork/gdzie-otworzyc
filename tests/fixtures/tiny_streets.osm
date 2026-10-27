@@ -1,0 +1,36 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="test">
+  <!-- ulica Długa: ok. 214 m na wschód (0,003° długości geograficznej na szerokości 50°) -->
+  <node id="1" version="1" lat="50.0000000" lon="17.0000000"/>
+  <node id="2" version="1" lat="50.0000000" lon="17.0010000"/>
+  <node id="3" version="1" lat="50.0000000" lon="17.0030000"/>
+  <way id="10" version="1">
+    <nd ref="1"/>
+    <nd ref="2"/>
+    <nd ref="3"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Długa"/>
+  </way>
+  <!-- krótki deptak (ok. 40 m): dostaje jeden punkt w środku -->
+  <node id="4" version="1" lat="50.0100000" lon="17.0100000"/>
+  <node id="5" version="1" lat="50.0100000" lon="17.0105600"/>
+  <way id="11" version="1">
+    <nd ref="4"/>
+    <nd ref="5"/>
+    <tag k="highway" v="pedestrian"/>
+    <tag k="name" v="Aleja Róż"/>
+  </way>
+  <!-- NIE: droga serwisowa z nazwą -->
+  <way id="12" version="1">
+    <nd ref="1"/>
+    <nd ref="4"/>
+    <tag k="highway" v="service"/>
+    <tag k="name" v="Dojazd"/>
+  </way>
+  <!-- NIE: ulica bez nazwy -->
+  <way id="13" version="1">
+    <nd ref="2"/>
+    <nd ref="5"/>
+    <tag k="highway" v="residential"/>
+  </way>
+</osm>

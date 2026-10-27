@@ -51,8 +51,8 @@ def test_poi_counts_per_hex_and_type():
     con, parent8 = _db_with_children()
     a, b = sorted(h3.cell_to_children(parent8, 9))[:2]
     (alat, alng), (blat, blng) = h3.cell_to_latlng(a), h3.cell_to_latlng(b)
-    con.execute("CREATE TABLE poi (osm_id VARCHAR, type_id VARCHAR, name VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR)")
-    con.execute("INSERT INTO poi VALUES ('n1','beauty','A',?,?,'x'), ('n2','beauty','B',?,?,'x'), ('n3','cafe','C',?,?,'x')",
+    con.execute("CREATE TABLE poi (source_id VARCHAR, type_id VARCHAR, name VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR, source VARCHAR DEFAULT 'osm')")
+    con.execute("INSERT INTO poi (source_id, type_id, name, lat, lng, h3) VALUES ('n1','beauty','A',?,?,'x'), ('n2','beauty','B',?,?,'x'), ('n3','cafe','C',?,?,'x')",
                 [alat, alng, alat, alng, blat, blng])
     out = build_aggregates(con)
     rows = set(con.execute("SELECT h3, type_id, n FROM poi_counts_r9").fetchall())

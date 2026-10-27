@@ -5,15 +5,17 @@ from etl.aggregate import build_aggregates
 from etl.sanity import THRESHOLDS, check
 
 SMALL = dict(THRESHOLDS, pop_min=100, pop_max=200, hairdressers_min=2, places_min=2, permits_sf_12m_min=3,
-             missing_geom_max_share=0.5, building_weights_min=2)
+             missing_geom_max_share=0.5, building_weights_min=2, overture_min=1, beauty_total_min=1)
 
 
 def _good_db():
     con = duckdb.connect()
     con.execute("CREATE TABLE hex_pop_r9 (h3 VARCHAR, pop_total DOUBLE, pop_f DOUBLE, pop_m DOUBLE, pop_lt15 DOUBLE, pop_1564 DOUBLE, pop_ge65 DOUBLE)")
     con.execute("INSERT INTO hex_pop_r9 VALUES ('891e23c459bffff', 150, 1, 1, 1, 1, 1)")
-    con.execute("CREATE TABLE poi (osm_id VARCHAR, type_id VARCHAR, name VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR)")
-    con.execute("INSERT INTO poi VALUES ('n1','hairdresser','a',0,0,'891e23c459bffff'), ('n2','hairdresser','b',0,0,'891e23c459bffff')")
+    con.execute("CREATE TABLE poi (source_id VARCHAR, type_id VARCHAR, name VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR, source VARCHAR DEFAULT 'osm')")
+    con.execute("INSERT INTO poi (source_id, type_id, name, lat, lng, h3) VALUES ('n1','hairdresser','a',0,0,'891e23c459bffff'), ('n2','hairdresser','b',0,0,'891e23c459bffff')")
+    con.execute("INSERT INTO poi (source_id, type_id, name, lat, lng, h3, source) VALUES "
+                "('o1','beauty','c',0,0,'891e23c459bffff','overture')")
     con.execute("CREATE TABLE places (name VARCHAR, kind VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR)")
     con.execute("INSERT INTO places VALUES ('A','city',0,0,'x'), ('B','city',0,0,'x')")
     con.execute("CREATE TABLE obreb_geom (obreb_id VARCHAR, name VARCHAR, lat DOUBLE, lng DOUBLE, status VARCHAR)")
@@ -88,6 +90,7 @@ def test_default_thresholds_match_plan():
     assert THRESHOLDS["hairdressers_min"] == 8000 and THRESHOLDS["places_min"] == 40_000
     assert THRESHOLDS["missing_geom_max_share"] == 0.05 and THRESHOLDS["permits_sf_12m_min"] == 50_000
     assert THRESHOLDS["dasymetry_share_min"] == 0.85 and THRESHOLDS["building_weights_min"] == 1_000_000
+    assert THRESHOLDS["overture_min"] == 100_000 and THRESHOLDS["beauty_total_min"] == 25_000
 
 
 def test_permits_without_geocoding_are_reported():
@@ -105,3 +108,20 @@ def test_missing_latlng_columns_reported():
     con = _good_db()
     con.execute("ALTER TABLE hex_pop_r9 DROP COLUMN lat")
     assert any("lat" in p and "hex_pop_r9" in p for p in check(con, SMALL))
+
+
+def test_too_few_overture_points_reported():
+    con = _good_db()
+    con.execute("DELETE FROM poi WHERE source = 'overture'")
+    assert any("Overture" in p for p in check(con, SMALL))
+
+
+def test_too_few_beauty_points_reported():
+    con = _good_db()
+    assert any("beauty" in p for p in check(con, dict(SMALL, beauty_total_min=5)))
+
+
+def test_poi_without_source_column_reported():
+    con = _good_db()
+    con.execute("ALTER TABLE poi DROP COLUMN source")
+    assert any("Overture" in p for p in check(con, SMALL))

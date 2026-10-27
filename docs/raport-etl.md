@@ -190,3 +190,40 @@ Wbudowana przeglądarka, panel podglądu (800×600) i emulacja telefonu 375×812
 - Siatka ma 25–31 tys. punktów w okręgu (krok jest obcinany do 300 m od promienia ok. 27 km).
 - Znane drobiazgi bez zmian: format dymku („Mieszkańcy: ok. X (szacunek)”, „Fryzjer w OSM: N”) różni się od przykładu w spec §4; tekst legendy „krok koloru ≈ podwojenie wartości” jest dosłowny ze spec §5, a ściśle zależy od rozpiętości skali; kilka nieużywanych metod w `map.js`/`ui.js`.
 - Czasy po poprawkach (prawdziwa baza): Wrocław 30 km / zasięg 15 km (pozwolenia) 0,9 s; **najgorszy przypadek — Warszawa, market budowlany + mieszkańcy, promień 30 km, zasięg 20 km: 1,4 s**; pozostałe scenariusze bez zmian (0,4–3,2 s).
+
+## v3.1 — Overture Maps i ulice (2026-10-27)
+
+Nowe kroki ETL: `overture` (po `osm`) i `streets`. Polecenia: `uv run python -m etl.run_all --only overture --force`, `--only streets --force`, potem `--only aggregate` i `uv run python -m etl.sanity` (**OK**).
+
+| Krok | Czas | Wynik |
+|---|---|---|
+| overture | 25 s (pobranie ~15 s + deduplikacja) | wydanie `2026-10-21.0`; 173 987 wierszy typ×obiekt przed deduplikacją → **104 087** po (`meta.overture`) |
+| streets | 87 s | **1 992 424** punktów wzdłuż nazwanych dróg |
+| aggregate | 11 s | `poi_counts_r9` 162 528 wierszy |
+
+Punkty `poi` po scaleniu (OSM + Overture po deduplikacji = razem; w nawiasie liczba z Overture przed deduplikacją):
+
+| Typ | OSM | Overture (przed → po) | Razem |
+|---|---|---|---|
+| sklep spożywczy | 50 879 | 36 930 → 12 599 | 63 478 |
+| restauracja/fast food | 35 415 | 40 259 → 14 911 | 50 326 |
+| salon kosmetyczny | 7 206 | 28 240 → 24 133 | 31 339 |
+| fryzjer | 10 814 | 13 423 → 9 725 | 20 539 |
+| przedszkole/żłobek | 11 282 | 9 348 → 4 795 | 16 077 |
+| market budowlany | 4 433 | 11 080 → 9 858 | 14 291 |
+| kawiarnia | 5 865 | 7 438 → 4 086 | 9 951 |
+| barber | 2 314 | 7 527 → 6 865 | 9 179 |
+| siłownia | 2 210 | 7 630 → 6 256 | 8 466 |
+| ogrody | 1 622 | 3 545 → 3 074 | 4 696 |
+| tatuaż | 564 | 3 446 → 2 993 | 3 557 |
+| paznokcie | 1 304 | 1 786 → 1 606 | 2 910 |
+| kuchnie/stolarz | 772 | 1 101 → 1 066 | 1 838 |
+| instalatorzy | 590 | 1 087 → 1 056 | 1 646 |
+| okna/drzwi | 763 | 845 → 778 | 1 541 |
+| brukarstwo | 551 | 302 → 286 | 837 |
+
+Odchylenia od planu:
+- **Kolumna `poi.osm_id` przemianowana na `source_id`** (przechowuje też UUID Overture) i dodana `source ∈ {'osm','overture'}`. Krok `overture` sam migruje starą bazę (nie trzeba powtarzać kroku `osm`, 3 min).
+- Dla grup usług, w których OSM jest słaby (salony, barberzy, siłownie, tatuaż, budowlanka), Overture daje 2–10× więcej firm niż OSM, dla sklepów i restauracji deduplikacja usuwa 60–70% (Overture zawiera sporo punktów, które są też w OSM).
+- Próg sanity: Overture ≥ 100 000 w `poi` (jest 104 087) — blisko progu, bo deduplikacja jest agresywna; `beauty` razem ≥ 25 000 (jest 31 339).
+- Plik wstępny `overture_places_pl.parquet` z sesji nadrzędnej zawierał też sąsiednie kraje i firmy zamknięte; krok `overture --force` zastąpił go wyciągiem już przefiltrowanym (tylko PL, otwarte, `confidence ≥ 0,5`).
