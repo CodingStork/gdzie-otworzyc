@@ -1,11 +1,77 @@
 import math
 
+import h3
 import numpy as np
 import pytest
 
-from backend.app.analysis.kernel import kernel_sums, to_metric
-from backend.app.analysis.resolution import choose_resolution, effective_bandwidth_km
-from backend.app.analysis.scoring import percentile_rank, pick_top, quantile_breaks, score
+from backend.app.analysis.kernel import catchment_sums, kernel_sums, to_metric
+from backend.app.analysis.resolution import (
+    choose_compute_res,
+    choose_resolution,
+    display_res_for_zoom,
+    effective_bandwidth_km,
+    snap_bbox,
+)
+from backend.app.analysis.scoring import (
+    legend_values,
+    percentile_rank,
+    pick_top,
+    quantile_breaks,
+    score,
+    weighted_parent_mean,
+)
+
+
+# ---- v2: poziomy szczegółowości, okrąg zasięgu, agregacja ----
+
+def test_display_res_for_zoom():
+    assert [display_res_for_zoom(z) for z in (5, 6, 7, 8, 9, 10, 11, 12, 16)] == [5, 5, 6, 6, 7, 8, 8, 9, 9]
+
+
+def test_snap_bbox_outward():
+    assert snap_bbox((21.03, 52.21, 21.07, 52.26), 8) == (21.0, 52.0, 21.25, 52.5)
+    assert snap_bbox((21.0, 52.0, 21.25, 52.5), 8) == (21.0, 52.0, 21.25, 52.5)    # już na siatce: bez zmian
+
+
+def test_compute_res_city_vs_country():
+    assert choose_compute_res((20.9, 52.1, 21.2, 52.35), 1.5, 9) == 9          # miasto
+    assert choose_compute_res((14.1, 49.0, 24.2, 54.9), 1.5, 5) == 8           # cała Polska, mały zasięg
+    assert choose_compute_res((14.1, 49.0, 24.2, 54.9), 20, 5) in (6, 7)       # cała Polska, duży zasięg
+
+
+def test_compute_res_never_finer_than_needed_by_display():
+    # przy dużym przybliżeniu display_res = 9 i nie ma gdzie schodzić poniżej; nie schodzimy też poniżej display_res
+    assert choose_compute_res((14.1, 49.0, 24.2, 54.9), 20, 8) >= 8
+
+
+def test_catchment_disk_counts():
+    t = np.array([[0.0, 0.0]]); src = np.array([[0, 0], [900, 0], [1100, 0]], float)
+    assert catchment_sums(t, src, np.array([1.0, 2.0, 4.0]), 1000)[0] == 3.0   # 1100 m poza okręgiem
+
+
+def test_catchment_multi_column_and_empty():
+    out = catchment_sums(np.zeros((2, 2)), np.array([[0.0, 0.0], [10.0, 0.0]]), np.array([[1.0, 2.0], [3.0, 4.0]]), 50)
+    assert out.shape == (2, 2) and out[0].tolist() == [4.0, 6.0]
+    assert catchment_sums(np.zeros((3, 2)), np.zeros((0, 2)), np.zeros(0), 50).tolist() == [0.0, 0.0, 0.0]
+
+
+def test_weighted_parent_mean():
+    parent = h3.latlng_to_cell(52.23, 21.01, 8)
+    kids = np.array(sorted(h3.cell_to_children(parent, 9))[:2])
+    p, v = weighted_parent_mean(kids, np.array([10.0, 20.0]), np.array([3.0, 1.0]), 8)
+    assert list(p) == [parent] and v[0] == pytest.approx(12.5, rel=1e-4)
+
+
+def test_weighted_parent_mean_keeps_columns_and_zero_weights():
+    parent = h3.latlng_to_cell(52.23, 21.01, 8)
+    kids = np.array(sorted(h3.cell_to_children(parent, 9))[:2])
+    p, v = weighted_parent_mean(kids, np.array([[10.0, 1.0], [20.0, 3.0]]), np.array([0.0, 0.0]), 8)
+    assert v.shape == (1, 2) and v[0].tolist() == pytest.approx([15.0, 2.0])   # wagi 0 → zwykła średnia (dzięki ε)
+
+
+def test_legend_values():
+    assert legend_values(np.arange(101.0)) == [0, 25, 50, 75, 90, 100]
+    assert legend_values(np.array([])) == []
 
 
 def test_choose_resolution():

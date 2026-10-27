@@ -1,5 +1,7 @@
 """Wynik „klienci na 1 konkurenta”, percentyle, klasy kolorów i wybór najlepszych miejsc."""
+import h3
 import numpy as np
+import pandas as pd
 from scipy.stats import rankdata
 
 
@@ -57,3 +59,32 @@ def pick_top(scores: np.ndarray, D: np.ndarray, xy: np.ndarray, min_sep_m: float
         if all(np.hypot(*(xy[i] - xy[j])) >= min_sep_m for j in chosen):
             chosen.append(int(i))
     return chosen
+
+
+def legend_values(x: np.ndarray) -> list[float]:
+    """Wartości do legendy: min, 25%, mediana, 75%, 90%, max (kwantyle 0; 0,25; 0,5; 0,75; 0,9; 1)."""
+    if len(x) == 0:
+        return []
+    return [round(float(v), 2) for v in np.quantile(x, [0, 0.25, 0.5, 0.75, 0.9, 1])]
+
+
+def weighted_parent_mean(child_h3: np.ndarray, values: np.ndarray, weights: np.ndarray,
+                         parent_res: int) -> tuple[np.ndarray, np.ndarray]:
+    """Agreguje komórki do rodziców w `parent_res` średnią ważoną (wagi = liczba mieszkańców komórek).
+
+    Wynik w rodzicu to „wartość dla przeciętnego mieszkańca”: gęsto zaludniona komórka liczy się
+    bardziej niż pusta łąka obok niej. Zwykła średnia arytmetyczna zrównałaby je, a suma zależałaby
+    od liczby dzieci. `values` może mieć kształt (N,) albo (N, k). Do wag dodajemy 1e-6, żeby rodzic
+    złożony z samych niezamieszkanych komórek też dostał (zwykłą) średnią zamiast dzielenia przez zero.
+    Zwraca (parent_h3, średnie) w kolejności pierwszego wystąpienia rodzica.
+    """
+    parents = [h3.cell_to_parent(c, parent_res) for c in child_h3]
+    codes, unique = pd.factorize(np.array(parents, dtype=object))
+    w = np.asarray(weights, dtype=float) + 1e-6
+    values = np.asarray(values, dtype=float)
+    total_w = np.bincount(codes, weights=w, minlength=len(unique))
+    if values.ndim == 1:
+        return np.asarray(unique, dtype=object), np.bincount(codes, weights=values * w, minlength=len(unique)) / total_w
+    sums = np.column_stack([np.bincount(codes, weights=values[:, k] * w, minlength=len(unique))
+                            for k in range(values.shape[1])])
+    return np.asarray(unique, dtype=object), sums / total_w[:, None]
