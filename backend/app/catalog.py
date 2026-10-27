@@ -126,6 +126,17 @@ TYPES: dict[str, BusinessType] = {t.id: t for t in (
 )}
 
 
+# Nazwy typów w liczbie mnogiej, mianownik — do podpisów „Gdzie są {firmy}” (np. „Gdzie są fryzjerzy”).
+PLURALS: dict[str, str] = {
+    "hairdresser": "fryzjerzy", "barber": "barberzy", "beauty": "salony kosmetyczne",
+    "nails": "salony stylizacji paznokci", "tattoo": "studia tatuażu", "paving": "firmy brukarskie",
+    "garden": "firmy ogrodnicze", "windows": "sklepy z oknami i drzwiami", "diy": "markety budowlane",
+    "kitchen": "stolarze i studia kuchenne", "installer": "instalatorzy", "grocery": "sklepy spożywcze",
+    "cafe": "kawiarnie", "restaurant": "restauracje i bary szybkiej obsługi", "fitness": "siłownie",
+    "kindergarten": "przedszkola i żłobki",
+}
+
+
 def _tag_matches(tags: Mapping[str, str], key: str, wanted: str) -> bool:
     if key not in tags:
         return False
@@ -151,6 +162,7 @@ def catalog_json() -> dict:
             {
                 "id": t.id,
                 "name": t.name,
+                "plural": PLURALS[t.id],
                 "default_demand": t.suggested_demands[0],
                 "suggested_demands": list(t.suggested_demands),
                 "bandwidth_km": t.bandwidth_km,

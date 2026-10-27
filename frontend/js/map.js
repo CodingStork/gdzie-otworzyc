@@ -1,22 +1,21 @@
-// Mapa Leaflet: jasny podkład (Esri Light Gray) + warstwy na heksagony, etykiety, punkty firm i znaczniki top-5.
+// Mapa Leaflet: jasny podkład (Esri Light Gray) + mgła (obraz), okrąg obszaru, szczegóły punktu, etykiety i znaczniki top-5.
 // Moduł zwraca obiekt MapView — jedyny sposób, w jaki reszta aplikacji dotyka mapy.
 //
-// Zasada dotycząca kliknięć (naprawa błędu z v1): jedyne kliknięcie, które coś robi na mapie, to kliknięcie
-// w SAMĄ MAPĘ (→ dymek z liczbami). Leaflet rysuje warstwy canvas jako osobny <canvas> na całą mapę dla
-// każdego pane'u — taki canvas przechwytuje kliknięcia, więc: heksagony (canvas) mają pointer-events: none
-// (patrz style.css), a punkty firm i znaczniki to elementy SVG/DOM, które reagują tylko na siebie.
+// Zasada dotycząca kliknięć: jedyne kliknięcie, które coś robi na mapie, to kliknięcie w SAMĄ MAPĘ
+// (→ miejsce albo szczegóły). Dlatego mgła (obraz), okrąg i welon są nieinteraktywne, a znaczniki to elementy DOM/SVG,
+// które reagują tylko na siebie.
+import { fogColor } from './colors.js';
 
 const ATTRIBUTION =
   '© OpenStreetMap contributors © Esri | Ludność: © EU, Eurostat GISCO (Census 2021, zmodyfikowane) | ' +
   'Pozwolenia: GUNB RWDZ | Geokodowanie: GUGiK ULDK';
-// Podkład: Esri „Light Gray Canvas” (jasnoszary, kafelki bez klucza API). Oryginalnie planowany CARTO Positron
-// wymaga obecnie klucza API (zwraca znak wodny), stąd zamiana. Etykiety są osobną warstwą (Reference).
+// Podkład: Esri „Light Gray Canvas” (jasnoszary, kafelki bez klucza API). Etykiety są osobną warstwą (Reference),
+// żeby leżały NAD mgłą i były czytelne.
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/';
 const MAX_ZOOM = 16; // Esri Light Gray ma kafelki do poziomu 16
-const MIN_ZOOM = 5;  // poniżej i tak pokazujemy najgrubszą siatkę (res 5)
+const MIN_ZOOM = 5;
 
-const FADE_LOD_MS = 400;   // zmiana rozdzielczości heksagonów: nowa siatka „wypływa”, stara gaśnie
-const FADE_PAN_MS = 150;   // samo przesunięcie mapy: krótkie wygładzenie
+const UPSCALE = 4;   // obraz mgły jest 4 razy gęstszy niż siatka obliczeniowa (płynne przejścia zamiast kwadratów)
 
 // Leaflet wstawia tekst podpowiedzi jako HTML — nazwy firm z OSM (edytowane przez wolontariuszy)
 // przekazujemy więc jako element z textContent, żeby znaczniki w nazwie nie były wykonywane.
@@ -26,70 +25,125 @@ function plainText(text) {
   return span;
 }
 
+const smoothstep = (f) => f * f * (3 - 2 * f);
+
+// Rysuje mgłę: t (pozycje 0–1 na skali, NaN = poza okręgiem) interpolujemy między punktami siatki na gęstszą
+// siatkę pikseli i DOPIERO TERAZ kolorujemy. Interpolowanie wartości (a nie gotowych kolorów) nie daje obwódek
+// ani widocznych kwadratów; funkcja smoothstep wygładza też załamania na granicach komórek.
+// Piksele poza okręgiem są przezroczyste (krawędź wygładzona na 1 piksel). Zwraca data URL obrazu PNG.
+function renderFog(grid, t, radiusKm) {
+  const { nx, ny, cell_m: cell } = grid;
+  const w = nx * UPSCALE;
+  const h = ny * UPSCALE;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(w, h);
+  const lut = Array.from({ length: 256 }, (_, i) => fogColor(i / 255));
+  const radiusPx = radiusKm * 1000 / cell * UPSCALE;
+  const cx = w / 2;
+  const cy = h / 2;
+  for (let py = 0; py < h; py++) {
+    const gy = (py + 0.5) / UPSCALE - 0.5;
+    const y0 = Math.floor(gy);
+    const fy = smoothstep(gy - y0);
+    for (let px = 0; px < w; px++) {
+      const edge = radiusPx - Math.hypot(px + 0.5 - cx, py + 0.5 - cy);
+      if (edge <= 0) continue;                           // poza okręgiem — zostaje przezroczysty
+      const gx = (px + 0.5) / UPSCALE - 0.5;
+      const x0 = Math.floor(gx);
+      const fx = smoothstep(gx - x0);
+      let sum = 0;
+      let weight = 0;
+      for (let dy = 0; dy < 2; dy++) {
+        const yy = y0 + dy;
+        if (yy < 0 || yy >= ny) continue;
+        for (let dx = 0; dx < 2; dx++) {
+          const xx = x0 + dx;
+          if (xx < 0 || xx >= nx) continue;
+          const value = t[yy * nx + xx];
+          if (Number.isNaN(value)) continue;             // sąsiad spoza okręgu nie ciągnie wartości w dół
+          const wgt = (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy);
+          sum += value * wgt;
+          weight += wgt;
+        }
+      }
+      if (weight <= 0) continue;
+      const [r, g, b, a] = lut[Math.round((sum / weight) * 255)];
+      const o = (py * w + px) * 4;
+      image.data[o] = r;
+      image.data[o + 1] = g;
+      image.data[o + 2] = b;
+      image.data[o + 3] = Math.round(a * 255 * Math.min(1, edge));
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+// Pierścień współrzędnych okręgu o promieniu w km (przybliżenie płaskie — wystarcza dla ≤ 30 km).
+function circleRing(lat, lng, radiusKm, points = 120) {
+  const dlat = radiusKm / 110.54;
+  const dlng = radiusKm / (111.32 * Math.cos(lat * Math.PI / 180));
+  return Array.from({ length: points }, (_, i) => {
+    const a = (i / points) * 2 * Math.PI;
+    return [lat + dlat * Math.sin(a), lng + dlng * Math.cos(a)];
+  });
+}
+
+// Kolor drobnego heksagonu w szczegółach: szaroniebieski, ciemniejszy = więcej mieszkańców.
+function cellColor(pop, maxPop) {
+  const t = maxPop > 0 ? Math.sqrt(Math.min(1, pop / maxPop)) : 0;
+  const from = [232, 238, 245];
+  const to = [59, 91, 126];
+  return `rgb(${from.map((c, k) => Math.round(c + (to[k] - c) * t)).join(',')})`;
+}
+
 export function initMap(elementId) {
   const map = L.map(elementId, { maxZoom: MAX_ZOOM, minZoom: MIN_ZOOM }).setView([52.07, 19.48], 6);
 
-  // Podkład bez etykiet, żeby heksagony leżały pod napisami miast.
+  // Podkład bez etykiet, żeby mgła leżała pod napisami miast.
   L.tileLayer(ESRI + 'World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
     attribution: ATTRIBUTION, maxZoom: MAX_ZOOM,
   }).addTo(map);
 
-  // Panes ustalają kolejność rysowania (zIndex): heksagony A/B < etykiety < punkty firm < znaczniki top-5.
-  const paneA = map.createPane('hexesA');
-  const paneB = map.createPane('hexesB');
-  paneA.style.zIndex = 410;
-  paneB.style.zIndex = 411;
-  for (const pane of [paneA, paneB]) {
-    pane.classList.add('hex-pane');
-    pane.style.opacity = 0;
-  }
+  // Panes ustalają kolejność rysowania (zIndex): mgła < okrąg i welon < szczegóły < etykiety < top-5.
+  map.createPane('fog').style.zIndex = 410;
+  map.createPane('area').style.zIndex = 420;
+  map.createPane('details').style.zIndex = 430;
   const labels = map.createPane('labels');
   labels.style.zIndex = 450;
   labels.style.pointerEvents = 'none';
-  map.createPane('area').style.zIndex = 430;   // okrąg obszaru: nad heksagonami, pod etykietami
-  map.createPane('poi').style.zIndex = 460;
   map.createPane('top').style.zIndex = 470;
   L.tileLayer(ESRI + 'World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
     pane: 'labels', maxZoom: MAX_ZOOM,
   }).addTo(map);
 
-  // Dwa „sloty” na heksagony; rysujemy w nieaktywnym, potem płynnie je zamieniamy (crossfade).
-  const slots = ['A', 'B'].map((name) => ({
-    paneName: 'hexes' + name,
-    pane: map.getPane('hexes' + name),
-    renderer: L.canvas({ pane: 'hexes' + name }),
-    group: L.layerGroup().addTo(map),
-  }));
-  let active = 0;           // indeks slotu aktualnie widocznego
-  let opacity = 0.7;        // przezroczystość ustawiona suwakiem
-  let hasHexes = false;
-  let generation = 0;       // numer ostatniego rysowania — spóźnione sprzątanie starego slotu ignorujemy, gdy jest nowsze
-
   const topLayer = L.layerGroup().addTo(map);
-  // Punkty firm: renderer SVG (nie canvas!) — reaguje tylko na kliknięcia w same kółka.
-  const poiRenderer = L.svg({ pane: 'poi' });
-  const poiLayer = L.layerGroup().addTo(map);
-  // Okrąg obszaru analizy: też SVG (nie canvas) i nieinteraktywny, żeby nie przechwytywał kliknięć w mapę.
+  const areaLayer = L.layerGroup().addTo(map);
+  const detailsLayer = L.layerGroup().addTo(map);
+  // Okrąg, welon i szczegóły: SVG (nie canvas) i nieinteraktywne, żeby nie przechwytywały kliknięć w mapę.
   const areaRenderer = L.svg({ pane: 'area' });
-  let areaCircle = null;
+  const detailsRenderer = L.svg({ pane: 'details' });
+  let fogOverlay = null;
+  let opacity = 0.85;
 
   // Gdy zmieni się rozmiar kontenera mapy (np. zwinięcie panelu na telefonie), Leaflet musi przeliczyć rozmiar.
   new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById(elementId));
 
   let clickCb = null;
-  let pointCircle = null;
   map.on('click', (e) => clickCb && clickCb(e.latlng.lat, e.latlng.lng));
-  // Zamknięcie dymku (krzyżyk, Escape, kliknięcie w inne miejsce) usuwa okrąg zasięgu.
+  // Zamknięcie dymku (krzyżyk, Escape, kliknięcie w inne miejsce) usuwa szczegóły punktu.
   map.on('popupclose', () => {
-    if (pointCircle) { pointCircle.remove(); pointCircle = null; }
+    detailsLayer.clearLayers();
     document.body.classList.remove('popup-open');
   });
   // Na telefonie kontrolki (warstwy, legenda) zasłaniałyby dymek — na czas jego otwarcia się chowają (patrz style.css).
   map.on('popupopen', () => document.body.classList.add('popup-open'));
 
   // Animowany lot opiera się na zdarzeniu końca przejścia CSS, które nie dochodzi, gdy karta jest w tle
-  // albo rozmiar mapy zmienia się w trakcie — mapa zostawała w stanie pośrednim (rozmazane etykiety).
-  // Dlatego: w tle → skok bez animacji; w przeciwnym razie lot z awaryjnym domknięciem po 2 s.
+  // albo rozmiar mapy zmienia się w trakcie. Dlatego: w tle → skok bez animacji; inaczej lot z awaryjnym domknięciem.
   function safeFlyTo(lat, lng, zoom) {
     if (document.hidden) { map.setView([lat, lng], zoom, { animate: false }); return; }
     map.flyTo([lat, lng], zoom);
@@ -107,68 +161,75 @@ export function initMap(elementId) {
     setView(lat, lng, zoom) { map.setView([lat, lng], zoom, { animate: false }); },
     invalidateSize() { map.invalidateSize(); },
     getView() {
-      const b = map.getBounds();
       const c = map.getCenter();
-      return { bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], zoom: Math.round(map.getZoom()), center: [c.lat, c.lng] };
+      return { zoom: Math.round(map.getZoom()), center: [c.lat, c.lng] };
     },
 
-    // rows: wiersze z API [h3, score, D, S, ...]; colorOf(row) zwraca kolor wypełnienia heksagonu.
-    // fade: true przy zmianie rozdzielczości (dłuższe przejście), false przy samym przesunięciu.
-    setHexes(rows, colorOf, { fade = false } = {}) {
-      const ms = fade ? FADE_LOD_MS : FADE_PAN_MS;
-      const old = slots[active];
-      const next = slots[1 - active];
-      const mine = ++generation;
-      next.group.clearLayers();
-      for (const row of rows) {
-        // Kształt heksagonu liczy przeglądarka z identyfikatora H3 (serwer nie wysyła geometrii).
-        L.polygon(h3.cellToBoundary(row[0]), {
-          pane: next.paneName, renderer: next.renderer, interactive: false,
-          weight: 0.5, color: '#fff', opacity: 0.6, fillColor: colorOf(row), fillOpacity: 1,
-        }).addTo(next.group);
-      }
-      // Nowa siatka zaczyna od przezroczystości 0 i w następnej klatce płynnie rośnie do wartości suwaka,
-      // a stara jednocześnie gaśnie (transition w CSS: opacity).
-      next.pane.style.transition = old.pane.style.transition = `opacity ${ms}ms`;
-      next.pane.style.opacity = 0;
-      active = 1 - active;
-      requestAnimationFrame(() => {
-        next.pane.style.opacity = rows.length ? opacity : 0;
-        old.pane.style.opacity = 0;
-      });
-      hasHexes = rows.length > 0;
-      // Po zakończeniu przejścia czyścimy stary slot (timeout zamiast transitionend: zdarzenie bywa gubione).
-      setTimeout(() => { if (mine === generation) old.group.clearLayers(); }, ms + 80);
+    // Mgła: t = pozycje 0–1 na skali (NaN poza okręgiem), grid z /api/surface.
+    setFog(grid, t, radiusKm) {
+      if (fogOverlay) fogOverlay.remove();
+      const bounds = [[grid.south, grid.west], [grid.north, grid.east]];
+      fogOverlay = L.imageOverlay(renderFog(grid, t, radiusKm), bounds, {
+        pane: 'fog', interactive: false, opacity,
+      }).addTo(map);
     },
-    clearHexes() {
-      generation++;
-      for (const s of slots) { s.group.clearLayers(); s.pane.style.opacity = 0; }
-      hasHexes = false;
+    clearFog() {
+      if (fogOverlay) { fogOverlay.remove(); fogOverlay = null; }
     },
-    setHexOpacity(value) {
+    setFogOpacity(value) {
       opacity = value;
-      if (hasHexes) slots[active].pane.style.opacity = value;
+      if (fogOverlay) fogOverlay.setOpacity(value);
     },
 
-    // Okrąg obszaru analizy (promień od wyszukanej miejscowości) i dopasowanie mapy do niego — bez animacji.
-    setArea(lat, lng, radiusKm, { fit = true } = {}) {
-      if (areaCircle) areaCircle.remove();
-      areaCircle = L.circle([lat, lng], {
-        radius: radiusKm * 1000, renderer: areaRenderer, interactive: false,
-        color: '#253494', weight: 1.5, fill: false,
-      }).addTo(map);
-      if (fit) map.fitBounds(areaCircle.getBounds(), { animate: false, padding: [20, 20] });
+    // Wybrane miejsce: pinezka i okrąg obszaru; z `veil` także przygaszenie wszystkiego poza okręgiem
+    // (wielokąt świata z „dziurą” w kształcie okręgu). `fit` dopasowuje mapę do okręgu, bez animacji.
+    setArea(lat, lng, radiusKm, { veil = false, fit = false } = {}) {
+      areaLayer.clearLayers();
+      const ring = circleRing(lat, lng, radiusKm);
+      if (veil) {
+        const world = [[-85, -180], [-85, 180], [85, 180], [85, -180]];
+        L.polygon([world, ring], {
+          renderer: areaRenderer, interactive: false, stroke: false, fillColor: '#101a3a', fillOpacity: 0.28,
+        }).addTo(areaLayer);
+      }
+      const circle = L.polygon(ring, {
+        renderer: areaRenderer, interactive: false, color: '#800026', weight: 1.5,
+        dashArray: veil ? null : '6 4', fill: false,
+      }).addTo(areaLayer);
+      L.marker([lat, lng], {
+        icon: L.divIcon({ className: 'place-pin', iconSize: [14, 14], iconAnchor: [7, 7] }),
+        interactive: false, keyboard: false,
+      }).addTo(areaLayer);
+      if (fit) {
+        // Na szerokim ekranie prawy margines zostawiamy kontrolkom (warstwy, legenda), żeby nie zasłaniały okręgu.
+        const wide = window.innerWidth >= 768;
+        map.fitBounds(circle.getBounds(), {
+          animate: false, paddingTopLeft: [20, 20], paddingBottomRight: [wide ? 250 : 20, 20],
+        });
+      }
     },
-    clearArea() {
-      if (areaCircle) { areaCircle.remove(); areaCircle = null; }
-    },
+    clearArea() { areaLayer.clearLayers(); },
 
-    // Dymek z liczbami + okrąg zasięgu. Zamknięcie dymku usuwa okrąg.
-    showPoint(lat, lng, radiusKm, element) {
-      map.closePopup();   // stary dymek (jego zamknięcie usuwa stary okrąg) — dopiero potem rysujemy nowy
-      pointCircle = L.circle([lat, lng], {
-        radius: radiusKm * 1000, color: '#253494', weight: 1.5, fillOpacity: 0.04, interactive: false,
-      }).addTo(map);
+    // Szczegóły punktu: okrąg zasięgu, drobne heksagony z ludnością [h3, pop], konkurenci [{lat,lng,name}] i dymek.
+    // Zamknięcie dymku usuwa wszystko, co tu narysowano.
+    showDetails(lat, lng, reachKm, cells, competitors, element) {
+      map.closePopup();   // stary dymek (jego zamknięcie czyści stare szczegóły) — dopiero potem rysujemy nowe
+      const maxPop = cells.reduce((m, c) => Math.max(m, c[1]), 0);
+      for (const [cell, pop] of cells) {
+        L.polygon(h3.cellToBoundary(cell), {
+          renderer: detailsRenderer, interactive: false, weight: 0.5, color: '#ffffff', opacity: 0.8,
+          fillColor: cellColor(pop, maxPop), fillOpacity: 0.7,
+        }).addTo(detailsLayer);
+      }
+      L.polygon(circleRing(lat, lng, reachKm), {
+        renderer: detailsRenderer, interactive: false, color: '#253494', weight: 1.5, fillOpacity: 0.03,
+      }).addTo(detailsLayer);
+      for (const p of competitors) {
+        L.circleMarker([p.lat, p.lng], {
+          renderer: detailsRenderer, radius: 4, color: '#fff', weight: 1, fillColor: '#253494', fillOpacity: 0.95,
+          bubblingMouseEvents: false,
+        }).bindTooltip(plainText(p.name || 'bez nazwy')).addTo(detailsLayer);
+      }
       // Na wąskim ekranie przyciski zoomu zasłaniają lewy margines mapy — dymek ma się mieścić obok nich.
       const narrow = window.innerWidth < 768;
       L.popup({
@@ -176,7 +237,7 @@ export function initMap(elementId) {
         autoPanPaddingTopLeft: narrow ? [50, 10] : [10, 10], autoPanPaddingBottomRight: [10, 10],
       }).setLatLng([lat, lng]).setContent(element).openOn(map);
     },
-    closePoint() { map.closePopup(); },
+    closeDetails() { map.closePopup(); },
 
     // Numerowane znaczniki top-5 (DOM, nie canvas): klik w znacznik wywołuje onClick(place, i).
     setTopMarkers(list, onClick) {
@@ -187,17 +248,6 @@ export function initMap(elementId) {
           .on('click', () => onClick(place, i))
           .addTo(topLayer);
       });
-    },
-
-    // Punkty firm (konkurencja): małe, kontrastowe kółka nad heksagonami.
-    setPoi(points) {
-      poiLayer.clearLayers();
-      for (const p of points) {
-        L.circleMarker([p.lat, p.lng], {
-          pane: 'poi', renderer: poiRenderer, radius: 4, color: '#fff', weight: 1,
-          fillColor: '#D85A30', fillOpacity: 0.95, bubblingMouseEvents: false,
-        }).bindTooltip(plainText(p.name || 'bez nazwy')).addTo(poiLayer);
-      }
     },
   };
 }

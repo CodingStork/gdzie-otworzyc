@@ -164,12 +164,16 @@ def load_competitors(con, type_id: str, box: list[float]) -> np.ndarray:
     return np.array(rows, dtype=float).reshape(-1, 2)
 
 
-def _two_significant(values: np.ndarray) -> np.ndarray:
-    """Zaokrąglenie do 2 cyfr znaczących (mniejsza odpowiedź JSON; dokładniej i tak nie ma sensu)."""
+def _round_significant(values: np.ndarray, digits: int = 3) -> np.ndarray:
+    """Zaokrąglenie do `digits` cyfr znaczących (mniejsza odpowiedź JSON).
+
+    Zostawiamy 3 cyfry, a nie 2: przy 2 cyfrach gładko zmieniająca się powierzchnia dostawała widoczne
+    „schodki” (pierścienie jednego koloru) po zamianie na mgłę.
+    """
     v = np.asarray(values, dtype=float)
     out = np.zeros_like(v)
     nz = v > 0
-    scale = 10.0 ** (np.floor(np.log10(v[nz])) - 1)
+    scale = 10.0 ** (np.floor(np.log10(v[nz])) - (digits - 1))
     out[nz] = np.round(v[nz] / scale) * scale
     return out
 
@@ -220,7 +224,7 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     values, top = {}, {}
     for layer in layers:
         full = np.full(len(grid_xy), np.nan)             # NaN = poza okręgiem
-        full[mask] = _two_significant(computed[layer])
+        full[mask] = _round_significant(computed[layer])
         values[layer] = [None if np.isnan(x) else x for x in full.tolist()]
         picks = top_points(np.nan_to_num(full), grid_xy, mask, min_sep_m)
         lat, lng = to_latlng(grid_xy[picks])

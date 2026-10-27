@@ -63,3 +63,9 @@ def test_api_catalog():
 
 def test_catalog_json_is_serializable_function():
     assert catalog_json()["groups"][0]["id"] == "personal"
+
+
+def test_every_type_has_plural_name():
+    j = catalog_json()
+    types = [t for g in j["groups"] for t in g["types"]]
+    assert all(t["plural"] for t in types) and next(t for t in types if t["id"] == "hairdresser")["plural"] == "fryzjerzy"

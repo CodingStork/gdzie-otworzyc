@@ -1,25 +1,23 @@
 // Punkt startowy frontendu: spina mapę, panel boczny i API.
-// Obszar analizy to widoczny fragment mapy: wynik odświeża się sam po przesunięciu/przybliżeniu mapy
-// i po zmianie formularza. Kliknięcie mapy pokazuje dymek z dokładnymi liczbami dla klikniętego punktu.
-import { getCatalog, getMeta, getPoi, point, view as fetchView } from './api.js';
-import { logColor, logScale } from './colors.js';
+// Przepływ (Shneiderman 1996: przegląd → zawężenie → szczegóły na żądanie):
+//   1. użytkownik wybiera branżę/klientów, miejsce i promień → „Pokaż mapę” (zawężenie),
+//   2. mapa okolicy jako mgła (przegląd),
+//   3. kliknięcie w mapę pokazuje szczegóły punktu (okrąg zasięgu, drobne heksagony, liczby).
+// Ruch mapy NICZEGO nie przelicza — zapytania idą tylko po „Pokaż mapę” i po zmianie ustawień.
+import { getCatalog, getMeta, getPoi, point, surface } from './api.js';
+import { logPosition, logScale } from './colors.js';
 import { initMap } from './map.js';
 import * as ui from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 const map = initMap('map');
-// center: środek opcjonalnego obszaru (miejsce z wyszukiwarki albo punkt z dymku) — promień czytamy z pola w panelu.
-const state = { result: null, displayRes: null, controller: null, requestId: 0, center: null };
 
-// Warstwy mapy: indeks wartości w wierszu heksagonu [h3, score, D, S, ...] i nagłówek legendy.
-const LAYERS = {
-  score: { value: 1, title: 'Klienci na firmę' },
-  D: { value: 2, title: 'Popyt w zasięgu' },
-  S: { value: 3, title: 'Konkurencja w zasięgu' },
-};
+// place: wybrane miejsce {lat, lng, name}; result: ostatnia odpowiedź /api/surface; used: ustawienia, dla których ją policzono.
+const state = { place: null, result: null, used: null, controller: null, requestId: 0 };
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
-const NOTHING_SELECTED = 'Wybierz typ działalności albo czynnik popytu';
+const NEED_SELECTION = 'Wybierz branżę lub klientów.';
+const NEED_PLACE = 'Wybierz miejsce: wpisz miejscowość albo kliknij mapę.';
 
 // Na telefonie zwijamy panel, żeby odsłonić mapę; po zmianie rozmiaru Leaflet musi przeliczyć widok.
 function collapseSheetOnMobile() {
@@ -28,15 +26,7 @@ function collapseSheetOnMobile() {
   map.invalidateSize();
 }
 
-// ---- Opcjonalny obszar: okrąg o podanym promieniu wokół wybranego środka ----
-
-// { lat, lng, radius } albo null, gdy nie ma środka lub promień jest pusty.
-function activeArea() {
-  const radius = ui.areaRadius();
-  return state.center && radius ? { lat: state.center.lat, lng: state.center.lng, radius } : null;
-}
-
-// Odległość po kuli w km (haversine) — tak samo liczy serwer przy wyborze top-5 w okręgu.
+// Odległość po kuli w km (haversine).
 function distanceKm(lat1, lng1, lat2, lng2) {
   const rad = Math.PI / 180;
   const a = Math.sin((lat2 - lat1) * rad / 2) ** 2 +
@@ -44,122 +34,103 @@ function distanceKm(lat1, lng1, lat2, lng2) {
   return 2 * 6371 * Math.asin(Math.sqrt(a));
 }
 
-// Heksagony, których środek leży w okręgu (bez obszaru — wszystkie).
-function rowsInArea(rows, area) {
-  if (!area) return rows;
-  return rows.filter((row) => {
-    const [lat, lng] = h3.cellToLatLng(row[0]);
-    return distanceKm(area.lat, area.lng, lat, lng) <= area.radius;
-  });
+// ---- Wybór miejsca ----
+
+// Ustawia miejsce: pinezka + okrąg podglądu (po wyniku także przygaszenie poza okręgiem).
+function setPlace(lat, lng, name, { fit = false } = {}) {
+  state.place = { lat, lng, name };
+  ui.setPlaceName(name);
+  map.setArea(lat, lng, ui.radiusKm(), { veil: !!state.result, fit });
 }
 
-// Rysuje okrąg (albo go usuwa) i, gdy `fit`, dopasowuje do niego mapę. Wynik rysujemy od razu z nowym filtrem,
-// a odświeżenie z serwera dociągnie top-5 dla okręgu.
-function applyArea(fit) {
-  const area = activeArea();
-  if (area) map.setArea(area.lat, area.lng, area.radius, { fit }); else map.clearArea();
-  drawLayer();
-  if (fit) scheduleRefresh();
-  writeHash();
-}
-
-function setCenter(lat, lng, name) {
-  state.center = { lat, lng, name };
-  ui.setAreaCenter(name);
-}
-
-// Miejsce z wyszukiwarki: z promieniem — mapa dopasowuje się do okręgu, bez — jak dotąd przelatuje do miejsca.
 function pickPlace(place) {
-  setCenter(place.lat, place.lng, place.name.split(',')[0]);
-  if (ui.areaRadius()) applyArea(true);
-  else { applyArea(false); map.safeFlyTo(place.lat, place.lng, 14); }
-}
-
-// „Ustaw jako środek” w dymku: ten punkt staje się środkiem, a użytkownik wpisuje promień.
-function useAsCenter(lat, lng) {
-  setCenter(lat, lng, 'wybrany punkt');
-  map.closePoint();
-  $('sidebar').classList.remove('collapsed');
-  if (ui.areaRadius()) applyArea(true); else { applyArea(false); ui.focusAreaRadius(); }
+  setPlace(place.lat, place.lng, place.name.split(',')[0], { fit: true });
+  discardPoint();
+  if (state.result) scheduleRun(true);
+  writeHash();
 }
 
 // ---- Rysowanie wyniku ----
 
+const hasPermits = () => !!(state.result && state.result.permits_period);
+
 // Rysuje wybraną warstwę z ostatniego wyniku — bez ponownego zapytania do serwera.
-// Skala kolorów (logarytmiczna) wynika z heksagonów, które faktycznie rysujemy.
-function drawLayer(fade = false) {
+function drawLayer() {
   const result = state.result;
-  const rows = result ? rowsInArea(result.hexes, activeArea()) : [];
-  if (!rows.length) { map.clearHexes(); ui.hideLegend(); return; }
-  const layer = LAYERS[ui.currentLayer()];
-  const scale = logScale(rows.map((row) => row[layer.value]));
-  map.setHexes(rows, (row) => logColor(row[layer.value], scale), { fade });
-  // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
-  const period = result.permits_period;
-  const note = period && ui.currentLayer() !== 'S'
-    ? `Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.` : '';
-  const title = ui.currentLayer() === 'score' && period ? 'Nowe budowy na firmę' : layer.title;
-  ui.renderLegend(title, scale, note);
+  const layer = ui.currentLayer();
+  const values = result.values[layer];
+  const scale = logScale(values);
+  if (!scale) {
+    map.clearFog();
+    ui.hideLegend();
+  } else {
+    const t = new Float32Array(values.length);
+    values.forEach((v, i) => { t[i] = v === null ? NaN : logPosition(v, scale); });
+    map.setFog(result.grid, t, state.used.radius_km);
+    // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
+    const period = result.permits_period;
+    const note = period && layer !== 'competition'
+      ? `Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.` : '';
+    ui.renderLegend(ui.legendTitle(layer), scale, note);
+  }
+  const top = result.top[layer] || [];
+  ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place));
+  map.setTopMarkers(top, (place) => openPlace(place));
 }
 
-function showResult(result) {
-  const resChanged = state.displayRes !== null && state.displayRes !== result.display_res;
+function showResult(result, used) {
   state.result = result;
-  state.displayRes = result.display_res;
-  ui.setLayerAvailability(result.mode);
-  drawLayer(resChanged);
+  state.used = used;
+  ui.hideIntro();
+  ui.showControls(true);
+  ui.setLayers(result.layers);
+  // Warstwa zapisana w linku (tylko przy pierwszym wyniku po wczytaniu linku).
+  if (state.pendingLayer && result.layers.includes(state.pendingLayer)) ui.selectLayer(state.pendingLayer);
+  state.pendingLayer = null;
+  map.setArea(used.lat, used.lng, used.radius_km, { veil: true });
+  drawLayer();
   ui.renderWarnings(result.warnings);
   ui.renderNotes(result.notes);
-  ui.renderTop(result.top, result.top_metric, (place) => openPlace(place));
-  map.setTopMarkers(result.top, (place) => openPlace(place));
 }
 
-function clearResult(message) {
-  state.result = null;
-  map.clearHexes();
-  map.setTopMarkers([], () => {});
-  map.closePoint();
-  ui.hideLegend();
-  ui.renderWarnings([]);
-  ui.renderNotes([]);
-  ui.renderTop([], 'score', () => {});
-  ui.showInfo(message);
+// ---- Zapytanie o mapę ----
+
+let runTimer = null;
+function scheduleRun(fit) {
+  clearTimeout(runTimer);
+  runTimer = setTimeout(() => run({ fit }), 300);   // debounce: czekamy, aż użytkownik skończy zmieniać ustawienia
 }
 
-// ---- Odświeżanie wyniku dla widocznego fragmentu mapy ----
-
-let refreshTimer = null;
-function scheduleRefresh() {
-  clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(refresh, 250);   // debounce: czekamy, aż użytkownik skończy przesuwać mapę / zmieniać formularz
+// Sprawdza, czy można liczyć; w przeciwnym razie pokazuje komunikat w panelu.
+function validate() {
+  const p = ui.selectedParams();
+  if (!p.type && !p.demand) { ui.showInfo(NEED_SELECTION); return null; }
+  if (!state.place) { ui.showInfo(NEED_PLACE); return null; }
+  return p;
 }
 
-async function refresh() {
-  const params = ui.selectedParams();
-  loadPoi();
-  if (!params.type && !params.demand) {
-    if (state.controller) state.controller.abort();
-    ui.setLoading(false);
-    clearResult(NOTHING_SELECTED);
-    writeHash();
-    return;
-  }
+async function run({ fit }) {
+  const p = validate();
+  if (!p) return;
   ui.showInfo('');
   ui.showError('');
   if (state.controller) state.controller.abort();   // poprzednie zapytanie jest już nieaktualne
   const controller = new AbortController();
   state.controller = controller;
   const mine = ++state.requestId;
-  const { bbox, zoom } = map.getView();
-  if (bbox[0] >= bbox[2] || bbox[1] >= bbox[3]) { ui.setLoading(false); return; }   // mapa jeszcze bez rozmiaru — poczekaj na moveend
+  const used = { ...p, lat: state.place.lat, lng: state.place.lng };
   ui.setLoading(true);
   try {
-    const area = activeArea();
-    const areaParam = area ? `${area.lat.toFixed(5)},${area.lng.toFixed(5)},${area.radius}` : undefined;
-    const result = await fetchView({ ...params, bbox: bbox.join(','), zoom, area: areaParam }, controller.signal);
+    const result = await surface({
+      type: p.type, demand: p.demand, lat: used.lat, lng: used.lng,
+      radius_km: p.radius_km, reach_km: p.reach_km, months: p.months,
+    }, controller.signal);
     if (mine !== state.requestId) return;
-    showResult(result);
+    discardPoint();
+    showResult(result, used);
+    if (fit) map.setArea(used.lat, used.lng, used.radius_km, { veil: true, fit: true });
     writeHash();
+    collapseSheetOnMobile();
   } catch (e) {
     if (e.name === 'AbortError') return;   // zastąpione nowszym zapytaniem
     if (mine !== state.requestId) return;
@@ -169,150 +140,125 @@ async function refresh() {
   }
 }
 
-// ---- Dymek klikniętego punktu ----
+// ---- Szczegóły klikniętego punktu ----
 
 let pointRequest = 0;
 
-// Dymek opisuje ustawienia z chwili kliknięcia: po zmianie formularza lub linku zamykamy go i ignorujemy spóźnioną odpowiedź.
+// Szczegóły opisują ustawienia z chwili kliknięcia: po zmianie formularza lub linku zamykamy je i ignorujemy spóźnioną odpowiedź.
 function discardPoint() {
   pointRequest++;
-  map.closePoint();
+  map.closeDetails();
 }
 
 async function showPointAt(lat, lng) {
-  const params = ui.selectedParams();
-  if (!params.type && !params.demand) { ui.showInfo(NOTHING_SELECTED); return; }
+  const u = state.used;
   const mine = ++pointRequest;
   try {
-    const data = await point({ ...params, lat, lng });
+    // Konkurenci do narysowania: firmy z OSM w prostokącie okręgu zasięgu, przycięte do okręgu.
+    // Zasięg efektywny (dla pozwoleń min. 1 km) znamy dopiero z odpowiedzi, więc prostokąt liczymy z zapasem.
+    const reach = Math.max(u.reach_km, 1);
+    const dlat = reach / 110.54;
+    const dlng = reach / (111.32 * Math.cos(lat * Math.PI / 180));
+    const [data, poi] = await Promise.all([
+      point({ lat, lng, type: u.type, demand: u.demand, reach_km: u.reach_km, months: u.months }),
+      u.type ? getPoi(u.type, [lng - dlng, lat - dlat, lng + dlng, lat + dlat]).catch(() => null) : null,
+    ]);   // brak konkurentów na mapie (poi == null) nie blokuje dymku
     if (mine !== pointRequest) return;
-    map.showPoint(lat, lng, data.radius_km, ui.pointPopup(data, () => useAsCenter(lat, lng)));
+    const competitors = poi ? poi.items.filter((c) => distanceKm(lat, lng, c.lat, c.lng) <= data.radius_km) : [];
+    map.showDetails(lat, lng, data.radius_km, data.cells, competitors,
+      ui.pointPopup(data, () => useAsCenter(lat, lng)));
   } catch (e) {
     if (mine === pointRequest) ui.showError(e.message);
   }
 }
 
-// Wskazane miejsce (z listy top-5 albo ze znacznika): przybliżamy mapę i pokazujemy dymek z liczbami.
+// Wskazane miejsce (z listy top-5 albo ze znacznika): przybliżamy mapę i pokazujemy szczegóły.
 function openPlace(place) {
-  map.safeFlyTo(place.lat, place.lng, Math.max(map.getView().zoom, 14));
+  map.safeFlyTo(place.lat, place.lng, Math.max(map.getView().zoom, 13));
   collapseSheetOnMobile();
   showPointAt(place.lat, place.lng);
 }
 
-// ---- Stan widoku w adresie URL (#type=beauty&demand=pop_f&bw=1.5&lat=…&lng=…&z=13) — link można komuś wysłać ----
+// „Ustaw tu środek obszaru” w dymku: ten punkt staje się środkiem i mapa jest liczona od nowa.
+function useAsCenter(lat, lng) {
+  discardPoint();
+  setPlace(lat, lng, 'wybrany punkt');
+  run({ fit: true });
+}
+
+// Kliknięcie w mapę: bez wyniku ustawia miejsce, z wynikiem pokazuje szczegóły.
+function onMapClick(lat, lng) {
+  if (!state.result) {
+    setPlace(lat, lng, 'punkt na mapie');
+    ui.showInfo('');
+    writeHash();
+    return;
+  }
+  showPointAt(lat, lng);
+}
+
+// ---- Stan w adresie URL (#type=…&demand=…&reach=…&m=…&layer=…&lat=…&lng=…&r=…) — link można komuś wysłać ----
 
 function writeHash() {
-  const params = ui.selectedParams();
-  const { center, zoom } = map.getView();
+  if (!state.place) return;
+  const p = ui.selectedParams();
   const hash = new URLSearchParams({
-    type: params.type, demand: params.demand, bw: params.bandwidth_km, layer: ui.currentLayer(),
-    lat: center[0].toFixed(5), lng: center[1].toFixed(5), z: zoom,
+    type: p.type, demand: p.demand, reach: p.reach_km, layer: ui.currentLayer(),
+    lat: state.place.lat.toFixed(5), lng: state.place.lng.toFixed(5), r: p.radius_km, n: state.place.name,
   });
-  if (params.months) hash.set('m', params.months);   // okres tylko dla czynników z pozwoleń
-  if (state.center) {                                  // środek obszaru (clat, clng, cn) i opcjonalny promień (cr)
-    hash.set('clat', state.center.lat.toFixed(5));
-    hash.set('clng', state.center.lng.toFixed(5));
-    hash.set('cn', state.center.name);
-    if (ui.areaRadius()) hash.set('cr', ui.areaRadius());
-  }
+  if (p.months) hash.set('m', p.months);   // okres tylko dla czynników z pozwoleń
   history.replaceState(null, '', '#' + hash);
 }
 
-// Środek i promień obszaru z adresu (bez dopasowywania mapy: widok zapisany jest osobno w lat, lng, z).
-function restoreArea(h) {
-  const lat = Number(h.get('clat'));
-  const lng = Number(h.get('clng'));
-  if (h.get('clat') && h.get('clng') && Number.isFinite(lat) && Number.isFinite(lng)) {
-    setCenter(lat, lng, h.get('cn') || 'wybrane miejsce');
-    const radius = Number(h.get('cr'));
-    ui.setAreaRadius(Number.isFinite(radius) && radius > 0 ? Math.min(50, Math.round(radius)) : null);
-  } else {
-    state.center = null;
-    ui.setAreaCenter(null);
-    ui.setAreaRadius(null);
-  }
-  const area = activeArea();
-  if (area) map.setArea(area.lat, area.lng, area.radius, { fit: false }); else map.clearArea();
-}
-
-// Odtwarza ustawienia i widok z adresu; zwraca true, jeśli adres zawierał zapisany widok.
-// Stare parametry z v1 (r, pl) są ignorowane.
+// Odtwarza ustawienia z adresu; zwraca true, jeśli adres zawierał miejsce i wybór (wtedy od razu liczymy mapę).
 function applyHash() {
   const h = new URLSearchParams(location.hash.slice(1));
-  if (!h.has('type') && !h.has('demand')) return false;
-  ui.setSelection({ type: h.get('type'), demand: h.get('demand'), bandwidth: h.get('bw'), months: h.get('m') });
-  restoreArea(h);
-  if (h.get('layer') in LAYERS) document.querySelector(`input[name=layer][value="${h.get('layer')}"]`).checked = true;
   const lat = Number(h.get('lat'));
   const lng = Number(h.get('lng'));
-  const z = Number(h.get('z'));
-  // Dopasowanie widoku bez animacji (animowany zoom potrafi utknąć w stanie pośrednim).
-  if (h.get('lat') && h.get('lng') && Number.isFinite(lat) && Number.isFinite(lng)) {
-    map.setView(lat, lng, Number.isFinite(z) && z > 0 ? z : 12);
-  }
+  if (!h.get('lat') || !h.get('lng') || !Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (!h.get('type') && !h.get('demand')) return false;
+  ui.setSelection({
+    type: h.get('type'), demand: h.get('demand'), reach: Number(h.get('reach')) || null,
+    months: h.get('m'), radius: Number(h.get('r')) || null,
+  });
+  setPlace(lat, lng, h.get('n') || 'wybrane miejsce', { fit: true });
+  state.pendingLayer = h.get('layer');
   return true;
 }
 
-// ---- Punkty firm: pobieramy tylko dla widocznego fragmentu mapy i tylko przy dużym przybliżeniu ----
-const POI_MIN_ZOOM = 11;
-let poiTimer = null;
-let poiRequest = 0;
-
-function loadPoi() {
-  clearTimeout(poiTimer);
-  poiTimer = setTimeout(doLoadPoi, 300);
-}
-
-async function doLoadPoi() {
-  const note = $('poi-note');
-  const request = ++poiRequest;          // odpowiedzi spóźnione względem nowszego zapytania ignorujemy
-  const type = $('type-select').value;
-  if (!$('poi-checkbox').checked || !type) { map.setPoi([]); note.hidden = true; return; }
-  const { bbox, zoom } = map.getView();
-  if (zoom < POI_MIN_ZOOM) {
-    map.setPoi([]);
-    note.textContent = 'Przybliż mapę, aby zobaczyć firmy';
-    note.hidden = false;
-    return;
-  }
-  try {
-    const data = await getPoi(type, bbox);
-    if (request !== poiRequest) return;
-    map.setPoi(data.items);
-    note.textContent = data.truncated ? 'Pokazano 5000 pierwszych firm' : '';
-    note.hidden = !data.truncated;
-  } catch (e) {
-    if (request === poiRequest) { note.textContent = e.message; note.hidden = false; }
-  }
-}
-
 // ---- Podłączenie zdarzeń ----
-map.onMapClick((lat, lng) => showPointAt(lat, lng));
-map.onMoveEnd(scheduleRefresh);
+map.onMapClick(onMapClick);
 
-$('poi-checkbox').addEventListener('change', loadPoi);
+// Zmiana ustawień: po wyniku liczymy od nowa (z opóźnieniem), przed wynikiem tylko odświeżamy okrąg podglądu.
+function onFormChange() {
+  discardPoint();
+  ui.showInfo('');
+  if (state.result) scheduleRun(false);
+  else if (state.place) map.setArea(state.place.lat, state.place.lng, ui.radiusKm(), { veil: false });
+  writeHash();
+}
+
+ui.onShowClick(() => { clearTimeout(runTimer); run({ fit: true }); });
 document.querySelectorAll('input[name=layer]').forEach((el) => el.addEventListener('change', () => {
+  discardPoint();
   drawLayer();
   writeHash();
 }));
-$('opacity-input').addEventListener('input', () => map.setHexOpacity(Number($('opacity-input').value)));
+$('opacity-input').addEventListener('input', () => map.setFogOpacity(Number($('opacity-input').value)));
 
 // Mobile: uchwyt zwija i rozwija arkusz.
 $('sheet-handle').addEventListener('click', () => $('sidebar').classList.toggle('collapsed'));
 
 ui.renderHelp();
 ui.initSearch(pickPlace);
-ui.initArea(() => applyArea(true));
 
 // Wklejenie innego linku w tej samej karcie zmienia tylko hash (bez przeładowania) — odtwórz widok.
-window.addEventListener('hashchange', () => { if (applyHash()) { discardPoint(); scheduleRefresh(); } });
+window.addEventListener('hashchange', () => { if (applyHash()) run({ fit: true }); });
 
 getMeta().then(ui.renderFooter).catch(() => { /* stopka jest dodatkiem — brak metadanych nie przeszkadza */ });
 getCatalog()
   .then((catalog) => {
-    // Zmiana formularza unieważnia dymek punktu (opisuje poprzednie ustawienia) i odświeża wynik.
-    ui.renderCatalog(catalog, () => { discardPoint(); scheduleRefresh(); });
-    applyHash();
-    scheduleRefresh();   // jedno zapytanie (z opóźnieniem 250 ms); setView z linku wywołuje moveend, który tylko je odnowi
+    ui.renderCatalog(catalog, onFormChange);
+    if (applyHash()) run({ fit: true });
   })
   .catch((e) => ui.showError(e.message));

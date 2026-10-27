@@ -13,25 +13,19 @@
     <button id="sheet-handle" type="button" aria-label="Zwiń lub rozwiń panel"></button>
     <h1>Gdzie otworzyć?</h1>
 
-    <!-- Obszar analizy = to, co widać na mapie; wyszukiwarka przenosi mapę w wybrane miejsce,
-         a opcjonalny promień ogranicza analizę do okręgu wokół niego -->
-    <div id="search-wrap">
-      <input id="search-input" type="search" placeholder="Przejdź do adresu lub miejscowości" autocomplete="off"
-             aria-label="Przejdź do adresu lub miejscowości">
-      <ul id="search-results" hidden></ul>
+    <!-- Karta instrukcji: widoczna do pierwszego wyniku -->
+    <div id="intro" class="info">
+      <ol>
+        <li>Wybierz branżę (i/lub klientów).</li>
+        <li>Wpisz miejscowość albo kliknij mapę.</li>
+        <li>Ustaw promień i kliknij »Pokaż mapę«.</li>
+      </ol>
     </div>
-    <div class="area-row">
-      <span>Promień (opcjonalnie):</span>
-      <input id="area-radius" type="number" min="1" max="50" step="1" disabled aria-label="Promień od wybranego miejsca w km">
-      <span>km</span>
-      <button id="area-clear" type="button" disabled aria-label="Wyczyść promień">×</button>
-    </div>
-    <div id="area-hint" class="hint">Wybierz miejsce z wyszukiwarki, aby ograniczyć mapę do okręgu.</div>
 
     <label for="type-select">Typ działalności</label>
     <select id="type-select"></select>
 
-    <label for="demand-select">Czynnik popytu</label>
+    <label for="demand-select">Twoi klienci to</label>
     <select id="demand-select"></select>
 
     <div id="months-row" hidden>
@@ -44,17 +38,33 @@
     </div>
 
     <div class="label-row">
-      <label for="bandwidth-input">Zasięg klienta: <b id="bandwidth-value">1,5</b> km</label>
-      <button type="button" class="help" data-help="range" aria-label="Co to jest zasięg klienta?">?</button>
+      <label for="reach-input">Zasięg klienta: <b id="reach-value">1,5</b> km</label>
+      <button type="button" class="help" data-help="reach" aria-label="Co to jest zasięg klienta?">?</button>
     </div>
     <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,1–20 km (wzór w ui.js) -->
-    <input id="bandwidth-input" type="range" min="0" max="100" step="1" value="50">
+    <input id="reach-input" type="range" min="0" max="100" step="1" value="50">
+
+    <label for="search-input">Miejsce</label>
+    <div id="search-wrap">
+      <input id="search-input" type="search" placeholder="Wpisz miejscowość lub adres" autocomplete="off"
+             aria-label="Miejscowość lub adres">
+      <ul id="search-results" hidden></ul>
+    </div>
+    <div id="place-hint" class="hint">albo kliknij mapę</div>
+
+    <div class="label-row">
+      <label for="radius-input">Promień obszaru: <b id="radius-value">10</b> km</label>
+      <button type="button" class="help" data-help="radius" aria-label="Co to jest promień obszaru?">?</button>
+    </div>
+    <input id="radius-input" type="range" min="1" max="30" step="1" value="10">
+
+    <button id="show-button" type="button">Pokaż mapę</button>
 
     <div id="info" class="info" role="status" hidden></div>
     <div id="error" role="alert" hidden></div>
 
-    <h2 id="top-title">Najlepsze miejsca</h2>
-    <ol id="top-list"><li class="muted">Wybierz typ działalności albo czynnik popytu.</li></ol>
+    <h2 id="top-title" hidden>Najlepsze miejsca</h2>
+    <ol id="top-list"></ol>
 
     <div id="warnings" hidden></div>
     <div id="notes" hidden></div>
@@ -65,25 +75,20 @@
   <div id="loading-bar" hidden></div>
 
   <!-- Przełącznik warstw i legenda (kontrolki nad mapą) -->
-  <div id="map-controls">
+  <div id="map-controls" hidden>
     <div id="layer-switch">
       <div class="layer-row">
-        <label><input type="radio" name="layer" value="score" checked> Okazja</label>
-        <button type="button" class="help" data-help="score" aria-label="Co to jest Okazja?">?</button>
+        <label><input type="radio" name="layer" value="open" checked> Gdzie otworzyć</label>
+        <button type="button" class="help" data-help="open" aria-label="Co to jest Gdzie otworzyć?">?</button>
       </div>
       <div class="layer-row">
-        <label><input type="radio" name="layer" value="D"> Popyt</label>
-        <button type="button" class="help" data-help="D" aria-label="Co to jest Popyt?">?</button>
-      </div>
-      <div class="layer-row">
-        <label><input type="radio" name="layer" value="S"> Konkurencja</label>
-        <button type="button" class="help" data-help="S" aria-label="Co to jest Konkurencja?">?</button>
+        <label><input type="radio" name="layer" value="demand"> Gdzie są klienci</label>
+        <button type="button" class="help" data-help="demand" aria-label="Co to jest Gdzie są klienci?">?</button>
       </div>
     </div>
-    <label class="check"><input id="poi-checkbox" type="checkbox"> Punkty firm</label>
-    <div id="poi-note" class="hint" hidden></div>
+    <div id="layer-title" hidden></div>
     <label class="opacity">Przezroczystość
-      <input id="opacity-input" type="range" min="0.2" max="1" step="0.05" value="0.7">
+      <input id="opacity-input" type="range" min="0.2" max="1" step="0.05" value="0.85">
     </label>
     <div id="legend" hidden></div>
   </div>

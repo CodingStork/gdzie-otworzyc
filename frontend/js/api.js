@@ -25,10 +25,11 @@ async function get(path, params = {}, signal) {
 }
 
 export const getCatalog = () => get('/api/catalog');
-// Heatmapa widocznego fragmentu mapy; `signal` pozwala przerwać zapytanie, gdy użytkownik ruszył mapą dalej.
-export const view = (params, signal) => get('/api/view', params, signal);
-// Dokładne liczby w okręgu zasięgu wokół klikniętego punktu (dymek).
+// Mapa okolicy wybranego miejsca (mgła); `signal` pozwala przerwać zapytanie, gdy użytkownik zmienił ustawienia.
+export const surface = (params, signal) => get('/api/surface', params, signal);
+// Szczegóły klikniętego punktu: liczby w okręgu zasięgu, model Huffa, komórki do narysowania.
 export const point = (params) => get('/api/point', params);
+// Firmy danego typu w prostokącie — tylko do narysowania konkurentów w szczegółach punktu.
 export const getPoi = (type, bbox) => get('/api/poi', { type, bbox: bbox.join(',') });
 export const geocode = (q) => get('/api/geocode', { q });
 export const getMeta = () => get('/api/meta');

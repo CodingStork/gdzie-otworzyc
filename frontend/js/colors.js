@@ -1,21 +1,29 @@
-// Skala kolorów: płynny gradient (jedna barwa, jasna → ciemna) wg WARTOŚCI w skali logarytmicznej.
-// ColorBrewer YlGnBu (9 punktów) — czytelna także dla osób z zaburzeniami widzenia barw.
-// Dlaczego logarytm, a nie percentyl: rozkłady (ludność, liczba firm) są prawostronnie skośne. Percentyl w obszarze
-// z dużą ilością słabych terenów wrzuca całe miasto do górnych 10% (4 600 i 19 000 mają prawie ten sam kolor);
-// skala log zachowuje proporcje — każdy krok koloru to mniej więcej podwojenie wartości.
-// Skalę liczymy w przeglądarce z heksagonów, które aktualnie rysujemy (albo leżą w wybranym okręgu).
+// Kolory mgły: paleta ColorBrewer YlOrRd (żółty → pomarańczowy → czerwony), skala logarytmiczna i przezroczystość.
+// Dlaczego YlOrRd, a nie tęcza: jedna barwa o rosnącym nasyceniu czyta się jako „więcej”, a tęcza (Borland & Taylor 2007)
+// wprowadza fałszywe granice i nie ma naturalnej kolejności.
+// Dlaczego logarytm: ludność i liczby firm mają rozkład prawostronnie skośny — skala liniowa zrobiłaby z całego
+// miasta jedną czerwoną plamę. Przy skali log każdy krok koloru to mniej więcej podwojenie wartości.
+// Dlaczego przezroczystość: małe wartości znikają, więc zostaje efekt „mgły” zagęszczającej się tam, gdzie jest ważnie.
 
-export const GRADIENT = ['#ffffd9', '#edf8b1', '#c7e9b4', '#7fcdbb', '#41b6c4', '#1d91c0', '#225ea8', '#253494', '#081d58'];
+export const YLORRD = ['#ffffcc', '#ffeda0', '#fed976', '#feb24c', '#fd8d3c', '#fc4e2a', '#e31a1c', '#bd0026', '#800026'];
 
-const RGB = GRADIENT.map((hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)));
+const RGB = YLORRD.map((hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)));
 
-// t 0–1 → kolor "rgb(r,g,b)" z interpolacją liniową między sąsiednimi punktami palety.
-export function gradientColor(t) {
-  const x = Math.min(1, Math.max(0, t)) * (RGB.length - 1);
+// Przezroczystość w zależności od pozycji t na skali: 0 poniżej 0,05, potem liniowo do 0,85 przy t = 0,5 i 0,85 powyżej.
+export function fogAlpha(t) {
+  if (t < 0.05) return 0;
+  if (t >= 0.5) return 0.85;
+  return 0.85 * (t - 0.05) / 0.45;
+}
+
+// t 0–1 → [r, g, b, a] (a 0–1); kolor interpolowany liniowo między sąsiednimi punktami palety.
+export function fogColor(t) {
+  const clamped = Math.min(1, Math.max(0, t));
+  const x = clamped * (RGB.length - 1);
   const i = Math.min(Math.floor(x), RGB.length - 2);
   const f = x - i;
   const [r, g, b] = RGB[i].map((c, k) => Math.round(c + (RGB[i + 1][k] - c) * f));
-  return `rgb(${r},${g},${b})`;
+  return [r, g, b, fogAlpha(clamped)];
 }
 
 // Kwantyl q (0–1) posortowanej rosnąco tablicy, z interpolacją liniową.
@@ -25,28 +33,25 @@ function quantile(sorted, q) {
   return i + 1 < sorted.length ? sorted[i] + (sorted[i + 1] - sorted[i]) * (x - i) : sorted[i];
 }
 
-// Skala z wartości > 0: dolna granica = percentyl 2, górna = 98 (pojedyncze skrajności nie rozciągają skali).
+// Skala z wartości > 0 (null = poza okręgiem): dolna granica = percentyl 5, górna = 99.
 // Zwraca { lo, hi } albo null, gdy nie ma żadnej dodatniej wartości.
 export function logScale(values) {
   const positive = values.filter((v) => v > 0).sort((a, b) => a - b);
   if (!positive.length) return null;
-  return { lo: quantile(positive, 0.02), hi: quantile(positive, 0.98) };
+  return { lo: quantile(positive, 0.05), hi: quantile(positive, 0.99) };
 }
 
-// Pozycja wartości na skali, 0–1. Zero → 0 (najjaśniejszy); lo == hi → środek palety.
+// Pozycja wartości na skali, 0–1. Wartość ≤ 0 → 0 (przezroczysta); lo == hi → środek palety.
 export function logPosition(v, scale) {
   if (!scale || !(v > 0)) return 0;
   if (scale.hi <= scale.lo) return 0.5;
-  const t = (Math.log10(Math.min(scale.hi, Math.max(scale.lo, v))) - Math.log10(scale.lo)) /
+  return (Math.log10(Math.min(scale.hi, Math.max(scale.lo, v))) - Math.log10(scale.lo)) /
     (Math.log10(scale.hi) - Math.log10(scale.lo));
-  return t;
 }
-
-export const logColor = (v, scale) => gradientColor(logPosition(v, scale));
 
 // „Okrągłe” wartości 1–2–5 × 10^n mieszczące się w [lo, hi], nie więcej niż max; zostawiamy te, które nie
 // nachodzą na końce paska (margin = ułamek wysokości paska).
-export function niceTicks(scale, max = 5, margin = 0.1) {
+export function niceLogTicks(scale, max = 5, margin = 0.1) {
   if (!scale || scale.hi <= scale.lo) return [];
   const all = [];
   for (let e = Math.floor(Math.log10(scale.lo)); e <= Math.ceil(Math.log10(scale.hi)); e++) {
@@ -64,8 +69,12 @@ export function niceTicks(scale, max = 5, margin = 0.1) {
   return Array.from({ length: max }, (_, k) => pool[Math.round(k * (pool.length - 1) / (max - 1))]);
 }
 
-// CSS pasek gradientu do legendy (kierunek np. 'to right' albo 'to top').
-export function gradientCss(direction = 'to right') {
-  const stops = GRADIENT.map((c, i) => `${c} ${(i / (GRADIENT.length - 1) * 100).toFixed(1)}%`);
+// CSS pasek gradientu do legendy — z tą samą przezroczystością co mgła na mapie (kierunek np. 'to top').
+export function fogGradientCss(direction = 'to top') {
+  const stops = Array.from({ length: 21 }, (_, k) => {
+    const t = k / 20;
+    const [r, g, b, a] = fogColor(t);
+    return `rgba(${r},${g},${b},${a.toFixed(2)}) ${(t * 100).toFixed(0)}%`;
+  });
   return `linear-gradient(${direction}, ${stops.join(', ')})`;
 }

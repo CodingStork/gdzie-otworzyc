@@ -1,6 +1,7 @@
-// Panel boczny: formularz (typ, popyt, zasięg), pytajniki z wyjaśnieniami, legenda, lista najlepszych miejsc, dymek punktu.
+// Panel boczny: formularz (typ, klienci, zasięg, miejsce, promień), pytajniki z wyjaśnieniami, legenda,
+// lista najlepszych miejsc i dymek ze szczegółami punktu.
 import { geocode } from './api.js';
-import { gradientCss, niceTicks } from './colors.js';
+import { fogGradientCss, niceLogTicks } from './colors.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -10,18 +11,20 @@ let catalog = null;
 export const fmt = (n, digits = 0) =>
   Number(n).toLocaleString('pl-PL', { maximumFractionDigits: digits, useGrouping: 'always' });
 
-// ---- Wyjaśnienia pod pytajnikami (teksty uzgodnione ze specyfikacją — nie zmieniać bez powodu) ----
+// ---- Wyjaśnienia pod pytajnikami (teksty uzgodnione ze specyfikacją v3 §5 — nie zmieniać bez powodu) ----
 const HELP = {
-  score: 'Ilu potencjalnych klientów przypadnie na jedną firmę, jeśli otworzysz tu swoją: klienci w zasięgu ÷ (konkurenci w zasięgu + 1). ' +
-    'Im ciemniejszy kolor, tym lepiej. Porównuj miejsca między sobą — w OpenStreetMap brakuje części firm, więc same liczby są zawyżone.',
-  D: 'Ilu potencjalnych klientów jest w zasięgu od danego miejsca, np. mieszkańców w promieniu 1,5 km. ' +
-    'Liczba mieszkańców to szacunek: dane ze spisu 2021 (kwadraty 1 km) rozłożone na budynki mieszkalne z OpenStreetMap. ' +
+  open: 'Ilu klientów mogłaby przyciągnąć nowa firma w danym miejscu. Liczymy to modelem Huffa: każdy mieszkaniec wybiera między firmami, ' +
+    'a bliższa firma przyciąga go mocniej. Uwzględniamy wszystkich konkurentów z OpenStreetMap i »inne możliwości« ' +
+    '(firmy, których nie ma w OSM, zakupy gdzie indziej). Najbardziej czerwone miejsca to najlepsze lokalizacje.',
+  demand: 'Ilu potencjalnych klientów jest w pobliżu danego miejsca — bliżsi liczą się bardziej. ' +
+    'Mieszkańcy to szacunek: spis 2021 rozłożony na budynki mieszkalne z OpenStreetMap. ' +
     'Dla nowych domów liczymy pozwolenia na budowę z wybranego okresu.',
-  S: 'Ile firm wybranego typu jest w zasięgu od danego miejsca. Dane z OpenStreetMap — mogą być niepełne.',
-  range: 'Z jak daleka przychodzą klienci. Fryzjer czy sklep spożywczy: kilkaset metrów do 2 km; market budowlany czy brukarz: 10–20 km. ' +
-    'Mały zasięg daje ostrą mapę pokazującą pojedyncze ulice, duży — ogólny obraz okolicy.',
-  legend: 'Kolor pokazuje wartość w skali logarytmicznej: każdy krok koloru to mniej więcej podwojenie wartości. ' +
-    'Skala dopasowuje się do widocznego obszaru (albo wybranego promienia). Dokładne liczby zobaczysz po kliknięciu mapy.',
+  competition: 'Gdzie jest najwięcej firm wybranego typu. Dane z OpenStreetMap — mogą być niepełne.',
+  reach: 'Jak daleko typowy klient jest gotów dojść lub dojechać. Fryzjer, sklep spożywczy: kilkaset metrów do 2 km; ' +
+    'market budowlany, brukarz: 10–20 km. W tej odległości chęć dotarcia spada o ok. 2/3, a dwa razy dalej — o ok. 85%.',
+  radius: 'Jak duży obszar wokół wybranego miejsca przeanalizować. Mniejszy obszar = szybciej i dokładniej.',
+  legend: 'Kolor w skali logarytmicznej: każdy krok koloru to mniej więcej podwojenie wartości. ' +
+    'Przezroczyste miejsca mają bardzo małe wartości. Dokładne liczby zobaczysz po kliknięciu mapy.',
 };
 
 // Pytajnik: przycisk .help[data-help]. Podpowiedź pokazuje się po najechaniu lub kliknięciu,
@@ -76,15 +79,27 @@ export function roundKm(km) {
   return Math.min(KM_MAX, Math.max(KM_MIN, rounded));
 }
 
-export const bandwidthKm = () => roundKm(sliderToKm(Number($('bandwidth-input').value)));
+export const reachKm = () => roundKm(sliderToKm(Number($('reach-input').value)));
 
-function showBandwidth() {
-  $('bandwidth-value').textContent = fmt(bandwidthKm(), 1);
+function showReach() {
+  $('reach-value').textContent = fmt(reachKm(), 1);
 }
 
-function setBandwidth(km) {
-  $('bandwidth-input').value = kmToSlider(Math.min(KM_MAX, Math.max(KM_MIN, Number(km))));
-  showBandwidth();
+function setReach(km) {
+  $('reach-input').value = kmToSlider(Math.min(KM_MAX, Math.max(KM_MIN, Number(km))));
+  showReach();
+}
+
+// ---- Promień obszaru: 1–30 km ----
+export const radiusKm = () => Math.min(30, Math.max(1, Math.round(Number($('radius-input').value)) || 10));
+
+function showRadius() {
+  $('radius-value').textContent = String(radiusKm());
+}
+
+export function setRadius(km) {
+  $('radius-input').value = String(Math.min(30, Math.max(1, Math.round(Number(km)) || 10)));
+  showRadius();
 }
 
 // ---- Formularz ----
@@ -99,17 +114,28 @@ function currentType() {
   return null;
 }
 
-function currentDemand() {
+export const currentTypeInfo = currentType;
+
+export function currentDemand() {
   return catalog.demands.find((d) => d.id === $('demand-select').value) || null;
 }
 
 // Przy popycie z pozwoleń „klientami” są nowe budowy, nie ludzie — inaczej podpis wprowadzałby w błąd.
-export const scoreNoun = (permits) => (permits ? 'nowych budów' : 'klientów');
-const demandIsPermits = () => currentDemand()?.source === 'permits';
+export const clientsNoun = (permits) => (permits ? 'nowych budów' : 'klientów');
 
 function syncMonthsRow() {
   const demand = currentDemand();
   $('months-row').hidden = !(demand && demand.needs_months);
+}
+
+// Dopisek „(sugerowane)” przy czynnikach popytu zalecanych dla typu.
+function markSuggested(type) {
+  const suggested = new Set(type.suggested_demands);
+  for (const option of $('demand-select').options) {
+    if (!option.value) continue;
+    const demand = catalog.demands.find((d) => d.id === option.value);
+    option.textContent = demand.name + (suggested.has(demand.id) ? ' (sugerowane)' : '');
+  }
 }
 
 // Po zmianie typu: czynniki sugerowane dla typu dostają dopisek, domyślny jest zaznaczony,
@@ -117,18 +143,13 @@ function syncMonthsRow() {
 function onTypeChange() {
   const type = currentType();
   if (!type) return;
-  const suggested = new Set(type.suggested_demands);
-  for (const option of $('demand-select').options) {
-    if (!option.value) continue;
-    const demand = catalog.demands.find((d) => d.id === option.value);
-    option.textContent = demand.name + (suggested.has(demand.id) ? ' (sugerowane)' : '');
-  }
+  markSuggested(type);
   $('demand-select').value = type.default_demand;
-  setBandwidth(type.bandwidth_km);
+  setReach(type.bandwidth_km);
   syncMonthsRow();
 }
 
-// onChange: wywoływane po każdej zmianie formularza, która wymaga nowego zapytania (suwak: dopiero po puszczeniu).
+// onChange: wywoływane po każdej zmianie formularza, która wymaga nowego zapytania (suwaki: dopiero po puszczeniu).
 export function renderCatalog(data, onChange) {
   catalog = data;
   const typeSelect = $('type-select');
@@ -149,10 +170,13 @@ export function renderCatalog(data, onChange) {
   typeSelect.addEventListener('change', () => { onTypeChange(); onChange(); });
   demandSelect.addEventListener('change', () => { syncMonthsRow(); onChange(); });
   $('months-select').addEventListener('change', onChange);
-  // Przy przeciąganiu suwaka tylko aktualizujemy podpis; zapytanie idzie po puszczeniu (zdarzenie change).
-  $('bandwidth-input').addEventListener('input', showBandwidth);
-  $('bandwidth-input').addEventListener('change', onChange);
-  setBandwidth(1.5);
+  // Przy przeciąganiu suwaków tylko aktualizujemy podpis; zapytanie idzie po puszczeniu (zdarzenie change).
+  $('reach-input').addEventListener('input', showReach);
+  $('reach-input').addEventListener('change', onChange);
+  $('radius-input').addEventListener('input', showRadius);
+  $('radius-input').addEventListener('change', onChange);
+  setReach(1.5);
+  setRadius(10);
   syncMonthsRow();
 }
 
@@ -162,7 +186,8 @@ export function selectedParams() {
   const params = {
     type: $('type-select').value,
     demand: demand ? demand.id : '',
-    bandwidth_km: bandwidthKm(),
+    reach_km: reachKm(),
+    radius_km: radiusKm(),
   };
   if (demand && demand.needs_months) params.months = $('months-select').value;
   return params;
@@ -171,51 +196,72 @@ export function selectedParams() {
 const hasOption = (select, value) => [...select.options].some((o) => o.value === value);
 
 // Ustawia formularz z wartości zapisanych w adresie; nieznane wartości (np. ze starego linku) pomijamy.
-export function setSelection({ type, demand, bandwidth, months }) {
+export function setSelection({ type, demand, reach, months, radius }) {
   $('type-select').value = type && hasOption($('type-select'), type) ? type : '';
-  if (type && $('type-select').value) {
-    // jak po zmianie typu (dopiski „sugerowane”), ale bez nadpisywania zapisanych wartości poniżej
-    const t = currentType();
-    const suggested = new Set(t.suggested_demands);
-    for (const option of $('demand-select').options) {
-      if (!option.value) continue;
-      const d = catalog.demands.find((x) => x.id === option.value);
-      option.textContent = d.name + (suggested.has(d.id) ? ' (sugerowane)' : '');
-    }
-  }
+  if ($('type-select').value) markSuggested(currentType());   // dopiski „sugerowane”, ale bez nadpisywania zapisanych wartości
   $('demand-select').value = demand && hasOption($('demand-select'), demand) ? demand : '';
-  if (bandwidth) setBandwidth(bandwidth);
+  if (reach) setReach(reach);
+  if (radius) setRadius(radius);
   if (months) $('months-select').value = String(months);
   syncMonthsRow();
 }
 
+// Wybrane miejsce: podpis pod wyszukiwarką.
+export function setPlaceName(name) {
+  $('place-hint').textContent = name ? `Wybrane: ${name}` : 'albo kliknij mapę';
+}
+
+export const hideIntro = () => { $('intro').hidden = true; };
+export const onShowClick = (cb) => $('show-button').addEventListener('click', cb);
+
 // ---- Warstwy mapy ----
+// typ + klienci → przełącznik dwóch map („Gdzie otworzyć” / „Gdzie są klienci”); w pozostałych przypadkach jedna mapa
+// bez przełącznika, z podpisem („Gdzie są klienci” albo „Gdzie są {firmy}”, np. „Gdzie są fryzjerzy”).
+let availableLayers = [];
 
-// Tryb wyniku decyduje, które warstwy mają sens: tylko typ → Konkurencja, tylko popyt → Popyt.
-// Niedostępne przyciski są wyłączone; jeśli wybrana warstwa jest niedostępna, przełączamy na dostępną.
-const MODE_LAYERS = { full: ['score', 'D', 'S'], demand: ['D'], competition: ['S'] };
-
-export function setLayerAvailability(mode) {
-  const allowed = MODE_LAYERS[mode] || MODE_LAYERS.full;
-  document.querySelectorAll('input[name=layer]').forEach((el) => {
-    el.disabled = !allowed.includes(el.value);
-    el.closest('label').classList.toggle('disabled', el.disabled);
-  });
-  const checked = document.querySelector('input[name=layer]:checked');
-  if (!allowed.includes(checked.value)) {
-    document.querySelector(`input[name=layer][value="${allowed[0]}"]`).checked = true;
+export function setLayers(layers) {
+  availableLayers = layers;
+  const two = layers.length === 2;
+  $('layer-switch').hidden = !two;
+  const title = $('layer-title');
+  title.hidden = two;
+  if (!two) {
+    const type = currentType();
+    const text = layers[0] === 'competition' ? `Gdzie są ${type ? type.plural : 'firmy'}` : 'Gdzie są klienci';
+    title.innerHTML = '<b></b> <button type="button" class="help" aria-label="Co to znaczy?">?</button>';
+    title.querySelector('b').textContent = text;
+    title.querySelector('button').dataset.help = layers[0];
   }
+  const checked = document.querySelector('input[name=layer]:checked');
+  if (two && !layers.includes(checked.value)) document.querySelector('input[name=layer][value="open"]').checked = true;
 }
 
 export function currentLayer() {
-  return document.querySelector('input[name=layer]:checked').value;
+  if (availableLayers.length === 2) return document.querySelector('input[name=layer]:checked').value;
+  return availableLayers[0] || 'open';
+}
+
+export function selectLayer(name) {
+  const el = document.querySelector(`input[name=layer][value="${name}"]`);
+  if (el) el.checked = true;
+}
+
+export const showControls = (show) => { $('map-controls').hidden = !show; };
+
+// Tytuł legendy zależny od warstwy (spec §2 pkt 5).
+export function legendTitle(layer) {
+  const demand = currentDemand();
+  const type = currentType();
+  if (layer === 'open') return 'Szacowana liczba Twoich klientów';
+  if (layer === 'demand') return `Dostępni klienci: ${demand ? demand.name.toLowerCase() : ''}`;
+  return `Zagęszczenie: ${type ? type.name : ''}`;
 }
 
 // ---- Legenda: pionowy pasek gradientu w skali logarytmicznej z podpisami „okrągłych” wartości (1–2–5 × 10^n) ----
 
 // Liczba miejsc po przecinku zależnie od wielkości (0,37 → „0,37”, 4,2 → „4,2”, 130 → „130”).
 const legendDigits = (v) => (v < 1 ? 2 : v < 10 ? 1 : 0);
-// Końce skali to percentyle 2 i 98 — podajemy je z dokładnością do 2 cyfr, żeby nie sugerować fałszywej precyzji.
+// Końce skali to percentyle 5 i 99 — podajemy je z dokładnością do 2 cyfr, żeby nie sugerować fałszywej precyzji.
 const twoDigits = (v) => Number(v.toPrecision(2));
 
 // scale: { lo, hi } z logScale() — wartości, przy których kolor jest najjaśniejszy / najciemniejszy.
@@ -227,13 +273,14 @@ export function renderLegend(title, scale, note = '') {
   if (scale.hi > scale.lo) {
     // Na telefonie pasek jest niski: mniej podpisów i większy odstęp od końców, żeby się nie zlewały.
     const narrow = window.innerWidth < 768;
-    for (const tick of niceTicks(scale, narrow ? 2 : 5, narrow ? 0.2 : 0.1)) stops.push({ t: tick.t, text: label('', tick.v) });
+    for (const tick of niceLogTicks(scale, narrow ? 2 : 5, narrow ? 0.2 : 0.1)) stops.push({ t: tick.t, text: label('', tick.v) });
   }
   const rows = stops.map((s) =>
     `<div class="stop" style="bottom:${(s.t * 100).toFixed(1)}%"><span class="tick"></span>${s.text}</div>`).join('');
-  el.innerHTML = `<div class="legend-title"><b>${title}</b> <button type="button" class="help" data-help="legend" aria-label="Jak czytać kolory?">?</button></div>` +
-    `<div class="legend-body"><div class="bar" style="background:${gradientCss('to top')}"></div><div class="stops">${rows}</div></div>` +
-    (note ? `<div class="note"></div>` : '');
+  el.innerHTML = '<div class="legend-title"><b></b> <button type="button" class="help" data-help="legend" aria-label="Jak czytać kolory?">?</button></div>' +
+    `<div class="legend-body"><div class="bar" style="background:${fogGradientCss('to top')}"></div><div class="stops">${rows}</div></div>` +
+    (note ? '<div class="note"></div>' : '');
+  el.querySelector('b').textContent = title;   // tytuł zawiera nazwy z katalogu — wstawiamy jako tekst
   if (note) el.querySelector('.note').textContent = note;
   el.hidden = false;
 }
@@ -261,7 +308,7 @@ export function showError(message) {
   el.hidden = !message;
 }
 
-// Spokojny komunikat informacyjny (nie błąd), np. „Wybierz typ działalności albo czynnik popytu”.
+// Spokojny komunikat informacyjny (nie błąd), np. „Wybierz miejsce…”.
 export function showInfo(message) {
   const el = $('info');
   el.textContent = message || '';
@@ -274,10 +321,14 @@ export function setLoading(loading) {
 
 // ---- Najlepsze miejsca ----
 
-const TOP_TITLES = { score: 'Najlepsze miejsca', D: 'Największy popyt', S: 'Najwięcej firm' };
+const TOP_TITLES = { open: 'Najlepsze miejsca', demand: 'Najwięcej klientów', competition: 'Najwięcej firm' };
 
-export function renderTop(list, metric, onClick) {
-  $('top-title').textContent = TOP_TITLES[metric] || TOP_TITLES.score;
+// Szacunek do setek (od 1000), do dziesiątek (od 100), inaczej do jedności — nie pokazujemy fałszywej precyzji.
+const roundEstimate = (n) => (n >= 1000 ? Math.round(n / 100) * 100 : n >= 100 ? Math.round(n / 10) * 10 : Math.round(n));
+
+export function renderTop(list, layer, permits, onClick) {
+  $('top-title').textContent = TOP_TITLES[layer] || TOP_TITLES.open;
+  $('top-title').hidden = false;
   const ol = $('top-list');
   ol.innerHTML = '';
   if (!list.length) {
@@ -286,24 +337,27 @@ export function renderTop(list, metric, onClick) {
   }
   list.forEach((place, i) => {
     const li = document.createElement('li');
-    const label = metric === 'S' ? `${fmt(place.value, 1)} firm w zasięgu`
-      : metric === 'D' ? `${fmt(place.value)} w zasięgu` : `${fmt(place.value)} ${scoreNoun(demandIsPermits())} na firmę`;
+    const label = layer === 'open' ? `ok. ${fmt(roundEstimate(place.value))} ${clientsNoun(permits)}`
+      : layer === 'demand' ? `${fmt(roundEstimate(place.value))} ${permits ? 'nowych budów' : 'dostępnych klientów'}`
+        : `zagęszczenie ${fmt(place.value, 1)}`;
     li.textContent = `${place.name} — ${label}`;
     li.addEventListener('click', () => onClick(place, i));
     ol.append(li);
   });
 }
 
-// ---- Dymek klikniętego punktu (dokładne liczby z /api/point) ----
+export function clearTop() {
+  $('top-title').hidden = true;
+  $('top-list').innerHTML = '';
+}
+
+// ---- Dymek klikniętego punktu (dokładne liczby z /api/point, spec §4) ----
 
 const km = (r) => fmt(r, 1);
 const dist = (m) => (m >= 1000 ? `${fmt(m / 1000, 1)} km` : `${fmt(m)} m`);
 
-// Szacunek ludności: do setek, a dla małych liczb do dziesiątek (zaokrąglenie do 100 pokazałoby „ok. 0”).
-const roundEstimate = (n) => (n >= 1000 ? Math.round(n / 100) * 100 : Math.round(n / 10) * 10);
-
 // Zwraca element DOM (tekst wstawiamy przez textContent — nazwy firm z OSM nie są HTML-em).
-// onSetCenter: wywoływane po kliknięciu „Ustaw jako środek” (promień od tego punktu).
+// onSetCenter: wywoływane po kliknięciu „Ustaw tu środek obszaru”.
 export function pointPopup(d, onSetCenter) {
   const box = document.createElement('div');
   const add = (text, bold = false) => {
@@ -313,15 +367,17 @@ export function pointPopup(d, onSetCenter) {
     box.append(p);
     return p;
   };
+  const permits = d.permits_period != null;
   add(`W promieniu ${km(d.radius_km)} km:`, true);
   if (d.demand != null) {
-    const permits = d.permits_period != null;
     add(permits
       ? `${d.demand_name}: ${fmt(d.demand)} (pozwolenia ${d.permits_period.from} – ${d.permits_period.to})`
       : `${d.demand_name}: ok. ${fmt(roundEstimate(d.demand))} (szacunek)`);
   }
-  if (d.competitors != null) add(`${d.type_name} w OpenStreetMap: ${fmt(d.competitors)}`);
-  if (d.score != null) add(`→ ok. ${fmt(d.score)} ${scoreNoun(d.permits_period != null)} na firmę po otwarciu Twojej`, true);
+  if (d.competitors != null) add(`${d.type_name} w OSM: ${fmt(d.competitors)}`);
+  if (d.expected != null) {
+    add(`Otwierając tu, zdobyłbyś ok. ${fmt(roundEstimate(d.expected))} ${clientsNoun(permits)} (model Huffa).`, true);
+  }
   if (d.nearest.length) {
     add('Najbliżsi:');
     const ul = document.createElement('ul');
@@ -337,7 +393,7 @@ export function pointPopup(d, onSetCenter) {
     const link = document.createElement('button');
     link.type = 'button';
     link.className = 'link-button';
-    link.textContent = 'Ustaw jako środek';
+    link.textContent = 'Ustaw tu środek obszaru';
     link.addEventListener('click', onSetCenter);
     box.append(link);
   }
@@ -403,37 +459,6 @@ export function initSearch(onPick) {
   });
   input.addEventListener('blur', hide);
 }
-
-// ---- Opcjonalny promień od wyszukanej miejscowości (1–50 km) ----
-
-const AREA_MIN = 1;
-const AREA_MAX = 50;
-
-// onChange(): wywoływane po zmianie albo wyczyszczeniu promienia (pole jest aktywne dopiero po wybraniu środka).
-export function initArea(onChange) {
-  $('area-radius').addEventListener('change', () => { $('area-radius').value = areaRadius() ?? ''; onChange(); });
-  $('area-clear').addEventListener('click', () => { $('area-radius').value = ''; onChange(); });
-}
-
-// Promień z pola jako liczba całkowita 1–50 albo null (puste lub błędne pole = brak obszaru).
-export function areaRadius() {
-  const value = Math.round(Number($('area-radius').value));
-  if (!$('area-radius').value || !Number.isFinite(value)) return null;
-  return Math.min(AREA_MAX, Math.max(AREA_MIN, value));
-}
-
-export function setAreaRadius(km) {
-  $('area-radius').value = km ? String(km) : '';
-}
-
-// Pole promienia jest aktywne, gdy jest wybrany środek (miejsce z wyszukiwarki albo punkt z dymku).
-export function setAreaCenter(name) {
-  $('area-radius').disabled = !name;
-  $('area-clear').disabled = !name;
-  $('area-hint').textContent = name ? `Środek: ${name}` : 'Wybierz miejsce z wyszukiwarki, aby ograniczyć mapę do okręgu.';
-}
-
-export const focusAreaRadius = () => $('area-radius').focus();
 
 // ---- Stopka: świeżość danych ----
 
