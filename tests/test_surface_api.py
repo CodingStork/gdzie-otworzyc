@@ -120,3 +120,43 @@ def test_surface_cache_same_key(client):
     a = surface(client).json()
     b = surface(client, lat=LAT + 0.00001).json()                       # to samo po zaokrągleniu
     assert a == b
+
+
+# ---------------------------------------------------------------- luki w danych (v3.3) ----
+
+CITY = (51.10, 17.03)
+
+
+@pytest.fixture
+def gap_client(make_client):
+    """Miasteczko bez salonów (CENTER) i miasto ze 100 salonami (Wrocław); luki policzone."""
+    pop = {c: 1000.0 for c in disk(CENTER, k=12)} | {c: 1000.0 for c in disk(CITY, k=12)}
+    # salony co ok. 0,9 km w całym mieście (każdy punkt ma ich w 2 km kilkanaście), bez pustych obrzeży
+    pois = [("beauty", CITY[0] + (i % 10 - 4.5) * 0.008, CITY[1] + (i // 10 - 4.5) * 0.012) for i in range(100)]
+    return make_client(pop=pop, pois=pois, gaps=True)
+
+
+def test_surface_gap_mask_in_town_without_firms(gap_client):
+    j = surface(gap_client, type="beauty", demand="pop_f", reach_km=1.5).json()
+    values, gap = j["values"]["open"], j["gap"]["open"]
+    assert len(gap) == len(values)
+    assert all((g is None) == (v is None) for g, v in zip(gap, values))     # poza okręgiem None w obu
+    assert {g for g in gap if g is not None} == {1}                         # całe miasteczko to luka
+    assert j["top"]["open"] == []                                           # i nic z niego nie trafia do najlepszych miejsc
+    assert max(v for v in values if v is not None) > 0                      # mgła nadal pokazuje pełne E
+
+
+def test_surface_gap_absent_in_city_with_firms(gap_client):
+    j = surface(gap_client, type="beauty", demand="pop_f", reach_km=1.5, lat=CITY[0], lng=CITY[1], radius_km=1).json()
+    assert 1 not in set(j["gap"]["open"]) and j["top"]["open"]
+
+
+def test_surface_open_value_unchanged_by_gap_logic(client):
+    """Kolor mgły to nadal pełne E (taki sam jak bez luk) — luki wpływają tylko na kreskowanie i top-5."""
+    j = surface(client).json()
+    assert set(j["gap"]["open"]) <= {0, None} and j["top"]["open"]
+
+
+def test_surface_other_layers_have_no_gap(client):
+    assert "gap" not in surface(client, type="").json()
+    assert "gap" not in surface(client, demand="").json()

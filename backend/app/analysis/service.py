@@ -19,9 +19,10 @@ import numpy as np
 
 from backend.app.analysis.kernel import LocalFrame
 from backend.app.analysis.surface import (
-    competition_density, demand_potential, huff_and_potential, make_grid, round_significant, top_points,
+    competition_availability, competition_density, demand_potential, huff_and_potential, huff_multi, make_grid,
+    round_significant, top_points,
 )
-from backend.app.catalog import DEMANDS, PLURALS, TYPES, quality_warning
+from backend.app.catalog import DEMANDS, GAP_SHARE, PLURALS, TYPES, quality_warning
 from backend.app.db import DatabaseMissing, cursor, on_reset
 from etl.aggregate import table_exists
 
@@ -371,14 +372,14 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     g = grid_xy[mask]                                    # liczymy tylko punkty w okręgu
 
     # Źródła popytu: okrąg + bufor 4·zasięg (dalej rozpad i tak daje zero).
-    dem_xy, dem_w, window = np.empty((0, 2)), np.empty(0), None
+    dem_xy, dem_w, dem_cells, window = np.empty((0, 2)), np.empty(0), [], None
     if p.demand_id:
         res = demand_res(reach_km)
-        arr, window, _ = load_demand(con, p.demand_id, res, _box(p.lat, p.lng, p.radius_km + 4 * reach_km), p.months)
+        arr, window, cells = load_demand(con, p.demand_id, res, _box(p.lat, p.lng, p.radius_km + 4 * reach_km), p.months)
         if DEMANDS[p.demand_id].source == "permits" and window is None:
             warnings.append(PERMITS_MISSING_WARNING)
         if len(arr):
-            dem_xy, dem_w = frame.to_metric(arr[:, 0], arr[:, 1]), arr[:, 2]
+            dem_xy, dem_w, dem_cells = frame.to_metric(arr[:, 0], arr[:, 1]), arr[:, 2], cells
     # Konkurenci: dalej (8·zasięg), bo dostępność konkurencji C_i liczymy także dla źródeł z bufora.
     comp_xy = np.empty((0, 2))
     if p.type_id:
@@ -388,9 +389,14 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         elif "open" in layers:
             warnings.append(NO_COMPETITORS_WARNING)
 
-    computed = {}
+    computed, reliable = {}, None
     if "open" in layers:                                  # E i P liczymy razem — te same pary punkt–źródło
-        computed["open"], computed["demand"] = huff_and_potential(g, dem_xy, dem_w, comp_xy, reach_m)
+        # Dodatkowa kolumna wag w·luka daje E_luka: ilu klientów nowej firmy mieszka w „lukach” danych o firmach (etl/gaps.py).
+        gap_share = load_gap_share(con, p.type_id, demand_res(reach_km), dem_cells)
+        availability = competition_availability(dem_xy, comp_xy, reach_m)
+        e, pot = huff_multi(g, dem_xy, np.column_stack([dem_w, dem_w * gap_share]), availability, reach_m)
+        computed["open"], computed["demand"] = e[:, 0], pot[:, 0]
+        reliable = e[:, 0] - e[:, 1]                      # „wiarygodni klienci”: E bez klientów z luk
     elif "demand" in layers:
         computed["demand"] = demand_potential(g, dem_xy, dem_w, reach_m)
     else:
@@ -400,12 +406,21 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         computed["trend"] = (demand_potential(g, frame.to_metric(trend[:, 0], trend[:, 1]), trend[:, 2], reach_m)
                              if len(trend) else np.zeros(len(g)))
     min_sep_m = max(reach_m, radius_m / 5)
-    values, top = {}, {}
+    values, top, gap = {}, {}, None
     for layer in layers:
         full = np.full(len(grid_xy), np.nan)             # NaN = poza okręgiem
         full[mask] = round_significant(computed[layer])
         values[layer] = [None if np.isnan(x) else x for x in full.tolist()]
-        picks = top_points(np.nan_to_num(full), grid_xy, mask, min_sep_m)
+        score = full
+        if layer == "open" and reliable is not None:
+            # Punkt jest „luką”, gdy mniej niż połowa jego klientów jest wiarygodna. Takie punkty są szare na mapie
+            # i nie trafiają do najlepszych miejsc (porządek wg wiarygodnych klientów; pokazujemy pełne E).
+            rel_full = np.full(len(grid_xy), np.nan)
+            rel_full[mask] = round_significant(reliable)
+            is_gap = rel_full < (1 - GAP_SHARE) * full
+            gap = {"open": [None if np.isnan(r) else int(x) for r, x in zip(rel_full, is_gap)]}
+            score = np.where(is_gap, 0.0, rel_full)
+        picks = top_points(np.nan_to_num(score), grid_xy, mask, min_sep_m)
         lat, lng = frame.to_latlng(grid_xy[picks])
         top[layer] = [{"lat": float(a), "lng": float(b), "value": float(full[i]),
                        "name": street_label(con, float(a), float(b))}
@@ -421,6 +436,8 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
                          "nx": nx, "ny": ny, "cell_m": cell_m},
                 "values": values, "top": top, "notes": notes, "warnings": warnings,
                 "summary": area_summary(con, p, frame, rect)}
+    if gap is not None:
+        response["gap"] = gap
     if window is not None:
         response["permits_period"] = _period(window)
     return response
