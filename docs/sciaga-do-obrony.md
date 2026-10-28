@@ -1,10 +1,10 @@
-# Ściąga do obrony — „Gdzie otworzyć?” (wersja 3.1)
+# Ściąga do obrony — „Gdzie otworzyć?” (wersja 3.2)
 
 Prostym językiem: co robi aplikacja, jakie pojęcia z analizy danych przestrzennych w niej występują i **gdzie dokładnie w kodzie** je znaleźć. Każde pojęcie ma 3–6 zdań i wskazanie `plik:funkcja`.
 
 ## Jak to działa w jednym akapicie
 
-Wybierasz typ działalności (np. fryzjer) i/lub klientów (np. mieszkańcy), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (z jak daleka przychodzą klienci, 0,3–20 km), po czym klikasz „Pokaż mapę”. Dla okręgu wokół miejsca serwer liczy **powierzchnię ciągłą** na regularnej siatce (w metrach, EPSG:2180). Główna mapa **„Gdzie otworzyć”** pokazuje **szacowaną liczbę klientów nowej firmy** wg **modelu Huffa**; druga, **„Gdzie są klienci”**, pokazuje dostępny popyt. Kolor to żółto-czerwona „mgła” w skali logarytmicznej (małe wartości przezroczyste). Ruch mapy niczego nie przelicza; **kliknięcie w okręgu** pokazuje szczegóły (okrąg zasięgu, konkurenci, liczby), a **kliknięcie poza nim** wybiera nowe miejsce. Po prawej stronie jest **podsumowanie obszaru** (klienci na firmę na tle średniej krajowej) i top-5 z nazwami ulic. Dane (ludność ze spisu rozłożona na budynki OSM, firmy z OSM i Overture Maps, pozwolenia z GUNB) przetwarzamy **raz** do bazy DuckDB (ETL).
+Wybierasz typ działalności (np. fryzjer) i/lub klientów (np. mieszkańcy), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (z jak daleka przychodzą klienci, 0,3–20 km), po czym klikasz „Pokaż mapę”. Dla okręgu wokół miejsca serwer liczy **powierzchnię ciągłą** na regularnej siatce (w metrach, EPSG:2180). Główna mapa **„Gdzie otworzyć”** pokazuje **szacowaną liczbę klientów nowej firmy** wg **modelu Huffa**; druga, **„Gdzie są klienci”**, pokazuje dostępny popyt. Kolor to żółto-czerwona „mgła” w skali logarytmicznej (małe wartości przezroczyste). W trybie **„Cała Polska”** (domyślnym) mgła jest od razu: po oddaleniu to **gotowa mapa Polski** policzona w ETL, po przybliżeniu do miasta — mapa **na żywo** z ustawieniami użytkownika (sekcje 20–21). W trybie „Wybrane miejsce” ruch mapy niczego nie przelicza; **kliknięcie w okręgu** pokazuje szczegóły (okrąg zasięgu, konkurenci, liczby), a **kliknięcie poza nim** wybiera nowe miejsce. Po prawej stronie jest **podsumowanie obszaru** (klienci na firmę na tle średniej krajowej) i top-5 z nazwami ulic. Dane (ludność ze spisu rozłożona na budynki OSM, firmy z OSM i Overture Maps, pozwolenia z GUNB) przetwarzamy **raz** do bazy DuckDB (ETL).
 
 Wzór: `E(g) = Σ_i d_i · f(d_ig) / (f(d_ig) + C_i + A0)`, `f(d) = exp(−d / zasięg)`, `C_i = Σ_k f(d_ik)`, `A0 = exp(−1)`.
 
@@ -116,6 +116,20 @@ Warstwa „Gdzie budowy przybywa” (dla czynników z pozwoleń) pokazuje **zmia
 
 Ludność znam w komórkach H3 res 9 (środki oddalone o ok. 300 m). Zasięg klienta 100 m nie dodaje informacji — mgła byłaby „kanciasta”, a liczby przypadkowe. Dlatego zasięg ma minimum 0,3 km (w interfejsie i w API; starszy link z mniejszą wartością dostaje 0,3 i notatkę). Ta sama zasada: nie pokazuję dokładności, której dane nie mają (liczby w podsumowaniu zaokrąglam do setek/dziesiątek).
 
+## 20. Gotowa mapa Polski, piramida i dlaczego **maksimum** przy agregacji
+
+Policzenie Huffa dla całego kraju przy każdym ruchu mapy byłoby za wolne (w v2 męczyło), więc robię to **raz w ETL** (`etl/national.py`): dla ok. 420 tys. punktów (środki komórek H3 res 8, ~900 m od siebie) liczę te same funkcje co `/api/surface` (`surface.py: huff_multi`, `competition_density`, `demand_potentials`) dla **typowego zasięgu** branży. Wynik to tabela szeroka `national_r8` (kolumna = warstwa, 65 warstw). Do oddalonego widoku potrzebuję grubszych komórek, więc budowana jest **piramida** `national_r7 … r5`. Kluczowe pytanie: jak zagregować komórki-dzieci? **Biorę maksimum**, nie średnią ani sumę. Znaczenie dla użytkownika: oddalona komórka mówi „**najlepsze miejsce w tym rejonie**”. Średnia rozmyłaby małe, dobre ośrodki w otoczeniu pól i lasów (efekt MAUP: wynik zależy od wielkości komórek), a suma byłaby bez sensu (Huff nie jest addytywny po komórkach — to szacowana liczba klientów *jednej* nowej firmy w punkcie, nie ilość w komórce). Dla trendu (wartość ze znakiem) biorę wartość o **największym module**, żeby spadek nie zamieniał się w zero. Kod: `etl/national.py: build_pyramid`.
+
+**Stała skala kolorów:** `national_meta` trzyma percentyle p5 i p99 wartości dodatnich z całego kraju. Dzięki temu kolor znaczy to samo w Gdańsku i w Krakowie i nie zmienia się przy przesuwaniu mapy. Na mapie na żywo skala jest lokalna (dopasowana do widoku) — legenda wyraźnie to mówi. API: `backend/app/analysis/national.py`, rozdzielczość dobiera się tak, by komórka miała ≤ 4 px na ekranie.
+
+## 21. Dlaczego „gotowa mapa + na żywo”, a nie jedno albo drugie
+
+Sam widok na żywo dla całej Polski: za wolny (wiele sekund) i męczący (v2). Sama gotowa mapa: nie uwzględnia ustawień użytkownika (zasięg klienta, okres pozwoleń), a dane są policzone dla typowego zasięgu. Dlatego **oddalony widok jest natychmiastowy i gotowy**, a **po przybliżeniu do miasta** (widok o półprzekątnej ≤ 20 km) liczymy na żywo (`/api/surface` w trybie prostokąta widoku), bo wtedy to kilkaset ms. Przejście między nimi to krótkie przenikanie (~250 ms), a stare zapytania są anulowane (AbortController + numer zapytania), więc szybki zoom kółkiem nie robi wyścigów. To zastosowanie Shneidermana: **przegląd** (cała Polska) → **zawężenie** (przybliżenie) → **szczegóły** (klik).
+
+## 22. Dlaczego usunąłem brukarzy, ogrodników i instalatorów
+
+Tacy przedsiębiorcy pracują u klienta i zwykle nie mają lokalu, więc **prawie nie ma ich w OSM ani Overture** (setki–kilka tysięcy punktów wobec tysięcy–dziesiątek tysięcy firm; `docs/kompletnosc-danych.md`). Mapa „mało konkurencji” dla brukarza znaczyłaby tylko „mało wpisów w bazach” — to wprowadzałoby w błąd, a nie pomagało w decyzji. Dlatego znikły z listy typów (`catalog.py: HIDDEN_TYPES` — ETL dalej je zbiera pod przyszłe CEIDG). Czynniki popytu „nowe domy” zostają: brukarz wybiera klientów „nowe domy”, bez branży, i widzi, **gdzie się buduje** (i trend), czyli to, co otwarte dane naprawdę wiedzą. To też przykład podejścia „mapa mówi prawdę”: lepiej nie pokazać niż pokazać ładną bzdurę.
+
 ## Pytania, które może zadać prowadzący
 
 **1. Dlaczego heksagony, a nie kwadraty albo gminy — i czemu w v3 już ich nie widać na mapie?**
@@ -146,9 +160,18 @@ Nie działki (to miliony zapytań), tylko obręby ewidencyjne przez ULDK GUGiK: 
 Rozkłady są skośne, więc skala liniowa zalałaby mapę jednym kolorem; logarytm zachowuje proporcje (krok koloru ≈ podwojenie wartości). Paleta jednobarwna (YlOrRd) czyta się jako „więcej”, a tęcza (Borland & Taylor 2007) wprowadza fałszywe granice. Przezroczystość pozwala małym wartościom „zniknąć”, a etykiety miast zostają czytelne.
 
 **10. Jak zapewniłeś, że wyniki są szybkie?**
-Dane są przetwarzane raz (ETL → DuckDB). Zapytanie dotyczy tylko okręgu (≤ 30 km), siatka ma 25–31 tys. punktów w okręgu, pary (punkt, źródło) znajduje drzewo cKDTree porcjami po 2 000 punktów, a obie warstwy („Gdzie otworzyć” i „Gdzie są klienci”) liczone są w jednym przebiegu. Przy dużym zasięgu źródła popytu są grubsze (res 8/7). Czasy: 0,4–3,2 s (patrz `docs/raport-etl.md`, sekcja v3), a ostatnie wyniki są w pamięci podręcznej (LRU 32). Ruch mapy w ogóle nie wysyła zapytań.
+Dane są przetwarzane raz (ETL → DuckDB). Zapytanie dotyczy tylko okręgu (≤ 30 km), siatka ma 25–31 tys. punktów w okręgu, pary (punkt, źródło) znajduje drzewo cKDTree porcjami po 2 000 punktów, a obie warstwy („Gdzie otworzyć” i „Gdzie są klienci”) liczone są w jednym przebiegu. Przy dużym zasięgu źródła popytu są grubsze (res 8/7). Czasy: 0,4–3,2 s (patrz `docs/raport-etl.md`, sekcja v3), a ostatnie wyniki są w pamięci podręcznej (LRU 32). W trybie „Wybrane miejsce” ruch mapy w ogóle nie wysyła zapytań, a w trybie „Cała Polska” zapytania idą dopiero po zakończeniu ruchu (debounce); oddalony widok to gotowa mapa (kilkadziesiąt–kilkaset ms), zbliżony — liczony na żywo.
 
 **11. Dlaczego przepływ „miejsce + promień → mapa → klik”?**
 Zasada Shneidermana (1996): przegląd → zawężenie → szczegóły na żądanie. Wcześniejszy dynamiczny widok całej mapy był męczący i trudny do odczytania; teraz użytkownik zawęża zadanie, widzi okolicę, a liczby poznaje dopiero po kliknięciu.
 
 *Bonus — jak odtworzyć bazę?* `uv sync`, potem `uv run python -m etl.run_all` (kilka godzin: najdłużej pobieranie OSM, budynki i geokodowanie obrębów), a na końcu `start.bat`.
+
+**12. Czemu przy oddalaniu bierzesz maksimum, a nie średnią?**
+Bo oddalona komórka ma odpowiadać na pytanie „czy w tym rejonie jest jakieś dobre miejsce?”, a nie „jakie jest średnie miejsce?”. Średnia z komórek-dzieci gasiłaby małe, dobre ośrodki (efekt MAUP — wynik zależy od wielkości komórek). Maksimum zachowuje sens tej samej liczby co w widoku z bliska (szacowana liczba klientów w *najlepszym* punkcie), więc kolor przy przybliżaniu nie „skacze”. Wada: oddalona mapa jest bardziej „czerwona” niż przeciętne miejsce — mówię to w legendzie i w pytajniku.
+
+**13. Skąd wiesz, że gotowa mapa Polski zgadza się z mapą na żywo?**
+To te same funkcje (`huff_multi` jest używana też przez `huff_and_potential` dla `/api/surface`) i te same źródła popytu (komórki res 9 dla zasięgu ≤ 2 km), a test sprawdza, że wartość w punkcie res 8 jest równa `huff_expected` policzonemu wprost (z dokładnością zaokrąglenia do 3 cyfr znaczących). Różnica: gotowa mapa jest próbkowana co ~900 m, a mapa na żywo co 50–300 m.
+
+**14. Dlaczego usunąłeś część branż?**
+Patrz sekcja 22: nie mamy dla nich danych o firmach, więc „konkurencja” byłaby fikcją. Zostawiłem popyt „nowe domy”, bo na nim dane są dobre.

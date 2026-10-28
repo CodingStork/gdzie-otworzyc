@@ -12,7 +12,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from backend.app.analysis.layers import is_trend, layers_for
-from backend.app.analysis.service import _permit_window, _period, nearest_place_name
+from backend.app.analysis.service import _haversine_km, _permit_window, _period
 from backend.app.analysis.surface import top_points
 from backend.app.catalog import DEFAULT_MONTHS, TYPES, quality_warning
 from backend.app.db import DatabaseMissing, cursor, on_reset
@@ -27,7 +27,29 @@ LAT_LIMITS = (48.5, 55.5)
 LNG_LIMITS = (13.5, 24.5)
 TOP_NAME_MAX_KM = 8           # w dużym widoku nazwą miejsca jest najbliższa miejscowość nawet z kilku km
 NATIONAL_MISSING_MESSAGE = "Gotowa mapa Polski nie została jeszcze policzona. Uruchom: uv run python -m etl.run_all --only national"
+GAPS_NOTE = ("Największe wartości bywają skutkiem luk w danych o firmach (miejsca bez wpisów w OpenStreetMap i Overture Maps) — "
+             "zanim ruszysz z inwestycją, sprawdź konkurencję na miejscu.")
 NO_LAYER_NOTE = "Dla tego wyboru nie ma gotowej mapy Polski — przybliż mapę, a policzymy ją na żywo."
+
+
+# Nazwa miejsca w dużym widoku: najbliższa miejscowość, ale większa „przyciąga” mocniej (odległość dzielimy przez wagę) —
+# punkt przy rynku miasteczka ma nazywać się jak ono, a nie jak wieś oddalona o 3 km (w `service.nearest_place_name`
+# wygrywa rodzaj miejsca, co dla małego okręgu jest dobre, a dla widoku kraju dawało wsie zamiast miast).
+PLACE_WEIGHT = {"city": 3.0, "town": 2.0, "suburb": 1.0, "village": 1.0, "neighbourhood": 1.0, "quarter": 1.0, "hamlet": 0.5}
+
+
+def place_name(con, lat: float, lng: float, max_km: float = TOP_NAME_MAX_KM, check_table: bool = True) -> str | None:
+    if check_table and not table_exists(con, "places"):
+        return None
+    d = max_km / 110.0
+    rows = con.execute("SELECT name, kind, lat, lng FROM places WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                       [lat - d, lat + d, lng - d * 1.7, lng + d * 1.7]).fetchall()
+    best = None
+    for name, kind, plat, plng in rows:
+        dist = _haversine_km(lat, lng, plat, plng)
+        if dist <= max_km and (best is None or dist / PLACE_WEIGHT.get(kind, 1.0) < best[0]):
+            best = (dist / PLACE_WEIGHT.get(kind, 1.0), name)
+    return best[1] if best else None
 
 
 class NationalMissing(Exception):
@@ -65,9 +87,15 @@ def _scale_json(layer: str, p5, p99):
     return {"lo": float(max(p5, p99 / 100)), "hi": float(p99)}     # jak logScale w frontendzie: najwyżej 2 rzędy wielkości
 
 
+_tables_ok = [False]          # sprawdzenie istnienia tabel kosztuje kilka ms — robimy je raz na otwarcie bazy
+on_reset(lambda: _tables_ok.__setitem__(0, False))
+
+
 def _read_meta(con) -> dict:
-    if not (table_exists(con, "national_meta") and all(table_exists(con, f"national_r{r}") for r in RESOLUTIONS)):
-        raise NationalMissing()
+    if not _tables_ok[0]:
+        if not (table_exists(con, "national_meta") and all(table_exists(con, f"national_r{r}") for r in RESOLUTIONS)):
+            raise NationalMissing()
+        _tables_ok[0] = True
     return {layer: (p5, p99, reach) for layer, p5, p99, reach in
             con.execute("SELECT layer, p5, p99, reach_km FROM national_meta").fetchall()}
 
@@ -81,6 +109,8 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
         notes.append(NO_LAYER_NOTE)          # np. czynnik spoza zalecanych dla branży: „Gdzie otworzyć” liczy tylko tryb na żywo
     if type_id and quality_warning(TYPES[type_id].osm_quality):
         warnings.append(quality_warning(TYPES[type_id].osm_quality))
+    if "open" in layers or "competition" in layers:
+        notes.append(GAPS_NOTE)
     if layers:
         notes.append(f"Mapa Polski policzona dla typowego zasięgu: {str(f'{reach_km:g}').replace('.', ',')} km. "
                      "Przybliż, by zobaczyć Twoje ustawienia.")
@@ -124,6 +154,7 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
     cx, cy = np.meshgrid(km_x(centers_lng), km_y(centers_lat))
     tree = cKDTree(np.column_stack([km_x(lng), km_y(lat)])) if len(data) else None
 
+    has_places = table_exists(con, "places")
     in_view = (lat >= south) & (lat <= north) & (lng >= west) & (lng <= east)
     min_sep_m = width_km * 1000 / 6                                   # top-5 nie z jednego rejonu: odstęp ≥ 1/6 szerokości widoku
     for k, (logical, column) in enumerate(layers.items()):
@@ -146,7 +177,7 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
         picks = top_points(np.nan_to_num(v), xy, in_view, min_sep_m)
         response["top"][logical] = [
             {"lat": float(lat[i]), "lng": float(lng[i]), "value": float(v[i]),
-             "name": nearest_place_name(con, float(lat[i]), float(lng[i]), TOP_NAME_MAX_KM) or f"okolice {lat[i]:.2f}, {lng[i]:.2f}"}
+             "name": (place_name(con, float(lat[i]), float(lng[i]), check_table=False) if has_places else None) or f"okolice {lat[i]:.2f}, {lng[i]:.2f}"}
             for i in picks]
     if any("__new_" in c or c.startswith("trend__") for c in columns):          # warstwy z pozwoleń: podajemy okres danych
         window = _permit_window(con, 5, DEFAULT_MONTHS)

@@ -137,3 +137,19 @@ def test_surface_view_validation(client):
     assert view_surface(client, north=None).status_code == 422                     # niepełny prostokąt
     assert view_surface(client, west=LNG + 1).status_code == 422                   # odwrócone granice
     assert client.get("/api/surface", params=dict(type="beauty", demand="pop_f", reach_km=1)).status_code == 422   # ani okrąg, ani widok
+
+
+def test_view_place_name_prefers_larger_place_over_distant_village():
+    import duckdb
+    from backend.app.analysis.national import place_name
+    con = duckdb.connect()
+    con.execute("CREATE TABLE places (name VARCHAR, kind VARCHAR, lat DOUBLE, lng DOUBLE, h3 VARCHAR)")
+    con.execute("INSERT INTO places VALUES ('Miasteczko', 'town', 53.5835, 20.2865, 'x'), ('Wioska', 'village', 53.585, 20.324, 'x')")
+    assert place_name(con, 53.586, 20.286) == "Miasteczko"          # miasteczko 0,3 km od punktu, wioska 2,6 km
+    assert place_name(con, 53.585, 20.322) == "Wioska"              # przy samej wiosce wygrywa wioska
+    assert place_name(con, 40.0, 10.0) is None                      # nic w pobliżu
+
+
+def test_national_notes_warn_about_data_gaps(client):
+    assert any("luk" in n for n in national(client).json()["notes"])           # warstwy z konkurencją
+    assert not any("luk" in n for n in national(client, type="").json()["notes"])   # sam popyt nie zależy od firm

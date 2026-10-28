@@ -345,7 +345,9 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     notes += _reach_notes(p.demand_id, p.reach_km)
 
     center = np.zeros(2)
-    grid_xy, mask, cell_m, nx, ny = make_grid(center, radius_m)
+    # Widok na żywo liczy się po każdym przybliżeniu mapy, więc siatka jest rzadsza (promień/60 zamiast /90): to ~2× mniej punktów,
+    # a mgła i tak jest wygładzana ×4 przy rysowaniu.
+    grid_xy, mask, cell_m, nx, ny = make_grid(center, radius_m, divisions=60 if rect is not None else 90)
     if rect is not None:
         mask = _inside(grid_xy, radius_m, rect)
     g = grid_xy[mask]                                    # liczymy tylko punkty w okręgu

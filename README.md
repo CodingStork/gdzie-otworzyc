@@ -2,19 +2,20 @@
 
 Aplikacja webowa, która na mapie Polski pokazuje, **gdzie jest dużo potencjalnych klientów i mało konkurencji**. Projekt zaliczeniowy z przedmiotu „Analiza danych przestrzennych”.
 
-Wybierasz typ działalności (16 typów) i/lub klientów (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (0,3–20 km), po czym klikasz „Pokaż mapę”. Po lewej są **same ustawienia**, po prawej **wnioski**: legenda, podsumowanie obszaru (ilu klientów, ile firm, jak to wypada na tle średniej krajowej) i top-5 miejsc. W okręgu wokół miejsca widać **mgłę** — płynną żółto-czerwoną mapę — a kliknięcie w nią pokazuje szczegóły.
+Wybierasz typ działalności (11 typów) i/lub klientów (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę) i od razu widzisz **mgłę** — płynną żółto-czerwoną mapę — **na całą Polskę**. Przybliżasz mapę do swojego miasta, a mgła przelicza się **na żywo** z Twoimi ustawieniami (**zasięg klienta** 0,3–20 km); kliknięcie w mapę pokazuje szczegóły. Drugi tryb, **„Wybrane miejsce”**, analizuje okrąg (1–30 km) wokół jednego miejsca z podsumowaniem i porównaniem ze średnią krajową. Po lewej są **same ustawienia**, po prawej **wnioski**: legenda, top-5 miejsc w widoku i (dla widoku na żywo oraz wybranego miejsca) podsumowanie obszaru.
 
 ![Brzeg — salon kosmetyczny i kobiety, „Gdzie otworzyć” z podsumowaniem obszaru](docs/screenshots/v31-a-brzeg-salony-kobiety.png)
 
 ## Jak używać
 
+0. **Obszar analizy** (góra lewego panelu): **Cała Polska** (domyślnie) albo **Wybrane miejsce**. W trybie „Cała Polska” pola „Miejsce”, „Promień obszaru” i przycisk „Pokaż mapę” są ukryte — mgła pojawia się sama po wybraniu branży lub klientów. **Po oddaleniu** (widok szerszy niż ok. 40 km) widać **gotową mapę Polski** policzoną w ETL dla typowego zasięgu branży (suwak zasięgu jest wtedy nieaktywny, a skala kolorów stała dla całego kraju); **po przybliżeniu do miasta** mgła liczy się **na żywo** z ustawieniami użytkownika, a kolory dopasowują się do widoku (legenda to mówi). Zapytania idą dopiero po zakończeniu ruchu mapy (opóźnienie 250/400 ms, stare zapytania są anulowane), a nowa mgła przenika w starą (~250 ms). Kliknięcie w mapę pokazuje szczegóły punktu z przyciskiem **„Przeanalizuj to miejsce”** (przełącza na „Wybrane miejsce” z tym punktem).
 1. **Lewy panel (ustawienia):** wybierz **branżę** („Typ działalności”) i/lub **klientów** („Twoi klienci to”); przy nowych domach wybierz okres pozwoleń.
 2. **Podaj miejsce:** wpisz miejscowość albo kliknij mapę (pod polem widać nazwę wybranego miejsca). Ustaw **promień obszaru** (1–30 km) i **zasięg klienta** (suwak logarytmiczny 0,3–20 km; fryzjer ok. 1,5 km, market budowlany 10–20 km). Zasięg nie schodzi poniżej 0,3 km, bo dane o mieszkańcach mają rozdzielczość ok. 300 m.
 3. **„Co pokazać na mapie”:** typ + klienci → **„Gdzie otworzyć”** (szacowana liczba Twoich klientów, model Huffa) i **„Gdzie są klienci”**; tylko typ → **„Gdzie są {firmy}”**; tylko klienci → **„Gdzie są klienci”**; klienci z pozwoleń na budowę → dodatkowo **„Gdzie budowy przybywa”** (mapa trendu). Pytajniki wyjaśniają każdą warstwę.
-4. Kliknij **„Pokaż mapę”**. Poza okręgiem mapa jest przygaszona, w okręgu widać mgłę. Zmiana ustawień przelicza mapę sama (po 300 ms); **ruch i przybliżanie mapy nie wysyłają żadnych zapytań**.
+4. W trybie „Wybrane miejsce” kliknij **„Pokaż mapę”**. Poza okręgiem mapa jest przygaszona, w okręgu widać mgłę. Zmiana ustawień przelicza mapę sama (po 300 ms); **ruch i przybliżanie mapy nie wysyłają żadnych zapytań**.
 5. **Prawy panel (wnioski):** legenda (skala obejmuje 2 rzędy wielkości), **podsumowanie obszaru** („Kobiety: ok. 18 800 · Salony kosmetyczne w obszarze: 36 (OSM 18, Overture 18) · 1 firma na ok. 520 kobiet · Średnio w Polsce: 1 na ok. 610 · Konkurencja na poziomie średniej krajowej”) i top-5 z nazwami ulic (klik = przelot na mapie i szczegóły).
 6. **Kliknięcie w mapę:** w okręgu — szczegóły punktu (okrąg zasięgu, konkurenci, dymek: „W promieniu 1 km: ok. 11 100 kobiet · Otwierając tu, zdobyłbyś ok. 560 klientów”); **poza okręgiem — nowe miejsce** (pinezka i przerywany okrąg podglądu, stara mgła przygasa, przycisk „Pokaż mapę” się wyróżnia). Zamknięcie dymku czyści szczegóły.
-7. Adres strony (hash) zapisuje cały widok — link można wysłać i odtworzy tę samą mapę. Na telefonie panele to zakładki „Ustawienia” / „Wnioski” arkusza na dole (po „Pokaż mapę” otwierają się „Wnioski”).
+7. Adres strony (hash) zapisuje cały widok (`mode=pl` z `z`, `clat`, `clng` albo `mode=place` z miejscem) — link można wysłać i odtworzy tę samą mapę; stary link z usuniętym typem (np. brukarstwo) działa i zostawia czynnik popytu. Na telefonie panele to zakładki „Ustawienia” / „Wnioski” arkusza na dole (po „Pokaż mapę” otwierają się „Wnioski”).
 
 ## Przykłady użycia
 
@@ -43,6 +44,12 @@ Gdzie otworzyć:    E(g) = Σ_i d_i · f(d_ig) / ( f(d_ig) + C_i + A0 )     (mod
 
 **Model Huffa (1963):** każdy mieszkaniec wybiera między firmami, a bliższa przyciąga go mocniej; `E(g)` to szacowana liczba klientów **nowej** firmy w punkcie *g*. **Opcja zewnętrzna `A0`** reprezentuje „inne możliwości” (firmy spoza obu baz, zakupy gdzie indziej) i częściowo kompensuje ich niekompletność. Wartości na siatce są zwracane przez `/api/surface`, a przeglądarka **interpoluje je** (×4, smoothstep) i dopiero potem koloruje — stąd gładka powierzchnia bez widocznych kwadratów. Po kliknięciu `/api/point` liczy dokładne liczby w okręgu zasięgu i ten sam wzór Huffa dla jednego punktu.
 
+### Tryb „Cała Polska”: gotowa mapa + mapa na żywo (v3.2)
+
+Ciągłe liczenie całej Polski przy każdym ruchu mapy było męczące (v2), więc robimy to **raz w ETL** (krok `national`, `etl/national.py`): dla środków komórek H3 **res 8** (~900 m między nimi; komórki z ludnością i ich sąsiedzi, ok. 420 tys. punktów) liczymy **te same wzory i funkcje co `/api/surface`** (Huff, potencjał popytu, zagęszczenie firm, trend budów; odległości w EPSG:2180) dla **typowego zasięgu**: z branżą — jej `bandwidth_km`, bez branży — `default_reach_km` czynnika (spis 1,5 km, pozwolenia 10 km). Warstw jest 65 (`open__{typ}__{czynnik}`, `comp__{typ}`, `demand__{czynnik}__{zasięg}`, `trend__{czynnik}`), w tabeli szerokiej `national_r8` (kolumna = warstwa). Grubsze poziomy `national_r7 … r5` powstają przez **maksimum z komórek-dzieci** — oddalona mapa pokazuje „najlepsze miejsce w tym rejonie”, a średnia zalałaby małe, dobre ośrodki mgłą bez kontrastu (dla trendu bierzemy wartość o największym module, ze znakiem). Tabela `national_meta` trzyma p5 i p99 wartości dodatnich: **stałą skalę kolorów** dla całego kraju (te same kolory znaczą te same liczby w Gdańsku i w Krakowie, i nie „pływają” przy przesuwaniu mapy).
+
+`/api/national` wybiera rozdzielczość tak, by komórka H3 miała ≤ 4 px na ekranie (i nie więcej niż ~60 tys. komórek), układa wartości na siatce równej w rzucie Mercatora (żeby obraz przylegał do kafelków) i zwraca ją w tym samym kształcie co `/api/surface`, więc przeglądarka rysuje obie mgły tym samym kodem. Gdy dla wyboru nie ma gotowej warstwy (np. „Gdzie otworzyć” dla czynnika spoza zalecanych dla branży), odpowiedź mówi to w notatce, a użytkownik po przybliżeniu dostaje mapę na żywo. Mapa na żywo to `/api/surface` w trybie prostokąta widoku (`west,south,east,north`, bok ≤ 60 km): liczymy okrąg opisany na widoku, a maskę przycinamy do prostokąta, więc podsumowanie dotyczy „widocznego obszaru”.
+
 Najważniejsze decyzje metodyczne (szczegółowo w [docs/sciaga-do-obrony.md](docs/sciaga-do-obrony.md)):
 
 - **Metoda dasymetryczna:** ludność ze spisu (kwadraty 1 km, EPSG:3035) rozkładamy na heksagony H3 **res 9** (~0,1 km²) proporcjonalnie do wagi budynków mieszkalnych z OSM (powierzchnia × kondygnacje × współczynnik typu); przy dużym zasięgu źródła są grubsze (res 8/7), żeby było szybko.
@@ -54,7 +61,8 @@ Najważniejsze decyzje metodyczne (szczegółowo w [docs/sciaga-do-obrony.md](do
 - **Rozdzielczość danych a sensowny zasięg:** ludność mamy w komórkach H3 res 9 (~300 m między środkami), więc zasięg poniżej 0,3 km nie dodaje informacji — suwak zaczyna się od 0,3 km.
 - **Nazwy ulic w top-5:** z pliku OSM stawiamy punkty co ok. 100 m wzdłuż nazwanych dróg; nazwa miejsca = najbliższa ulica (≤ 150 m) + osiedle/miejscowość.
 - **Odległości w metrach** (lokalny układ metryczny wokół miejsca, a dla danych EPSG:2180), nie w stopniach; bufor `4·zasięg` wokół okręgu usuwa efekt krawędzi.
-- **Top-5** z odstępem ≥ max(zasięg, promień/5) (non-maximum suppression), tylko w okręgu.
+- **Top-5** z odstępem ≥ max(zasięg, promień/5) (non-maximum suppression), tylko w okręgu; w widoku całej Polski odstęp to 1/6 szerokości widoku, a nazwą jest najbliższa miejscowość (bez ulic).
+- **Uczciwy katalog branż (v3.2):** firmy pracujące u klienta (brukarz, ogrodnik, okna, kuchnie, instalator) znikły z listy „Typ działalności”: w OSM i Overture jest ich o rząd wielkości mniej niż w rzeczywistości ([docs/kompletnosc-danych.md](docs/kompletnosc-danych.md)), więc „mało konkurencji” znaczyłoby tylko „mało wpisów w bazach”. Czynniki popytu „nowe domy” zostają — brukarz wybiera klientów „nowe domy” bez branży i widzi, gdzie się buduje (także trend). ETL nadal zbiera te firmy do `poi` (`HIDDEN_TYPES`) pod przyszłe CEIDG.
 - **Geokodowanie obrębów ewidencyjnych** (ULDK GUGiK) dla pozwoleń na budowę — dokładność do obrębu, stąd minimalny zasięg 1 km dla nowych domów.
 
 ## Zasady wizualizacji, z których korzystamy
@@ -91,7 +99,9 @@ Podkład: pierwotnie planowano CARTO Positron, ale darmowe kafelki CARTO wymagaj
  │   streets, building_weights (dasymetria)   │DuckDB│   Huff, podsumowanie, trend,    │ JSON│ (bez buildowania)│
  │ Overture Places (S3)      → poi (dedup.)   │ plik │   top-5)                        │     │                  │
  │ GUNB RWDZ CSV + ULDK      → permits        │      │ /api/point (dymek punktu)       │     │                  │
- │ agregacja do H3 res 9 → 8 → 7 → 6 → 5      │      │ /api/poi /api/geocode /api/meta │     │                  │
+ │ agregacja do H3 res 9 → 8 → 7 → 6 → 5      │      │ /api/national (gotowa mapa PL)  │     │                  │
+ │ national: Huff dla całej Polski (res 8,    │      │ /api/poi /api/geocode /api/meta │     │                  │
+ │   piramida max → 7, 6, 5, stała skala)     │      │                                 │     │                  │
  └────────────────────────────────────────────┘      └─────────────────────────────────┘     └──────────────────┘
 ```
 
@@ -101,9 +111,9 @@ Struktura repozytorium:
 
 ```
 backend/app/        FastAPI: main.py, config.py, db.py, catalog.py, api/routes.py,
-                    analysis/{kernel,surface,service}.py, services/geocode.py
+                    analysis/{kernel,surface,service,layers,national}.py, services/geocode.py
 etl/                download.py, osm_poi.py, overture.py, streets.py, buildings.py, population.py, permits.py,
-                    geocode_obreby.py, aggregate.py, meta.py, run_all.py, sanity.py
+                    geocode_obreby.py, aggregate.py, national.py, meta.py, run_all.py, sanity.py
 frontend/           index.html, css/style.css, js/{app,api,map,ui,colors}.js
 tests/              pytest (małe fixture'y, baza testowa budowana w locie)
 docs/               specyfikacja, plan, źródła danych, raport ETL, ściąga do obrony
@@ -116,14 +126,14 @@ Wymagania: Windows 11, ≥ 16 GB RAM, ≥ 20 GB wolnego dysku, dostęp do intern
 ```powershell
 winget install --id=astral-sh.uv -e      # menedżer Pythona (po instalacji otwórz nową powłokę)
 uv sync                                   # Python 3.13 + biblioteki (środowisko .venv)
-uv run python -m etl.run_all              # ETL: pobieranie i przetwarzanie danych (kilka godzin, jednorazowo; budynki OSM ok. 16 min)
+uv run python -m etl.run_all              # ETL: pobieranie i przetwarzanie danych (kilka godzin, jednorazowo; budynki OSM ok. 16 min, gotowa mapa Polski ok. 12 min)
 uv run python -m etl.sanity               # kontrola jakości danych (powinno wypisać OK)
 start.bat                                 # serwer: http://localhost:8000
 ```
 
 Uwagi:
 - Używamy Pythona 3.13 zarządzanego przez `uv` (`.python-version`); systemowego Pythona nie trzeba instalować.
-- ETL można przerwać i wznowić — pobieranie i geokodowanie są wznawialne. `--only buildings,population,aggregate` uruchamia wybrane kroki, `--force` wymusza ponowne wykonanie.
+- ETL można przerwać i wznowić — pobieranie i geokodowanie są wznawialne, a krok `national` pomija policzone warstwy (po zmianie danych użyj `--only aggregate,national --force`; ok. 12 min). `--only buildings,population,aggregate` uruchamia wybrane kroki, `--force` wymusza ponowne wykonanie.
 - Serwer i ETL nie mogą działać jednocześnie (blokada pliku DuckDB).
 - Serwer ULDK (GUGiK) może po godzinie intensywnych zapytań zablokować połączenie (przekierowanie na stronę-pułapkę). Geokodowanie przerywa się wtedy z komunikatem; odczekaj i dokończ: `uv run python -m etl.run_all --only geocode,permits_hex,aggregate --force` (szczegóły i aktualny stan: [docs/raport-etl.md](docs/raport-etl.md)).
 - Testy: `uv run pytest -v`.
@@ -141,11 +151,11 @@ Aplikacja działa na komputerze domowym; z laptopa (np. na uczelni) otwierasz j�
 
 ## Ograniczenia danych
 
-- **OpenStreetMap i Overture Maps są niekompletne**, zwłaszcza dla małych usług (brukarze, ogrodnicy). Overture wyraźnie uzupełnia salony, fryzjerów i markety, ale wynik „mało konkurencji” może nadal oznaczać „mało wpisów w bazach”; dla typów z oceną „poor” aplikacja ostrzega, że to głównie mapa popytu. Deduplikacja jest heurystyką (odległość + podobieństwo nazw) — część duplikatów może zostać, a część różnych firm w jednym budynku zostać połączona.
+- **OpenStreetMap i Overture Maps są niekompletne**, zwłaszcza dla małych usług, dlatego typów „pracujących u klienta” (brukarze, ogrodnicy, instalatorzy) nie oferujemy; dla typów o ocenie „medium” (barber, paznokcie, tatuaż, fitness) aplikacja ostrzega łagodniej. Overture wyraźnie uzupełnia salony, fryzjerów i markety, ale wynik „mało konkurencji” może nadal oznaczać „mało wpisów w bazach”; dla typów z oceną „poor” aplikacja ostrzega, że to głównie mapa popytu. Deduplikacja jest heurystyką (odległość + podobieństwo nazw) — część duplikatów może zostać, a część różnych firm w jednym budynku zostać połączona.
 - **Spis ludności jest z 2021 r.**; uzupełniają go pozwolenia na budowę.
 - **Pozwolenie na budowę ≠ wybudowany dom** (budowa trwa 1–3 lata, część nie rusza), a lokalizacja jest z dokładnością do obrębu ewidencyjnego (miasto: osiedle, wieś: cała wieś) — dlatego zasięg dla nowych domów wynosi co najmniej 1 km.
 - **Ludność w heksagonach to szacunek modelowy** (metoda dasymetryczna): spis podaje tylko kwadraty 1 km, a rozkład wewnątrz kwadratu wynika z wag budynków OSM (nie znamy liczby mieszkań w budynku).
-- **Kolory są względne dla okręgu** (skala logarytmiczna dopasowana do wartości w wybranym obszarze), a liczby „klientów na firmę” bywają zawyżone, bo żadna baza nie zawiera wszystkich firm — dlatego porównujemy je ze średnią krajową liczoną tak samo.
+- **Kolory są względne dla okręgu i widoku na żywo** (gotowa mapa Polski ma skalę stałą dla kraju) (skala logarytmiczna dopasowana do wartości w wybranym obszarze), a liczby „klientów na firmę” bywają zawyżone, bo żadna baza nie zawiera wszystkich firm — dlatego porównujemy je ze średnią krajową liczoną tak samo.
 - Liczba „nowych budynków wielorodzinnych” to liczba inwestycji, nie mieszkań (rejestr nie podaje liczby lokali).
 - Wynik jest rankingiem pomocniczym, nie prognozą zysku.
 
@@ -156,4 +166,4 @@ Aplikacja działa na komputerze domowym; z laptopa (np. na uczelni) otwierasz j�
 - **M9** integracja CEIDG jako trzecie źródło konkurencji (kody PKD są już w katalogu),
 - **M10** dokładne geokodowanie działek dla ostatnich 24 miesięcy.
 
-Dokumentacja: [specyfikacja v3](docs/superpowers/specs/2026-10-27-v3-mgla-huff-design.md), [plan v3](docs/superpowers/plans/2026-10-27-v3-mgla-huff.md), [plan v3.1 (Overture, podsumowanie, trend)](docs/superpowers/plans/2026-10-27-v31-overture-podsumowanie.md), [specyfikacja v1](docs/superpowers/specs/2026-10-26-gdzie-otworzyc-design.md), [specyfikacja v2](docs/superpowers/specs/2026-10-27-widok-dynamiczny-design.md), [plan v1](docs/superpowers/plans/2026-10-26-gdzie-otworzyc.md), [plan v2](docs/superpowers/plans/2026-10-27-widok-dynamiczny.md), [źródła danych](docs/zrodla-danych.md), [raport ETL](docs/raport-etl.md), [ściąga do obrony](docs/sciaga-do-obrony.md).
+Dokumentacja: [specyfikacja v3](docs/superpowers/specs/2026-10-27-v3-mgla-huff-design.md), [plan v3](docs/superpowers/plans/2026-10-27-v3-mgla-huff.md), [plan v3.1 (Overture, podsumowanie, trend)](docs/superpowers/plans/2026-10-27-v31-overture-podsumowanie.md), [plan v3.2 (cała Polska)](docs/superpowers/plans/2026-10-28-v32-cala-polska.md), [kompletność danych](docs/kompletnosc-danych.md), [specyfikacja v1](docs/superpowers/specs/2026-10-26-gdzie-otworzyc-design.md), [specyfikacja v2](docs/superpowers/specs/2026-10-27-widok-dynamiczny-design.md), [plan v1](docs/superpowers/plans/2026-10-26-gdzie-otworzyc.md), [plan v2](docs/superpowers/plans/2026-10-27-widok-dynamiczny.md), [źródła danych](docs/zrodla-danych.md), [raport ETL](docs/raport-etl.md), [ściąga do obrony](docs/sciaga-do-obrony.md).
