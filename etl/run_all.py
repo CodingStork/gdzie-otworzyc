@@ -4,9 +4,9 @@ Uruchomienie:  uv run python -m etl.run_all [--only population,aggregate] [--for
 
 Kroki kosztowne (population, osm, permits) pomijają się, jeśli ich tabela już istnieje
 (chyba że --force). Download i geocode są wznawialne (nie pobierają/nie geokodują drugi raz tego
-samego). Kroki tanie i pochodne (permits_hex, aggregate) wykonują się zawsze, gdy nie podano --only;
+samego). Kroki tanie i pochodne (permits_hex, aggregate, national — ten ostatni pomija policzone warstwy) wykonują się zawsze, gdy nie podano --only;
 przy --only po zmianie „population”, „buildings” czy „permits_hex” dodaj też „aggregate” — dopiero on
-dodaje kolumny lat/lng i buduje grubsze rozdzielczości (kontrola jakości sanity to sprawdza). UWAGA: serwer aplikacji musi być zatrzymany —
+dodaje kolumny lat/lng i buduje grubsze rozdzielczości (kontrola jakości sanity to sprawdza); „national” liczy gotową mapę Polski z tych tabel, więc po zmianie danych użyj `--only aggregate,national --force`. UWAGA: serwer aplikacji musi być zatrzymany —
 ETL zapisuje do pliku bazy, który serwer trzyma otwarty tylko do odczytu.
 """
 import argparse
@@ -23,6 +23,7 @@ from etl.aggregate import build_aggregates, table_exists
 from etl.buildings import build_building_weights
 from etl.geocode_obreby import ULDK_URL, UldkClient, build_permits_hex, count_ungeocoded, geocode_missing
 from etl.meta import record_meta
+from etl.national import build_national
 from etl.osm_poi import build_poi_tables
 from etl.overture import S3_PLACES, build_overture_poi, download_places
 from etl.permits import build_permits_raw
@@ -30,7 +31,7 @@ from etl.population import build_hex_pop
 from etl.streets import build_streets_table
 
 # „buildings” przed „population”: ludność jest rozkładana na budynki (metoda dasymetryczna).
-STEPS = ("download", "osm", "overture", "streets", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate")
+STEPS = ("download", "osm", "overture", "streets", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate", "national")
 
 
 def _mtime(path: Path) -> datetime.datetime:
@@ -138,6 +139,10 @@ def _run_step(step: str, con, raw: dict, force: bool, data_dir: Path) -> object:
 
     if step == "aggregate":
         return build_aggregates(con)
+
+    if step == "national":
+        # Wznawialny na poziomie warstwy: policzone warstwy są pomijane, --force liczy wszystko od nowa.
+        return build_national(con, force=force)
     raise AssertionError(step)
 
 

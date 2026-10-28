@@ -2,13 +2,14 @@ import duckdb
 import pytest
 
 from etl.aggregate import build_aggregates
+from etl.national import build_national
 from etl.sanity import THRESHOLDS, check
 
 SMALL = dict(THRESHOLDS, pop_min=100, pop_max=200, hairdressers_min=2, places_min=2, permits_sf_12m_min=3,
-             missing_geom_max_share=0.5, building_weights_min=2, overture_min=1, beauty_total_min=1)
+             missing_geom_max_share=0.5, building_weights_min=2, overture_min=1, beauty_total_min=1, warsaw_top_share=None)
 
 
-def _good_db():
+def _good_db(national=True):
     con = duckdb.connect()
     con.execute("CREATE TABLE hex_pop_r9 (h3 VARCHAR, pop_total DOUBLE, pop_f DOUBLE, pop_m DOUBLE, pop_lt15 DOUBLE, pop_1564 DOUBLE, pop_ge65 DOUBLE)")
     con.execute("INSERT INTO hex_pop_r9 VALUES ('891e23c459bffff', 150, 1, 1, 1, 1, 1)")
@@ -28,6 +29,9 @@ def _good_db():
     con.execute("CREATE TABLE meta (source VARCHAR PRIMARY KEY, url VARCHAR, downloaded_at TIMESTAMP, rows BIGINT)")
     con.execute("INSERT INTO meta VALUES ('dasymetria', '', now(), 920)")        # 92‰ → 0,92 ludności przez budynki
     build_aggregates(con)
+    if national:
+        build_national(con, log=lambda *_: None)
+        con.execute("UPDATE national_meta SET p5 = 1, p99 = 2")    # mikrobaza nie ma wartości dodatnich w każdej warstwie
     return con
 
 
@@ -125,3 +129,43 @@ def test_poi_without_source_column_reported():
     con = _good_db()
     con.execute("ALTER TABLE poi DROP COLUMN source")
     assert any("Overture" in p for p in check(con, SMALL))
+
+
+def test_missing_national_tables_reported():
+    problems = check(_good_db(national=False), SMALL)
+    assert any("national" in p for p in problems)
+
+
+def test_missing_national_layer_reported():
+    con = _good_db()
+    con.execute("DELETE FROM national_meta WHERE layer = 'comp__beauty'")
+    assert any("comp__beauty" in p for p in check(con, SMALL))
+
+
+def test_empty_national_layer_reported():
+    con = _good_db()
+    con.execute("UPDATE national_meta SET p99 = NULL WHERE layer = 'comp__hairdresser'")
+    assert any("comp__hairdresser" in p and "dodatnich" in p for p in check(con, SMALL))
+
+
+def _national_db(tmp_path, center):
+    from tests.conftest import disk
+    from tests.factories import make_db
+    path = make_db(tmp_path / "w.duckdb", pop={c: 1000.0 for c in disk(center=center, k=10)}, pois=[("beauty", *center)])
+    con = duckdb.connect(str(path))
+    build_national(con, log=lambda *_: None)
+    return con
+
+
+def test_warsaw_centre_in_top_share(tmp_path):
+    from tests.conftest import CENTER
+    con = _national_db(tmp_path, CENTER)                # środek populacji = Warszawa → największy popyt
+    con.execute("UPDATE national_meta SET p5 = 1, p99 = 2")
+    problems = [p for p in check(con, dict(SMALL, warsaw_top_share=0.3)) if "Warszaw" in p]
+    assert problems == []
+
+
+def test_warsaw_without_points_reported(tmp_path):
+    con = _national_db(tmp_path, (51.11, 17.03))        # Wrocław — w Warszawie nie ma punktów
+    con.execute("UPDATE national_meta SET p5 = 1, p99 = 2")
+    assert any("Warszawy" in p for p in check(con, dict(SMALL, warsaw_top_share=0.05)))

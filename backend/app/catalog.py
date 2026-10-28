@@ -24,6 +24,7 @@ class Demand:
     kinds: tuple[str, ...]    # rodzaje budynków w permits: "sf" (jednorodzinny), "mf" (wielorodzinny)
     needs_months: bool        # czy w UI pokazać wybór okresu 12/24/36 miesięcy
     genitive: str             # dopełniacz liczby mnogiej do zdań typu „1 firma na ok. 260 {kobiet}”
+    default_reach_km: float = 1.5   # zasięg gotowej mapy Polski, gdy nie wybrano branży (z branżą: jej bandwidth_km)
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,8 @@ def _census(id: str, name: str, column: str, genitive: str) -> Demand:
 
 
 def _permits(id: str, name: str, kinds: tuple[str, ...], genitive: str) -> Demand:
-    return Demand(id, name, "permits", None, kinds, True, genitive)
+    # Pozwolenia mają lokalizację z dokładnością do obrębu (miasto: osiedle, wieś: cała wieś), więc domyślnie szeroki zasięg.
+    return Demand(id, name, "permits", None, kinds, True, genitive, default_reach_km=10.0)
 
 
 DEMANDS: dict[str, Demand] = {d.id: d for d in (

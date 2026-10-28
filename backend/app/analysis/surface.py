@@ -78,6 +78,44 @@ def competition_density(grid_xy, comp_xy, reach_m) -> np.ndarray:
     return _sum_by_target(grid_xy, comp_xy, [np.ones(len(comp_xy))], reach_m)[:, 0]
 
 
+def competition_availability(demand_xy, comp_xy, reach_m) -> np.ndarray:
+    """C_i = Σ_k f(d_ik) — „siła” istniejących konkurentów dla każdego źródła popytu i (patrz `huff_and_potential`)."""
+    return _sum_by_target(demand_xy, comp_xy, [np.ones(len(comp_xy))], reach_m)[:, 0]
+
+
+def huff_multi(grid_xy, demand_xy, demand_w, availability, reach_m) -> tuple[np.ndarray, np.ndarray]:
+    """Model Huffa dla WIELU czynników popytu naraz na tych samych źródłach (kolumny `demand_w`: źródła × czynniki).
+
+    Znalezienie par (punkt, źródło) jest najdroższe, a wagi czynników (np. kobiety, mężczyźni, wszyscy) tylko je mnożą,
+    więc liczymy je raz. `availability` to C_i z `competition_availability` — niezależne od czynnika, więc w ETL liczone raz na typ.
+    Zwraca (E, P): tablice (punkty × czynniki).
+    """
+    demand_w = np.asarray(demand_w, float)
+    demand_w = demand_w[:, None] if demand_w.ndim == 1 else demand_w
+    m = demand_w.shape[1]
+    out_e, out_p = np.zeros((len(grid_xy), m)), np.zeros((len(grid_xy), m))
+    if len(demand_xy) == 0 or len(grid_xy) == 0:
+        return out_e, out_p
+    tree = cKDTree(demand_xy)
+    for s in range(0, len(grid_xy), BLOCK):
+        part = grid_xy[s:s + BLOCK]
+        pairs = cKDTree(part).sparse_distance_matrix(tree, CUTOFF * reach_m, output_type="ndarray")
+        i, j = pairs["i"], pairs["j"]
+        f = np.exp(-pairs["v"] / reach_m)
+        share = f / (f + availability[j] + A0)           # szansa, że mieszkaniec j wybierze nową firmę
+        for k in range(m):
+            out_e[s:s + BLOCK, k] = np.bincount(i, weights=demand_w[j, k] * share, minlength=len(part))
+            out_p[s:s + BLOCK, k] = np.bincount(i, weights=demand_w[j, k] * f, minlength=len(part))
+    return out_e, out_p
+
+
+def demand_potentials(grid_xy, demand_xy, demand_w, reach_m) -> np.ndarray:
+    """P(g) dla wielu czynników naraz (kolumny `demand_w`); wynik: punkty × czynniki."""
+    demand_w = np.asarray(demand_w, float)
+    demand_w = demand_w[:, None] if demand_w.ndim == 1 else demand_w
+    return _sum_by_target(grid_xy, demand_xy, [demand_w[:, k] for k in range(demand_w.shape[1])], reach_m)
+
+
 def huff_and_potential(grid_xy, demand_xy, demand_w, comp_xy, reach_m) -> tuple[np.ndarray, np.ndarray]:
     """Model Huffa (1963) E(g) oraz potencjał popytu P(g) w jednym przebiegu po parach (punkt, źródło).
 
@@ -86,24 +124,12 @@ def huff_and_potential(grid_xy, demand_xy, demand_w, comp_xy, reach_m) -> tuple[
     „siła” istniejących konkurentów dla tego mieszkańca, a A0 to opcja zewnętrzna.
     Wynik E(g) = Σ_i d_i · (ta szansa) — suma po komórkach popytu. Mianownik jest zawsze ≥ A0 > 0,
     więc konkurent leżący dokładnie w punkcie g nie powoduje dzielenia przez zero.
-    Ponieważ f/(f+C+A0) = 1/(1 + (C+A0)/f), liczymy to jako wagę zależną od pary: patrz niżej.
     """
-    demand_w = np.asarray(demand_w, float)
-    out = np.zeros((len(grid_xy), 2))
     if len(demand_xy) == 0 or len(grid_xy) == 0:
-        return out[:, 0], out[:, 1]
-    # C_i liczymy raz dla każdej komórki popytu: konkurenci w zasięgu od jej środka.
-    C = _sum_by_target(demand_xy, comp_xy, [np.ones(len(comp_xy))], reach_m)[:, 0]
-    tree = cKDTree(demand_xy)
-    for s in range(0, len(grid_xy), BLOCK):
-        part = grid_xy[s:s + BLOCK]
-        pairs = cKDTree(part).sparse_distance_matrix(tree, CUTOFF * reach_m, output_type="ndarray")
-        i, j = pairs["i"], pairs["j"]
-        f = np.exp(-pairs["v"] / reach_m)
-        share = f / (f + C[j] + A0)                      # szansa, że mieszkaniec j wybierze nową firmę
-        out[s:s + BLOCK, 0] = np.bincount(i, weights=demand_w[j] * share, minlength=len(part))
-        out[s:s + BLOCK, 1] = np.bincount(i, weights=demand_w[j] * f, minlength=len(part))
-    return out[:, 0], out[:, 1]
+        return np.zeros(len(grid_xy)), np.zeros(len(grid_xy))
+    availability = competition_availability(demand_xy, comp_xy, reach_m)   # C_i raz dla każdej komórki popytu
+    e, p = huff_multi(grid_xy, demand_xy, np.asarray(demand_w, float), availability, reach_m)
+    return e[:, 0], p[:, 0]
 
 
 def huff_expected(grid_xy, demand_xy, demand_w, comp_xy, reach_m) -> np.ndarray:
@@ -126,3 +152,18 @@ def top_points(values: np.ndarray, xy: np.ndarray, mask: np.ndarray, min_sep_m: 
             if len(chosen) == n:
                 break
     return chosen
+
+
+def round_significant(values: np.ndarray, digits: int = 3) -> np.ndarray:
+    """Zaokrąglenie do `digits` cyfr znaczących (mniejsza odpowiedź JSON).
+
+    Zostawiamy 3 cyfry, a nie 2: przy 2 cyfrach gładko zmieniająca się powierzchnia dostawała widoczne
+    „schodki” (pierścienie jednego koloru) po zamianie na mgłę.
+    """
+    v = np.asarray(values, dtype=float)
+    out = np.zeros_like(v)
+    nz = v != 0                                          # wartości ujemne (spadek trendu) zaokrąglamy tak samo
+    size = np.abs(v[nz])
+    scale = 10.0 ** (np.floor(np.log10(size)) - (digits - 1))
+    out[nz] = np.sign(v[nz]) * np.round(size / scale) * scale
+    return out

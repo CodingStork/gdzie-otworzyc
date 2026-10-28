@@ -18,7 +18,7 @@ import numpy as np
 
 from backend.app.analysis.kernel import LocalFrame
 from backend.app.analysis.surface import (
-    competition_density, demand_potential, huff_and_potential, make_grid, top_points,
+    competition_density, demand_potential, huff_and_potential, make_grid, round_significant, top_points,
 )
 from backend.app.catalog import DEMANDS, PLURALS, TYPES, quality_warning
 from backend.app.db import DatabaseMissing, cursor, on_reset
@@ -313,21 +313,6 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame) -> dict:
     return summary
 
 
-def _round_significant(values: np.ndarray, digits: int = 3) -> np.ndarray:
-    """Zaokrąglenie do `digits` cyfr znaczących (mniejsza odpowiedź JSON).
-
-    Zostawiamy 3 cyfry, a nie 2: przy 2 cyfrach gładko zmieniająca się powierzchnia dostawała widoczne
-    „schodki” (pierścienie jednego koloru) po zamianie na mgłę.
-    """
-    v = np.asarray(values, dtype=float)
-    out = np.zeros_like(v)
-    nz = v != 0                                          # wartości ujemne (spadek trendu) zaokrąglamy tak samo
-    size = np.abs(v[nz])
-    scale = 10.0 ** (np.floor(np.log10(size)) - (digits - 1))
-    out[nz] = np.sign(v[nz]) * np.round(size / scale) * scale
-    return out
-
-
 def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     """Odpowiedź /api/surface: wartości na siatce w okręgu wokół miejsca + top-5 dla każdej warstwy."""
     layers = surface_layers(p)
@@ -378,7 +363,7 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     values, top = {}, {}
     for layer in layers:
         full = np.full(len(grid_xy), np.nan)             # NaN = poza okręgiem
-        full[mask] = _round_significant(computed[layer])
+        full[mask] = round_significant(computed[layer])
         values[layer] = [None if np.isnan(x) else x for x in full.tolist()]
         picks = top_points(np.nan_to_num(full), grid_xy, mask, min_sep_m)
         lat, lng = frame.to_latlng(grid_xy[picks])

@@ -24,6 +24,7 @@ THRESHOLDS = {
     "building_weights_min": 1_000_000,  # wierszy w building_weights (komórka spisu × heksagon)
     "overture_min": 100_000,          # firm z Overture w `poi` (po deduplikacji względem OSM)
     "beauty_total_min": 25_000,       # salony kosmetyczne łącznie (OSM + Overture)
+    "warsaw_top_share": 0.05,         # centrum Warszawy ma wśród punktów Polski popyt w górnych 5% (None = nie sprawdzaj)
 }
 REQUIRED_TABLES = ["hex_pop_r9", "poi", "places", "obreb_geom", "permits_r9", "building_weights",
                    "poi_counts_r9", "hex_pop_r5", "poi_counts_r5", "permits_r5"]
@@ -105,6 +106,41 @@ def check(con: duckdb.DuckDBPyConnection, thresholds: dict = THRESHOLDS) -> list
     for table in ("hex_pop_r5", "poi_counts_r5", "permits_r5"):
         if has(table) and _scalar(con, f"SELECT COUNT(*) FROM {table}") == 0:
             problems.append(f"Tabela {table} jest pusta")
+    problems += _check_national(con, thresholds)
+    return problems
+
+
+WARSAW = (52.2297, 21.0122)
+
+
+def _check_national(con, thresholds: dict) -> list[str]:
+    """Gotowa mapa Polski: każda warstwa z katalogu istnieje i ma wartości dodatnie, a centrum Warszawy jest w górnych 5% popytu."""
+    from backend.app.analysis.layers import demand_layer, expected_layers
+    from backend.app.catalog import DEMANDS
+    if not table_exists(con, "national_meta") or not table_exists(con, "national_r8"):
+        return ["Brak gotowej mapy Polski (national_meta / national_r8) — uruchom krok 'national'"]
+    problems = []
+    meta = {r[0]: (r[1], r[2]) for r in con.execute("SELECT layer, p5, p99 FROM national_meta").fetchall()}
+    columns = {r[0] for r in con.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'national_r8'").fetchall()}
+    for layer in expected_layers():
+        if layer not in meta or layer not in columns:
+            problems.append(f"Brak warstwy {layer} w national_r8 — uruchom krok 'national'")
+        elif meta[layer][1] is None:
+            problems.append(f"Warstwa {layer} nie ma żadnych wartości dodatnich")
+    share = thresholds.get("warsaw_top_share")
+    layer = demand_layer("pop_total", DEMANDS["pop_total"].default_reach_km)
+    if share is not None and layer in columns:
+        row = con.execute(f'''SELECT MAX("{layer}") FROM national_r8
+                              WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?''',
+                          [WARSAW[0] - 0.01, WARSAW[0] + 0.01, WARSAW[1] - 0.015, WARSAW[1] + 0.015]).fetchone()[0]
+        if row is None:
+            problems.append("Brak punktów gotowej mapy Polski w centrum Warszawy")
+        else:
+            threshold = _scalar(con, f'SELECT quantile_cont("{layer}", {1 - share}) FROM national_r8 WHERE "{layer}" > 0')
+            if row < threshold:
+                problems.append(f"Centrum Warszawy ma w {layer} {row:.0f}, poniżej progu górnych {share:.0%} ({threshold:.0f}) — "
+                                "źle policzona gotowa mapa Polski?")
     return problems
 
 
