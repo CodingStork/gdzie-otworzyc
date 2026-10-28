@@ -24,10 +24,11 @@ THRESHOLDS = {
     "building_weights_min": 1_000_000,  # wierszy w building_weights (komórka spisu × heksagon)
     "overture_min": 100_000,          # firm z Overture w `poi` (po deduplikacji względem OSM)
     "beauty_total_min": 25_000,       # salony kosmetyczne łącznie (OSM + Overture)
+    "gap_beauty_share": (0.005, 0.05),  # ludność w „lukach” danych o salonach: pomiar v3.3 = 1,7% (None = nie sprawdzaj)
     "warsaw_top_share": 0.05,         # centrum Warszawy ma wśród punktów Polski popyt w górnych 5% (None = nie sprawdzaj)
 }
 REQUIRED_TABLES = ["hex_pop_r9", "poi", "places", "obreb_geom", "permits_r9", "building_weights",
-                   "poi_counts_r9", "hex_pop_r5", "poi_counts_r5", "permits_r5"]
+                   "poi_counts_r9", "gap_share", "gap_rates", "hex_pop_r5", "poi_counts_r5", "permits_r5"]
 
 
 def _scalar(con, sql: str):
@@ -106,6 +107,14 @@ def check(con: duckdb.DuckDBPyConnection, thresholds: dict = THRESHOLDS) -> list
     for table in ("hex_pop_r5", "poi_counts_r5", "permits_r5"):
         if has(table) and _scalar(con, f"SELECT COUNT(*) FROM {table}") == 0:
             problems.append(f"Tabela {table} jest pusta")
+    if has("gap_share") and has("hex_pop_r9") and thresholds.get("gap_beauty_share"):
+        low, high = thresholds["gap_beauty_share"]
+        in_gap = _scalar(con, """SELECT COALESCE(SUM(p.pop_total), 0) FROM gap_share g JOIN hex_pop_r9 p ON p.h3 = g.h3
+                                 WHERE g.type_id = 'beauty' AND g.res = 9""")
+        share = in_gap / max(_scalar(con, "SELECT SUM(pop_total) FROM hex_pop_r9"), 1)
+        if not low <= share <= high:
+            problems.append(f"Udział ludności w lukach danych o salonach {share:.2%} poza zakresem [{low:.1%}; {high:.0%}] — "
+                            "zmieniły się dane o firmach albo źle liczone luki (krok 'gaps')")
     problems += _check_national(con, thresholds)
     return problems
 

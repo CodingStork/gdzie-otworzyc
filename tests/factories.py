@@ -9,6 +9,7 @@ import duckdb
 import h3
 
 from etl.aggregate import build_aggregates
+from etl.gaps import build_gaps
 from etl.national import build_national
 
 # Proporcje podkategorii ludności zbliżone do krajowych (jak po imputacji w ETL).
@@ -24,10 +25,12 @@ def make_db(
     meta: list[tuple[str, str, str, int]] = (),
     streets: list[tuple[str, float, float]] = (),
     national: bool = False,
+    gaps: bool = False,
 ) -> Path:
     """pop: h3 (res 9) → pop_total; pois: (type_id, lat, lng[, source]) — źródło domyślnie 'osm'; permits: (lat, lng, 'YYYY-MM-01', kind, n);
     places: (name, kind, lat, lng); meta: (source, url, 'YYYY-MM-DD HH:MM:SS', rows);
-    streets: (name, lat, lng); national: czy policzyć też gotową mapę Polski (krok ETL `national`)."""
+    streets: (name, lat, lng); gaps: czy policzyć luki w danych o firmach (krok ETL `gaps`);
+    national: czy policzyć też gotową mapę Polski (krok ETL `national`)."""
     con = duckdb.connect(str(path))
 
     cols = ", ".join(f"{c} DOUBLE" for c in ["pop_total", *POP_SHARES])
@@ -63,6 +66,8 @@ def make_db(
         con.executemany("INSERT INTO meta VALUES (?, ?, CAST(? AS TIMESTAMP), ?)", [list(m) for m in meta])
 
     build_aggregates(con)
+    if gaps or national:
+        build_gaps(con)
     if national:
         build_national(con, log=lambda *_: None)
     con.close()

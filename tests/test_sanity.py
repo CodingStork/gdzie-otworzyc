@@ -2,11 +2,13 @@ import duckdb
 import pytest
 
 from etl.aggregate import build_aggregates
+from etl.gaps import build_gaps
 from etl.national import build_national
 from etl.sanity import THRESHOLDS, check
 
 SMALL = dict(THRESHOLDS, pop_min=100, pop_max=200, hairdressers_min=2, places_min=2, permits_sf_12m_min=3,
-             missing_geom_max_share=0.5, building_weights_min=2, overture_min=1, beauty_total_min=1, warsaw_top_share=None)
+             missing_geom_max_share=0.5, building_weights_min=2, overture_min=1, beauty_total_min=1, warsaw_top_share=None,
+             gap_beauty_share=None)
 
 
 def _good_db(national=True):
@@ -29,6 +31,7 @@ def _good_db(national=True):
     con.execute("CREATE TABLE meta (source VARCHAR PRIMARY KEY, url VARCHAR, downloaded_at TIMESTAMP, rows BIGINT)")
     con.execute("INSERT INTO meta VALUES ('dasymetria', '', now(), 920)")        # 92‰ → 0,92 ludności przez budynki
     build_aggregates(con)
+    build_gaps(con)
     if national:
         build_national(con, log=lambda *_: None)
         con.execute("UPDATE national_meta SET p5 = 1, p99 = 2")    # mikrobaza nie ma wartości dodatnich w każdej warstwie
@@ -169,3 +172,16 @@ def test_warsaw_without_points_reported(tmp_path):
     con = _national_db(tmp_path, (51.11, 17.03))        # Wrocław — w Warszawie nie ma punktów
     con.execute("UPDATE national_meta SET p5 = 1, p99 = 2")
     assert any("Warszawy" in p for p in check(con, dict(SMALL, warsaw_top_share=0.05)))
+
+
+def test_missing_gap_tables_reported():
+    con = _good_db(national=False)
+    con.execute("DROP TABLE gap_share")
+    assert any("gap_share" in p for p in check(con, SMALL))
+
+
+def test_gap_share_of_beauty_out_of_range():
+    con = _good_db(national=False)
+    con.execute("INSERT INTO gap_share VALUES ('beauty', 9, '891e23c459bffff', 1.0)")     # cała ludność w luce = 100%
+    thresholds = dict(SMALL, gap_beauty_share=(0.005, 0.05))
+    assert any("lukach" in p for p in check(con, thresholds))

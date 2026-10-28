@@ -1,10 +1,10 @@
-"""Orkiestracja ETL: pobieranie → OSM → Overture → ulice → budynki → ludność → pozwolenia → geokodowanie → agregacja.
+"""Orkiestracja ETL: pobieranie → OSM → Overture → ulice → budynki → ludność → pozwolenia → geokodowanie → agregacja → luki w danych → mapa Polski.
 
 Uruchomienie:  uv run python -m etl.run_all [--only population,aggregate] [--force]
 
 Kroki kosztowne (population, osm, permits) pomijają się, jeśli ich tabela już istnieje
 (chyba że --force). Download i geocode są wznawialne (nie pobierają/nie geokodują drugi raz tego
-samego). Kroki tanie i pochodne (permits_hex, aggregate, national — ten ostatni pomija policzone warstwy) wykonują się zawsze, gdy nie podano --only;
+samego). Kroki tanie i pochodne (permits_hex, aggregate, gaps, national — ten ostatni pomija policzone warstwy) wykonują się zawsze, gdy nie podano --only;
 przy --only po zmianie „population”, „buildings” czy „permits_hex” dodaj też „aggregate” — dopiero on
 dodaje kolumny lat/lng i buduje grubsze rozdzielczości (kontrola jakości sanity to sprawdza); „national” liczy gotową mapę Polski z tych tabel, więc po zmianie danych użyj `--only aggregate,national --force`. UWAGA: serwer aplikacji musi być zatrzymany —
 ETL zapisuje do pliku bazy, który serwer trzyma otwarty tylko do odczytu.
@@ -21,6 +21,7 @@ from backend.app.config import DATA_DIR, USER_AGENT
 from etl import download as dl
 from etl.aggregate import build_aggregates, table_exists
 from etl.buildings import build_building_weights
+from etl.gaps import build_gaps
 from etl.geocode_obreby import ULDK_URL, UldkClient, build_permits_hex, count_ungeocoded, geocode_missing
 from etl.meta import record_meta
 from etl.national import build_national
@@ -31,7 +32,7 @@ from etl.population import build_hex_pop
 from etl.streets import build_streets_table
 
 # „buildings” przed „population”: ludność jest rozkładana na budynki (metoda dasymetryczna).
-STEPS = ("download", "osm", "overture", "streets", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate", "national")
+STEPS = ("download", "osm", "overture", "streets", "buildings", "population", "permits", "geocode", "permits_hex", "aggregate", "gaps", "national")
 
 
 def _mtime(path: Path) -> datetime.datetime:
@@ -139,6 +140,10 @@ def _run_step(step: str, con, raw: dict, force: bool, data_dir: Path) -> object:
 
     if step == "aggregate":
         return build_aggregates(con)
+
+    if step == "gaps":
+        # Tanie (kilkadziesiąt sekund) i zależne od firm oraz ludności, więc liczone od nowa przy każdym uruchomieniu.
+        return build_gaps(con)
 
     if step == "national":
         # Wznawialny na poziomie warstwy: policzone warstwy są pomijane, --force liczy wszystko od nowa.

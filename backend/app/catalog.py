@@ -59,6 +59,14 @@ def quality_warning(quality: str) -> str | None:
 MONTHS_OPTIONS = (12, 24, 36)
 DEFAULT_MONTHS = 24
 
+# „Mało danych o firmach” (v3.3). W OSM i Overture brakuje części firm, a model Huffa wierzy danym: w miasteczku bez ani
+# jednego salonu „nowa firma zgarnia wszystkie klientki”. Dlatego sprawdzamy, czy w okolicy jest podejrzanie mało firm
+# w porównaniu ze średnią krajową (firm danego typu na mieszkańca). Progi ustalono pomiarem (docs/raport-etl.md, v3.3):
+GAP_RADIUS_KM = 2        # okolica komórki: ok. promień małego miasta
+GAP_MIN_EXPECTED = 3     # poniżej 3 „oczekiwanych” firm brak firm bywa prawdziwy (wieś) — wtedy nie oceniamy
+GAP_MAX_RATIO = 0.25     # luka: w danych jest najwyżej ¼ tego, co dałaby średnia krajowa
+GAP_SHARE = 0.5          # miejsce jest „podejrzane”, gdy ponad połowa jego klientów mieszka w lukach
+
 
 def _census(id: str, name: str, column: str, genitive: str) -> Demand:
     return Demand(id, name, "census", column, (), False, genitive)
