@@ -6,7 +6,10 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.app.analysis.service import SurfaceParams, cached_surface, point_details
-from backend.app.catalog import DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
+from backend.app.analysis.national import (
+    NATIONAL_MISSING_MESSAGE, PX_RANGE, NationalMissing, cached_national,
+)
+from backend.app.catalog import DEFAULT_MONTHS, DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
 from backend.app.config import ATTRIBUTION, USER_AGENT
 from backend.app.db import DatabaseMissing, cursor
 from backend.app.services.geocode import Geocoder, GeocoderUnavailable
@@ -69,28 +72,84 @@ def _check_in_poland(lat: float, lng: float, what: str) -> None:
         raise _bad_request(f"{what} poza Polską")
 
 
+VIEW_MAX_KM = 60       # największy bok „widocznego obszaru” liczonego na żywo
+
+
+def _view_params(west: float, south: float, east: float, north: float) -> tuple[float, float, tuple]:
+    """Prostokąt widoku → (lat środka, lng środka, bbox); bok większy niż 60 km albo poza Polską → 422."""
+    if not all(math.isfinite(v) for v in (west, south, east, north)) or not (west < east and south < north):
+        raise _bad_request("Nieprawidłowy prostokąt widoku")
+    mid_lat, mid_lng = (south + north) / 2, (west + east) / 2
+    _check_in_poland(mid_lat, mid_lng, "Widok")
+    width_km = (east - west) * 111.32 * math.cos(math.radians(mid_lat))
+    height_km = (north - south) * 110.54
+    if max(width_km, height_km) > VIEW_MAX_KM:
+        raise _bad_request(f"Widoczny obszar może mieć bok najwyżej {VIEW_MAX_KM} km — przybliż mapę")
+    return mid_lat, mid_lng, (west, south, east, north)
+
+
 @router.get("/surface")
 def surface(
     type_id: str = Query(default="", alias="type"),
     demand: str = Query(default=""),
-    lat: float = Query(),
-    lng: float = Query(),
-    radius_km: float = Query(),
+    lat: float | None = Query(default=None),
+    lng: float | None = Query(default=None),
+    radius_km: float | None = Query(default=None),
     reach_km: float = Query(),
     months: int = 24,
+    west: float | None = Query(default=None),
+    south: float | None = Query(default=None),
+    east: float | None = Query(default=None),
+    north: float | None = Query(default=None),
 ) -> dict:
-    """Mapa okolicy: wartości na siatce w okręgu wokół miejsca. Puste `type` / `demand` = brak wyboru."""
+    """Mapa okolicy: wartości na siatce w okręgu wokół miejsca (`lat`, `lng`, `radius_km`) albo w prostokącie widoku mapy
+    (`west`, `south`, `east`, `north`, bok ≤ 60 km). Puste `type` / `demand` = brak wyboru."""
     _check_selection(type_id, demand, months)
-    _check_in_poland(lat, lng, "Miejsce")
-    if not RADIUS_KM[0] <= radius_km <= RADIUS_KM[1]:
-        raise _bad_request("Promień obszaru musi mieścić się w zakresie 1–30 km")
     if not REACH_KM[0] <= reach_km <= REACH_KM[1]:
         raise _bad_request("Zasięg klienta (reach_km) musi mieścić się w zakresie 0,1–20 km (wartości poniżej 0,3 km są podnoszone do 0,3 km)")
-    params = SurfaceParams(type_id or None, demand or None, lat, lng, radius_km, reach_km, months)
+    view = [west, south, east, north]
+    bbox = None
+    if any(v is not None for v in view):
+        if any(v is None for v in view):
+            raise _bad_request("Podaj wszystkie cztery granice widoku: west, south, east, north")
+        lat, lng, bbox = _view_params(*view)
+        radius_km = 1.0                     # promień okręgu opisanego policzy serwis z prostokąta
+    else:
+        if lat is None or lng is None or radius_km is None:
+            raise _bad_request("Podaj miejsce (lat, lng) i promień obszaru albo granice widoku")
+        _check_in_poland(lat, lng, "Miejsce")
+        if not RADIUS_KM[0] <= radius_km <= RADIUS_KM[1]:
+            raise _bad_request("Promień obszaru musi mieścić się w zakresie 1–30 km")
+    params = SurfaceParams(type_id or None, demand or None, lat, lng, radius_km, reach_km, months, bbox)
     try:
         return cached_surface(params)
     except DatabaseMissing:
         raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
+
+
+@router.get("/national")
+def national(
+    type_id: str = Query(default="", alias="type"),
+    demand: str = Query(default=""),
+    west: float = Query(),
+    south: float = Query(),
+    east: float = Query(),
+    north: float = Query(),
+    px: int = Query(default=1000),
+) -> dict:
+    """Gotowa mapa Polski (tryb „Cała Polska”): warstwy policzone w ETL dla typowego zasięgu, stała skala kolorów.
+    `px` = szerokość mapy w pikselach (steruje rozdzielczością)."""
+    _check_selection(type_id, demand, DEFAULT_MONTHS)
+    if not all(math.isfinite(v) for v in (west, south, east, north)) or not (west < east and south < north):
+        raise _bad_request("Nieprawidłowy prostokąt widoku")
+    if not PX_RANGE[0] <= px <= PX_RANGE[1]:
+        raise _bad_request(f"Szerokość mapy (px) musi mieścić się w zakresie {PX_RANGE[0]}–{PX_RANGE[1]}")
+    try:
+        return cached_national(type_id or None, demand or None, west, south, east, north, px)
+    except DatabaseMissing:
+        raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
+    except NationalMissing:
+        raise HTTPException(status_code=503, detail=NATIONAL_MISSING_MESSAGE)
 
 
 @router.get("/point")

@@ -9,6 +9,7 @@ import duckdb
 import h3
 
 from etl.aggregate import build_aggregates
+from etl.national import build_national
 
 # Proporcje podkategorii ludności zbliżone do krajowych (jak po imputacji w ETL).
 POP_SHARES = {"pop_f": 0.515, "pop_m": 0.483, "pop_lt15": 0.153, "pop_1564": 0.651, "pop_ge65": 0.187}
@@ -22,10 +23,11 @@ def make_db(
     places: list[tuple[str, str, float, float]] = (),
     meta: list[tuple[str, str, str, int]] = (),
     streets: list[tuple[str, float, float]] = (),
+    national: bool = False,
 ) -> Path:
     """pop: h3 (res 9) → pop_total; pois: (type_id, lat, lng[, source]) — źródło domyślnie 'osm'; permits: (lat, lng, 'YYYY-MM-01', kind, n);
     places: (name, kind, lat, lng); meta: (source, url, 'YYYY-MM-DD HH:MM:SS', rows);
-    streets: (name, lat, lng)."""
+    streets: (name, lat, lng); national: czy policzyć też gotową mapę Polski (krok ETL `national`)."""
     con = duckdb.connect(str(path))
 
     cols = ", ".join(f"{c} DOUBLE" for c in ["pop_total", *POP_SHARES])
@@ -61,5 +63,7 @@ def make_db(
         con.executemany("INSERT INTO meta VALUES (?, ?, CAST(? AS TIMESTAMP), ?)", [list(m) for m in meta])
 
     build_aggregates(con)
+    if national:
+        build_national(con, log=lambda *_: None)
     con.close()
     return path

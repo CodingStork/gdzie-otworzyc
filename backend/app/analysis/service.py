@@ -6,6 +6,7 @@ Przepływ `run_surface` (spec v3 §3):
   3. wartości na siatce: „Gdzie otworzyć” (model Huffa), „Gdzie są klienci”, „Gdzie są firmy”,
   4. top-5 maksimów w okręgu (z odstępem), nazwy najbliższych miejscowości.
 """
+import dataclasses
 import datetime
 import functools
 import math
@@ -137,6 +138,9 @@ class SurfaceParams:
     radius_km: float          # promień analizowanego obszaru (okrąg wokół miejsca)
     reach_km: float           # zasięg klienta (parametr rozpadu odległości)
     months: int = 24
+    # Tryb „widoczny obszar” (west, south, east, north): zamiast okręgu analizujemy prostokąt widoku mapy. Wtedy lat/lng to jego
+    # środek, a radius_km promień okręgu OPISANEGO na prostokącie (z niego bierzemy dane i siatkę), maska przycina siatkę do prostokąta.
+    bbox: tuple[float, float, float, float] | None = None
 
 
 def _is_permits(demand_id: str | None) -> bool:
@@ -275,21 +279,29 @@ def verdict(per_firm: float | None, national: float | None) -> str | None:
     return "more" if per_firm < 0.8 * national else "similar"
 
 
-def area_summary(con, p: SurfaceParams, frame: LocalFrame) -> dict:
-    """Liczby dla całego okręgu obszaru: popyt, firmy (OSM / Overture), ile klientów na firmę, porównanie z Polską.
+def _inside(xy: np.ndarray, radius_m: float, rect) -> np.ndarray:
+    """Maska punktów (metry w lokalnym układzie) w obszarze analizy: w prostokącie widoku `rect` (x0, y0, x1, y1) albo w okręgu."""
+    if rect is not None:
+        return (xy[:, 0] >= rect[0]) & (xy[:, 0] <= rect[2]) & (xy[:, 1] >= rect[1]) & (xy[:, 1] <= rect[3])
+    return np.hypot(xy[:, 0], xy[:, 1]) <= radius_m
 
-    Popyt liczymy z komórek res 9, których środek leży w okręgu; firmy — punkty `poi` w okręgu.
+
+def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
+    """Liczby dla całego obszaru analizy (okrąg albo widoczny prostokąt): popyt, firmy (OSM / Overture), ile klientów na firmę, porównanie z Polską.
+
+    Popyt liczymy z komórek res 9, których środek leży w obszarze; firmy — punkty `poi` w obszarze.
     """
     radius_m = p.radius_km * 1000
     box = _box(p.lat, p.lng, p.radius_km)
     summary = {"demand_total": None, "demand_genitive": None, "competitors": None, "type_plural": None,
-               "per_firm": None, "national_per_firm": None, "verdict": None, "radius_km": p.radius_km}
+               "per_firm": None, "national_per_firm": None, "verdict": None, "radius_km": p.radius_km,
+               "shape": "view" if rect is not None else "circle"}
     if p.demand_id:
         arr, _ = load_demand(con, p.demand_id, 9, box, p.months)
         total = 0.0
         if len(arr):
             xy = frame.to_metric(arr[:, 0], arr[:, 1])
-            total = float(arr[np.hypot(xy[:, 0], xy[:, 1]) <= radius_m, 2].sum())
+            total = float(arr[_inside(xy, radius_m, rect), 2].sum())
         summary["demand_total"] = round(total)
         summary["demand_genitive"] = DEMANDS[p.demand_id].genitive
     if p.type_id:
@@ -299,8 +311,8 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame) -> dict:
                                [p.type_id, *box]).fetchall()
             if rows:
                 xy = frame.to_metric(np.array([r[1] for r in rows]), np.array([r[2] for r in rows]))
-                for (source, _, _), d in zip(rows, np.hypot(xy[:, 0], xy[:, 1])):
-                    if d <= radius_m:
+                for (source, _, _), inside in zip(rows, _inside(xy, radius_m, rect)):
+                    if inside:
                         counts[source] += 1
         summary["competitors"] = {"total": counts["osm"] + counts["overture"], **counts}
         summary["type_plural"] = PLURALS[p.type_id]
@@ -317,6 +329,13 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     """Odpowiedź /api/surface: wartości na siatce w okręgu wokół miejsca + top-5 dla każdej warstwy."""
     layers = surface_layers(p)
     reach_km = effective_reach_km(p.demand_id, p.reach_km)
+    frame = LocalFrame(p.lat, p.lng)                     # metry względem wybranego miejsca (osie na północ i wschód)
+    rect = None
+    if p.bbox:                                           # widoczny obszar: prostokąt w metrach lokalnego układu
+        west, south, east, north = p.bbox
+        corners = frame.to_metric(np.array([south, south, north, north]), np.array([west, east, west, east]))
+        rect = (*corners.min(axis=0), *corners.max(axis=0))
+        p = dataclasses.replace(p, radius_km=float(np.hypot(*np.abs(corners).max(axis=0))) / 1000)   # okrąg opisany
     reach_m, radius_m = reach_km * 1000, p.radius_km * 1000
     notes: list[str] = []
     warnings: list[str] = []
@@ -325,9 +344,10 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         warnings.append(quality_warning(btype.osm_quality))
     notes += _reach_notes(p.demand_id, p.reach_km)
 
-    frame = LocalFrame(p.lat, p.lng)                     # metry względem wybranego miejsca (osie na północ i wschód)
     center = np.zeros(2)
     grid_xy, mask, cell_m, nx, ny = make_grid(center, radius_m)
+    if rect is not None:
+        mask = _inside(grid_xy, radius_m, rect)
     g = grid_xy[mask]                                    # liczymy tylko punkty w okręgu
 
     # Źródła popytu: okrąg + bufor 4·zasięg (dalej rozpad i tak daje zero).
@@ -380,7 +400,7 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
                          "south": float(edges[0][2]), "north": float(edges[0][3]),
                          "nx": nx, "ny": ny, "cell_m": cell_m},
                 "values": values, "top": top, "notes": notes, "warnings": warnings,
-                "summary": area_summary(con, p, frame)}
+                "summary": area_summary(con, p, frame, rect)}
     if window is not None:
         response["permits_period"] = _period(window)
     return response
@@ -394,7 +414,8 @@ def _cached(key: SurfaceParams) -> dict:
 def cached_surface(p: SurfaceParams) -> dict:
     """run_surface z pamięcią podręczną (LRU 32); klucz ma zaokrąglone parametry (miejsce ~10 m, promień 0,5 km, zasięg 0,1 km)."""
     key = SurfaceParams(p.type_id, p.demand_id, round(p.lat, 4), round(p.lng, 4),
-                        round(p.radius_km * 2) / 2, round(p.reach_km, 1), p.months)
+                        round(p.radius_km * 2) / 2, round(p.reach_km, 1), p.months,
+                        tuple(round(v, 4) for v in p.bbox) if p.bbox else None)
     return _cached(key)
 
 
