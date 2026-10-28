@@ -196,7 +196,7 @@ label.disabled { opacity: .4; }
   92%, 97% { opacity: 1; transform: translate(var(--r0x), var(--r0y)) scale(1); }
   100% { opacity: 0; transform: translate(var(--r0x), var(--r0y)) scale(1); }
 }
-#map-intro .intro-caption { left: 50%; top: auto; bottom: 16px; opacity: 1; width: min(420px, calc(100% - 32px)); transform: translateX(-50%);
+#map-intro .intro-caption { left: 50%; top: auto; bottom: 58px;   /* nad stopką z atrybucją (na telefonie ma 3 linie) */ opacity: 1; width: min(420px, calc(100% - 32px)); transform: translateX(-50%);
   pointer-events: auto; padding: 12px 14px; border-radius: 12px; background: #fff; box-shadow: 0 4px 16px #0004; text-align: center; }
 .intro-caption p { margin: 6px 0 10px; font-size: 14px; line-height: 1.4; }
 .intro-icons { display: flex; justify-content: center; gap: 18px; }

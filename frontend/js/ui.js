@@ -18,7 +18,7 @@ const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 const HELP = {
   area: 'Cała Polska: od razu widzisz całą mapę i możesz ją swobodnie przybliżać. Po oddaleniu pokazujemy gotową mapę dla typowego zasięgu branży, ' +
     'a po przybliżeniu do miasta liczymy ją na żywo z Twoimi ustawieniami. Wybrane miejsce: analiza okręgu wokół jednego miejsca ' +
-    'z podsumowaniem i porównaniem ze średnią krajową.',
+    'albo zaznaczonego prostokąta (kliknij mapę albo użyj przycisku »▭ Prostokąt«) z podsumowaniem i porównaniem ze średnią krajową.',
   open: 'Ilu klientów mogłaby przyciągnąć nowa firma w danym miejscu. Liczymy to modelem Huffa: każdy mieszkaniec wybiera między firmami, ' +
     'a bliższa firma przyciąga go mocniej. Uwzględniamy wszystkich konkurentów z OpenStreetMap i Overture Maps oraz »inne możliwości« ' +
     '(firmy, których nie ma w tych bazach, zakupy gdzie indziej). Najbardziej czerwone miejsca to najlepsze lokalizacje.',

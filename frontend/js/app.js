@@ -167,7 +167,11 @@ function confirmSelection() {
     map.refreshSelectionCard();
     return;
   }
-  if (s.kind === 'rect') analyzeRect(s.bounds); else analyzeCircle(s.lat, s.lng, s.name, s.radiusKm);
+  if (s.kind === 'rect') {
+    if (!rectProblem(s.bounds)) analyzeRect(s.bounds);   // „Pokaż mapę” nie ominie limitów, które blokują ✓
+  } else {
+    analyzeCircle(s.lat, s.lng, s.name, s.radiusKm);
+  }
 }
 
 // Prostokąt narysowany przyciskiem „▭ Prostokąt”: karta z wymiarami i ✓, rogi można przeciągać.
@@ -179,12 +183,18 @@ function beginRectSelection(bounds) {
   if (isMobile()) ui.collapseSheet();
 }
 
-// Napis z wymiarami; poza limitami (bok 0,6–60 km) ramka jest czerwona, a ✓ nieaktywny.
+// Co jest nie tak z prostokątem (bok poza limitami 0,6–60 km)? Pusty tekst = wszystko w porządku.
+function rectProblem(b) {
+  const s = rectSizeKm(b);
+  if (Math.max(s.width, s.height) > RECT_MAX_KM) return `Za duży obszar — maks. ${RECT_MAX_KM} km boku`;
+  if (Math.min(s.width, s.height) < RECT_MIN_KM) return `Za mały obszar — min. ${kmText(RECT_MIN_KM)} km boku`;
+  return '';
+}
+
+// Napis z wymiarami; poza limitami ramka jest czerwona, a ✓ nieaktywny.
 function updateRectCard() {
   const b = state.selection.bounds;
-  const s = rectSizeKm(b);
-  const problem = Math.max(s.width, s.height) > RECT_MAX_KM ? `Za duży obszar — maks. ${RECT_MAX_KM} km boku`
-    : Math.min(s.width, s.height) < RECT_MIN_KM ? `Za mały obszar — min. ${kmText(RECT_MIN_KM)} km boku` : '';
+  const problem = rectProblem(b);
   state.card.setSize(rectText(b), problem);
   map.setRectInvalid(!!problem);
   map.refreshSelectionCard();

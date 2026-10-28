@@ -134,6 +134,12 @@ Tacy przedsiębiorcy pracują u klienta i zwykle nie mają lokalu, więc **prawi
 
 Model Huffa wierzy danym: jeśli w okolicy nie ma wpisanej żadnej firmy, „nowa firma zgarnia wszystkich”. W małych miasteczkach to często **luka w OSM i Overture, a nie okazja** (VGI jest niekompletne — sekcja 12). Dlatego krok ETL `gaps` (`etl/gaps.py: gap_flags`) porównuje dla każdej komórki res 9 i każdego typu firmy to, co jest w danych w promieniu 2 km, z tym, co wynika ze **średniej krajowej** (firm tego typu na mieszkańca, `gap_rates`). Komórka to **luka**, gdy oczekujemy ≥ 3 firm, a w danych jest ≤ ¼ z nich. Potem liczymy, **jaka część klientów nowej firmy mieszka w lukach**: drugi przebieg Huffa z wagami `d_i · luka_i` (`E_luka`), a „wiarygodni klienci” to `E − E_luka` (`rel`). Miejsca, gdzie `rel < ½ E`, dostają **szare kreskowanie** (kolor mgły bez zmian), nie wchodzą do top-5, a w dymku i podsumowaniu jest ostrzeżenie z liczbami. Kod: `etl/gaps.py`, `etl/national.py: compute_job` (kolumny `rel__…`), `analysis/service.py: run_surface` (`gap`), `point_details` (`data_gap`), `map.js: renderFog`.
 
+## 24. Wybór obszaru gestem (v3.4): kliknięcie, prostokąt, Pointer Events
+
+Użytkownik nie musi rozumieć formularza „miejsce + promień + Pokaż mapę” — wskazuje obszar na mapie. **Kliknięcie** → `beginSelection` (`app.js`): pinezka + okrąg podglądu + karta (`ui.selectionCard`) z liczbami z `/api/point`, suwakiem i ✓. Suwak zmienia okrąg **bez zapytań do serwera** (`map.updateSelectionRadius` tylko przelicza wielokąt okręgu). ✓ robi to samo co dawne „Pokaż mapę”. **Prostokąt** → przycisk „▭ Prostokąt” (`map.js`): włącza tryb rysowania (`dragging.disable()`, kursor krzyżyk), a przeciągnięcie obsługują **Pointer Events** (`pointerdown/move/up`) — jeden zestaw zdarzeń obejmuje mysz, palec i rysik, więc nie piszemy osobno kodu na telefon. `setPointerCapture` sprawia, że ruch i puszczenie dochodzą do mapy nawet poza jej krawędzią. Po puszczeniu tryb się wyłącza (`stopDraw`), a przesuwanie mapy wraca. Rogi to 4 przeciągalne markery Leaflet; przeciwległy róg stoi w miejscu, więc nowy prostokąt to po prostu `L.latLngBounds(stały róg, róg pod kursorem)`.
+
+Backend: `/api/surface` z `area=rect` używa istniejącej ścieżki „widoczny obszar” (prostokąt w metrach lokalnego układu, maska siatki przycięta do prostokąta; okrąg opisany na prostokącie służy tylko do pobrania danych), ale z gęstszą siatką (`divisions=90` zamiast 60 — liczymy raz, na życzenie, a nie przy każdym ruchu mapy) i z wymiarami w podsumowaniu. Limity: bok 0,6–60 km (dane o ludności mają ~300 m rozdzielczości; 60 km to limit wydajności).
+
 ## Pytania, które może zadać prowadzący
 
 **1. Dlaczego heksagony, a nie kwadraty albo gminy — i czemu w v3 już ich nie widać na mapie?**
@@ -182,3 +188,6 @@ Nie wiemy na pewno — wykrywamy *podejrzane* miejsca porównaniem ze średnią 
 
 **14. Dlaczego usunąłeś część branż?**
 Patrz sekcja 22: nie mamy dla nich danych o firmach, więc „konkurencja” byłaby fikcją. Zostawiłem popyt „nowe domy”, bo na nim dane są dobre.
+
+**16. Dlaczego prostokąt rysuje się po kliknięciu przycisku, a nie zwykłym przeciągnięciem — i co to Pointer Events?**
+Zwykłe przeciągnięcie przesuwa mapę (tak jest wszędzie, a na telefonie to jedyny sposób na przesuwanie palcem). Gdyby przeciągnięcie rysowało prostokąt, nie dałoby się przesuwać mapy — stąd przycisk „▭ Prostokąt”, który na czas jednego zaznaczenia wyłącza przesuwanie mapy (`map.dragging.disable()`). **Pointer Events** to jeden zestaw zdarzeń przeglądarki (`pointerdown`, `pointermove`, `pointerup`) dla myszy, palca i rysika; dzięki temu ten sam kod działa na komputerze i telefonie, a nie trzeba osobno obsługiwać `mousedown` i `touchstart`. Limity prostokąta (0,6–60 km boku) są po obu stronach: frontend koloruje ramkę na czerwono i blokuje ✓, a backend i tak zwraca błąd 422.

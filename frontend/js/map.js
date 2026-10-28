@@ -152,7 +152,12 @@ export function initMap(elementId) {
     if (drawing || Date.now() < suppressClickUntil) return;
     if (clickCb) clickCb(e.latlng.lat, e.latlng.lng);
   });
-  const isNarrow = () => window.innerWidth < 768;
+  // Szerokość karty wyboru dopasowana do mapy: z lewej zostaje ok. 105 px na przyciski, 24 px to marginesy popupu, z prawej zapas
+  // (mapa bywa wąska — na telefonie albo gdy oba panele są otwarte).
+  const cardWidth = () => {
+    const max = Math.max(160, Math.min(300, map.getSize().x - 145));
+    return { maxWidth: max, minWidth: Math.min(max, 220) };
+  };
   const isTouchUi = () => window.matchMedia('(pointer: coarse), (max-width: 767px)').matches;
 
   // ---- Prostokąt: przycisk „▭ Prostokąt”, rysowanie przeciągnięciem (Pointer Events: mysz, dotyk i rysik jednym kodem) ----
@@ -208,7 +213,7 @@ export function initMap(elementId) {
     if (!drawing || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
     if (e.target.closest('.leaflet-control, .leaflet-popup')) return;
     drawFrom = { latlng: map.mouseEventToLatLng(e), x: e.clientX, y: e.clientY };
-    container.setPointerCapture(e.pointerId);          // ruch i puszczenie dochodzą do mapy także poza jej krawędzią
+    try { container.setPointerCapture(e.pointerId); } catch (err) { /* bez przechwycenia też działa, tylko ruch poza mapą nie jest widziany */ }   // ruch i puszczenie dochodzą do mapy także poza jej krawędzią
     drawPreview = L.rectangle([drawFrom.latlng, drawFrom.latlng], {
       renderer: selectionRenderer, interactive: false, color: RECT_COLOR, weight: 2, dashArray: '6 4', fillColor: RECT_COLOR, fillOpacity: 0.08,
     }).addTo(selectionLayer);
@@ -334,11 +339,11 @@ export function initMap(elementId) {
           bubblingMouseEvents: false,
         }).bindTooltip(plainText(`${p.name || 'bez nazwy'} (${SOURCE_NAMES[p.source] || 'OpenStreetMap'})`)).addTo(detailsLayer);
       }
-      // Na wąskim ekranie przyciski zoomu zasłaniają lewy margines mapy — dymek ma się mieścić obok nich.
+      // Przyciski zoomu i »▭ Prostokąt« zasłaniają lewy margines mapy — dymek ma się mieścić obok nich.
       const narrow = window.innerWidth < 768;
       L.popup({
         className: 'point-popup', maxWidth: narrow ? 220 : 300,
-        autoPanPaddingTopLeft: narrow ? [50, 10] : [10, 10], autoPanPaddingBottomRight: [10, 10],
+        autoPanPaddingTopLeft: [105, 10], autoPanPaddingBottomRight: [10, 10],
       }).setLatLng([lat, lng]).setContent(element).openOn(map);
     },
     closeDetails() { map.closePopup(); },
@@ -357,8 +362,8 @@ export function initMap(elementId) {
       }).addTo(selectionLayer);
       selectionPopup = L.popup({
         className: 'selection-popup', closeButton: false, autoClose: false, closeOnClick: false,
-        maxWidth: isNarrow() ? 250 : 300, minWidth: isNarrow() ? 220 : 260, offset: [0, -8],
-        autoPanPaddingTopLeft: [50, 10], autoPanPaddingBottomRight: [10, 10],   // 50 px z lewej: przyciski zoomu i prostokąta
+        ...cardWidth(), offset: [0, -8],
+        autoPanPaddingTopLeft: [105, 10], autoPanPaddingBottomRight: [10, 10],   // 105 px z lewej: przyciski zoomu i »▭ Prostokąt«
       }).setLatLng([lat, lng]).setContent(cardEl);
       map.addLayer(selectionPopup);
     },
@@ -396,8 +401,8 @@ export function initMap(elementId) {
       const size = isTouchUi() ? 28 : 18;                // na dotyk uchwyt jest większy, żeby dało się go złapać palcem
       selectionPopup = L.popup({
         className: 'selection-popup', closeButton: false, autoClose: false, closeOnClick: false,
-        maxWidth: isNarrow() ? 250 : 300, minWidth: isNarrow() ? 200 : 220, offset: [0, -8],
-        autoPanPaddingTopLeft: [50, 10], autoPanPaddingBottomRight: [10, 10],
+        ...cardWidth(), offset: [0, -8],
+        autoPanPaddingTopLeft: [105, 10], autoPanPaddingBottomRight: [10, 10],
       }).setLatLng(cardAnchor(box)).setContent(cardEl);
       // Rogi 0–3: NW, NE, SE, SW. Uchwyt i przeciwległy róg (i + 2) są względem siebie „przekątną”; dwa pozostałe dzielą z uchwytem
       // szerokość albo długość geograficzną — dlatego po przeciągnięciu za przeciwległy róg prostokąt się odwraca, a nie psuje.
@@ -409,7 +414,8 @@ export function initMap(elementId) {
           icon: L.divIcon({ className: 'rect-handle', iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
         }).addTo(selectionLayer);
         let fixed = null;                                // przeciwległy róg stoi w miejscu
-        handle.on('dragstart', () => { fixed = rectHandles[(i + 2) % 4].getLatLng(); });
+        // Podczas ciągnięcia karta nie może przesuwać mapy (każda zmiana jej położenia uruchamia autoPan) — włączamy go z powrotem po puszczeniu.
+        handle.on('dragstart', () => { fixed = rectHandles[(i + 2) % 4].getLatLng(); selectionPopup.options.autoPan = false; });
         handle.on('drag', (e) => {
           const d = e.latlng;
           box = L.latLngBounds(fixed, d);
@@ -420,7 +426,11 @@ export function initMap(elementId) {
           selectionPopup.setLatLng(cardAnchor(box));
           onChange(boundsObject(box));
         });
-        handle.on('dragend', () => rectHandles.forEach((h, j) => h.setLatLng(cornerLatLngs(box)[j])));   // porządkujemy rogi po ewentualnym odwróceniu
+        handle.on('dragend', () => {
+          rectHandles.forEach((h, j) => h.setLatLng(cornerLatLngs(box)[j]));   // porządkujemy rogi po ewentualnym odwróceniu
+          selectionPopup.options.autoPan = true;
+          selectionPopup.update();                                              // karta znów mieści się na mapie (autoPan)
+        });
         return handle;
       });
       map.addLayer(selectionPopup);
