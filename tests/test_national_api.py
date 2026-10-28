@@ -152,7 +152,7 @@ def test_view_place_name_prefers_larger_place_over_distant_village():
 
 
 def test_national_notes_warn_about_data_gaps(client):
-    assert any("luk" in n for n in national(client).json()["notes"])           # warstwy z konkurencją
+    assert any("luk" in n for n in national(client).json()["notes"])           # „Gdzie otworzyć” zależy od firm
     assert not any("luk" in n for n in national(client, type="").json()["notes"])   # sam popyt nie zależy od firm
 
 
@@ -187,3 +187,61 @@ def test_national_ignores_layer_missing_in_pyramid(make_client, tmp_path):
     reset_connection()
     j = national(client).json()
     assert j["layers"] == ["demand"]
+
+
+# ---------------------------------------------------------------- luki w danych (v3.3) ----
+
+TOWN = CENTER
+CITY = (51.10, 17.03)
+BOTH = dict(west=16.3, south=50.7, east=21.7, north=52.6)
+
+
+@pytest.fixture
+def gap_client(make_client):
+    """Miasteczko bez salonów (przy CENTER) i miasto ze 100 salonami (Wrocław)."""
+    pop = {c: 1000.0 for c in disk(TOWN, k=12)} | {c: 1000.0 for c in disk(CITY, k=12)}
+    pois = [("beauty", CITY[0] + (i % 10) * 0.002, CITY[1] + (i // 10) * 0.002) for i in range(100)]
+    return make_client(pop=pop, pois=pois, places=[("Miasteczko", "town", *TOWN), ("Miasto", "city", *CITY)], national=True)
+
+
+def test_national_gap_mask_marks_town_not_city(gap_client):
+    j = national(gap_client, **BOTH, px=2000).json()
+    g, gap = j["grid"], j["gap"]["open"]
+    assert len(gap) == len(j["values"]["open"]) == g["nx"] * g["ny"]
+
+    def at(lat, lng):
+        x = int((lng - g["west"]) / (g["east"] - g["west"]) * g["nx"])
+        import math
+        merc = lambda la: math.log(math.tan(math.pi / 4 + math.radians(la) / 2))
+        y = int((merc(g["north"]) - merc(lat)) / (merc(g["north"]) - merc(g["south"])) * g["ny"])
+        return gap[y * g["nx"] + x]
+    assert at(*TOWN) == 1
+    assert at(CITY[0] + 0.01, CITY[1] + 0.01) == 0
+    assert all(v in (0, 1, None) for v in gap)
+
+
+def test_national_top_skips_cells_in_gap(gap_client):
+    """Największe E leży w miasteczku bez salonów, ale to luka — w najlepszych miejscach jest tylko miasto."""
+    j = national(gap_client, **BOTH, px=2000).json()
+    top = j["top"]["open"]
+    assert top and all(t["lat"] < 51.6 for t in top)                      # nikt z okolic miasteczka (52,2°N)
+    assert max(x for x in j["values"]["open"] if x is not None) > top[0]["value"]       # kolor mgły nadal pokazuje pełne E
+
+
+def test_national_gap_note_present_with_open_layer(gap_client):
+    assert any("kreskowanie" in n for n in national(gap_client, **BOTH).json()["notes"])
+    assert "gap" not in national(gap_client, type="", **BOTH).json()
+
+
+def test_national_without_rel_layer_has_no_gap(gap_client):
+    """Gdy w bazie nie ma warstwy rel (stary ETL), API działa jak w v3.2: bez kreskowania i bez notatki."""
+    import duckdb
+    from backend.app import config
+    from backend.app.db import reset_connection
+    reset_connection()
+    con = duckdb.connect(str(config.DB_PATH))
+    con.execute("DELETE FROM national_meta WHERE layer = 'rel__beauty__pop_f'")
+    con.close()
+    reset_connection()
+    j = national(gap_client, **BOTH).json()
+    assert "gap" not in j and not any("kreskowanie" in n for n in j["notes"]) and j["top"]["open"]

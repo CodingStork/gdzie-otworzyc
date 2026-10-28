@@ -17,8 +17,10 @@ import numpy as np
 import pandas as pd
 
 from backend.app.analysis.kernel import to_metric
-from backend.app.analysis.layers import Job, demand_layer, expected_layers, is_trend, jobs, layer_months, open_layer
-from backend.app.analysis.service import _permit_window, demand_res, load_trend
+from backend.app.analysis.layers import (
+    Job, demand_layer, expected_layers, is_trend, jobs, layer_months, open_layer, rel_layer,
+)
+from backend.app.analysis.service import _permit_window, demand_res, load_gap_share, load_trend
 from backend.app.analysis.surface import (
     competition_availability, competition_density, demand_potential, demand_potentials, huff_multi, round_significant,
 )
@@ -69,24 +71,26 @@ class _Sources:
         return self._cache[key]
 
     def _load(self, family: str, res: int):
-        """Zwraca (xy, {czynnik: wagi}) — wagi to mieszkańcy (spis) albo liczba pozwoleń w oknie DEFAULT_MONTHS."""
+        """Zwraca (xy, {czynnik: wagi}, identyfikatory H3 źródeł) — wagi to mieszkańcy (spis) albo liczba pozwoleń w oknie DEFAULT_MONTHS."""
         con = self.con
         if family == "census":
             columns = sorted({d.column for d in DEMANDS.values() if d.source == "census"})
-            arr = np.array(con.execute(f"SELECT lat, lng, {', '.join(columns)} FROM hex_pop_r{res} WHERE pop_total > 0").fetchall(),
-                           dtype=float).reshape(-1, 2 + len(columns))
+            rows = con.execute(f"SELECT lat, lng, {', '.join(columns)}, h3 FROM hex_pop_r{res} WHERE pop_total > 0").fetchall()
+            ids = [r[-1] for r in rows]
+            arr = np.array([r[:-1] for r in rows], dtype=float).reshape(-1, 2 + len(columns))
             weights = {d.id: arr[:, 2 + columns.index(d.column)] for d in DEMANDS.values() if d.source == "census"}
         else:
             window = _permit_window(con, res, DEFAULT_MONTHS)
             if window is None:
-                return np.empty((0, 2)), {d.id: np.empty(0) for d in DEMANDS.values() if d.source == "permits"}
+                return np.empty((0, 2)), {d.id: np.empty(0) for d in DEMANDS.values() if d.source == "permits"}, []
             rows = con.execute(f"""SELECT lat, lng, SUM(CASE WHEN kind = 'sf' THEN n ELSE 0 END),
-                                          SUM(CASE WHEN kind = 'mf' THEN n ELSE 0 END)
-                                   FROM permits_r{res} WHERE month >= ? GROUP BY lat, lng""", [window[0]]).fetchall()
-            arr = np.array(rows, dtype=float).reshape(-1, 4)
+                                          SUM(CASE WHEN kind = 'mf' THEN n ELSE 0 END), h3
+                                   FROM permits_r{res} WHERE month >= ? GROUP BY lat, lng, h3""", [window[0]]).fetchall()
+            ids = [r[-1] for r in rows]
+            arr = np.array([r[:-1] for r in rows], dtype=float).reshape(-1, 4)
             kind_col = {"sf": 2, "mf": 3}
             weights = {d.id: arr[:, [kind_col[k] for k in d.kinds]].sum(axis=1) for d in DEMANDS.values() if d.source == "permits"}
-        return (to_metric(arr[:, 0], arr[:, 1]) if len(arr) else np.empty((0, 2))), weights
+        return (to_metric(arr[:, 0], arr[:, 1]) if len(arr) else np.empty((0, 2))), weights, ids
 
 
 def _competitors_xy(con, type_id: str) -> np.ndarray:
@@ -109,13 +113,19 @@ def compute_job(con, job: Job, targets_xy: np.ndarray, sources: _Sources, wanted
         xy = to_metric(arr[:, 0], arr[:, 1]) if len(arr) else np.empty((0, 2))
         out[job.outputs[0]] = demand_potential(targets_xy, xy, arr[:, 2], reach_m) if len(arr) else np.zeros(len(targets_xy))
     else:
-        dem_xy, weights = sources.get(job.family, demand_res(job.reach_km))
+        res = demand_res(job.reach_km)
+        dem_xy, weights, dem_cells = sources.get(job.family, res)
         w = np.column_stack([weights[d] for d in job.demands]) if len(dem_xy) else np.empty((0, len(job.demands)))
         if job.kind == "huff":
             availability = competition_availability(dem_xy, _competitors_xy(con, job.type_id), reach_m)   # C_i raz na typ
-            e, p = huff_multi(targets_xy, dem_xy, w, availability, reach_m)
+            # Drugi przebieg Huffa tylko dla klientów z luk w danych (wagi w·luka, ta sama dostępność C_i): E_luka.
+            # „Wiarygodni klienci” rel = E − E_luka. Pary (punkt, źródło) liczymy raz, bo wagi tylko je mnożą.
+            gap = load_gap_share(con, job.type_id, res, dem_cells) if len(dem_xy) else np.empty(0)
+            e, p = huff_multi(targets_xy, dem_xy, np.column_stack([w, w * gap[:, None]]), availability, reach_m)
+            m = len(job.demands)
             for k, d in enumerate(job.demands):
                 out[open_layer(job.type_id, d)] = e[:, k]
+                out[rel_layer(job.type_id, d)] = e[:, k] - e[:, m + k]
                 out[demand_layer(d, job.reach_km)] = p[:, k]
         else:
             p = demand_potentials(targets_xy, dem_xy, w, reach_m)

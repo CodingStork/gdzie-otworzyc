@@ -186,23 +186,41 @@ def _box(lat: float, lng: float, radius_km: float) -> list[float]:
 def load_demand(con, demand_id: str, res: int, box: list[float], months: int):
     """Źródła popytu: (lat, lng, waga) komórek H3 w prostokącie; waga = mieszkańcy albo liczba nowych budów.
 
-    Zwraca (tablica N×3, okno pozwoleń lub None). Dla pozwoleń brak danych → pusta tablica i okno None.
+    Zwraca (tablica N×3, okno pozwoleń lub None, lista identyfikatorów H3 komórek — wiersz w wiersz z tablicą).
+    Identyfikatory są potrzebne do dopasowania luk w danych o firmach (`load_gap_share`) bez zgadywania po współrzędnych.
+    Dla pozwoleń brak danych → pusta tablica i okno None.
     """
     demand = DEMANDS[demand_id]
     if not table_exists(con, f"hex_pop_r{res}"):
         raise DatabaseMissing(f"brak tabeli hex_pop_r{res}")
     if demand.source == "census":
-        rows = con.execute(f"SELECT lat, lng, {demand.column} FROM hex_pop_r{res} "
+        rows = con.execute(f"SELECT lat, lng, {demand.column}, h3 FROM hex_pop_r{res} "
                            f"WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? AND {demand.column} > 0", box).fetchall()
-        return np.array(rows, dtype=float).reshape(-1, 3), None
+        return np.array([r[:3] for r in rows], dtype=float).reshape(-1, 3), None, [r[3] for r in rows]
     window = _permit_window(con, res, months)
     if window is None:
-        return np.empty((0, 3)), None
+        return np.empty((0, 3)), None, []
     kinds = ", ".join("?" for _ in demand.kinds)
-    rows = con.execute(f"SELECT lat, lng, SUM(n) FROM permits_r{res} WHERE kind IN ({kinds}) AND month >= ? "
-                       "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? GROUP BY lat, lng",
+    rows = con.execute(f"SELECT lat, lng, SUM(n), h3 FROM permits_r{res} WHERE kind IN ({kinds}) AND month >= ? "
+                       "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? GROUP BY lat, lng, h3",
                        [*demand.kinds, window[0], *box]).fetchall()
-    return np.array(rows, dtype=float).reshape(-1, 3), window
+    return np.array([r[:3] for r in rows], dtype=float).reshape(-1, 3), window, [r[3] for r in rows]
+
+
+def load_gap_share(con, type_id: str, res: int, h3_list: list[str]) -> np.ndarray:
+    """Dla każdej komórki z listy: jaka część jej klientów mieszka w „lukach” danych o firmach tego typu (0–1; 0, gdy brak wpisu).
+
+    Luki liczy krok ETL `gaps` (res 9: 0 albo 1, grubsze: udział ludności komórek-dzieci). Bez tabeli `gap_share`
+    (stara baza) wszędzie 0 — czyli mapa działa jak w v3.2, tylko bez oznaczania luk.
+    """
+    out = np.zeros(len(h3_list))
+    if not h3_list or not table_exists(con, "gap_share"):
+        return out
+    found = dict(con.execute("SELECT h3, share FROM gap_share WHERE type_id = ? AND res = ? AND h3 IN (SELECT UNNEST(?))",
+                             [type_id, res, list(h3_list)]).fetchall())
+    for i, cell in enumerate(h3_list):
+        out[i] = found.get(cell, 0.0)
+    return out
 
 
 def load_competitors(con, type_id: str, box: list[float]) -> np.ndarray:
@@ -297,7 +315,7 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
                "per_firm": None, "national_per_firm": None, "verdict": None, "radius_km": p.radius_km,
                "shape": "view" if rect is not None else "circle"}
     if p.demand_id:
-        arr, _ = load_demand(con, p.demand_id, 9, box, p.months)
+        arr, _, _ = load_demand(con, p.demand_id, 9, box, p.months)
         total = 0.0
         if len(arr):
             xy = frame.to_metric(arr[:, 0], arr[:, 1])
@@ -356,7 +374,7 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     dem_xy, dem_w, window = np.empty((0, 2)), np.empty(0), None
     if p.demand_id:
         res = demand_res(reach_km)
-        arr, window = load_demand(con, p.demand_id, res, _box(p.lat, p.lng, p.radius_km + 4 * reach_km), p.months)
+        arr, window, _ = load_demand(con, p.demand_id, res, _box(p.lat, p.lng, p.radius_km + 4 * reach_km), p.months)
         if DEMANDS[p.demand_id].source == "permits" and window is None:
             warnings.append(PERMITS_MISSING_WARNING)
         if len(arr):
@@ -503,7 +521,7 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
 
 def _expected_at(con, lat: float, lng: float, type_id: str, demand_id: str, reach_km: float, months: int) -> float:
     """E (model Huffa) dla jednego punktu — te same źródła i wzór co w /api/surface, ale bez siatki."""
-    arr, _ = load_demand(con, demand_id, demand_res(reach_km), _box(lat, lng, 4 * reach_km), months)
+    arr, _, _ = load_demand(con, demand_id, demand_res(reach_km), _box(lat, lng, 4 * reach_km), months)
     if not len(arr):
         return 0.0
     comp = load_competitors(con, type_id, _box(lat, lng, 8 * reach_km))

@@ -11,10 +11,10 @@ import h3
 import numpy as np
 from scipy.spatial import cKDTree
 
-from backend.app.analysis.layers import is_trend, layer_months, layers_for
+from backend.app.analysis.layers import is_trend, layer_months, layers_for, rel_layer
 from backend.app.analysis.service import _haversine_km, _permit_window, _period
 from backend.app.analysis.surface import top_points
-from backend.app.catalog import DEFAULT_MONTHS, TYPES, quality_warning
+from backend.app.catalog import DEFAULT_MONTHS, GAP_SHARE, TYPES, quality_warning
 from backend.app.db import DatabaseMissing, cursor, on_reset
 from etl.aggregate import table_exists
 
@@ -28,8 +28,9 @@ LAT_LIMITS = (48.5, 55.5)
 LNG_LIMITS = (13.5, 24.5)
 TOP_NAME_MAX_KM = 8           # w dużym widoku nazwą miejsca jest najbliższa miejscowość nawet z kilku km
 NATIONAL_MISSING_MESSAGE = "Gotowa mapa Polski nie została jeszcze policzona. Uruchom: uv run python -m etl.run_all --only national"
-GAPS_NOTE = ("Największe wartości bywają skutkiem luk w danych o firmach (miejsca bez wpisów w OpenStreetMap i Overture Maps) — "
-             "zanim ruszysz z inwestycją, sprawdź konkurencję na miejscu.")
+GAPS_NOTE = ("Szare kreskowanie: większość klientów tego miejsca mieszka tam, gdzie w danych jest podejrzanie mało firm "
+             "(≤ ¼ średniej krajowej) — wynik może być skutkiem luki w danych, a nie braku konkurencji. "
+             "Takich miejsc nie ma w najlepszych miejscach.")
 NO_LAYER_NOTE = "Dla tego wyboru nie ma gotowej mapy Polski — przybliż mapę, a policzymy ją na żywo."
 
 
@@ -106,15 +107,19 @@ def _read_meta(con) -> dict:
             con.execute("SELECT layer, p5, p99, reach_km FROM national_meta").fetchall() if layer in _available[0]}
 
 
-def _best_cell_position(con, res: int, column: str, lat: float, lng: float, spacing_km: float) -> tuple[float, float]:
-    """Położenie maksimum w komórce res < 8: piramida trzyma środek komórki-rodzica, a wartość to max dzieci,
-    więc pinezka stawiana w środku rodzica mogłaby leżeć kilka km od faktycznie najlepszego miejsca (res 5: ~17 km między środkami)."""
+def _best_cell_position(con, res: int, column: str, value_column: str, lat: float, lng: float, spacing_km: float,
+                        value: float) -> tuple[float, float, float]:
+    """Położenie i wartość najlepszej komórki res 8 w komórce res < 8 (piramida trzyma środek komórki-rodzica, a wartość to max dzieci,
+    więc pinezka stawiana w środku rodzica mogłaby leżeć kilka km od faktycznie najlepszego miejsca; res 5: ~17 km między środkami).
+
+    „Najlepsza” = największa `column` (dla „Gdzie otworzyć” są to wiarygodni klienci), a podawana wartość to `value_column` w TEJ komórce —
+    inaczej pod nazwą rejonu stałaby liczba z innej (np. podejrzanej) komórki. Na res 8 zwraca to, co dostała."""
     if res >= BASE_RES:
-        return lat, lng
+        return lat, lng, value
     d = spacing_km / 110.54 * 0.6
-    row = con.execute(f'SELECT lat, lng FROM national_r{BASE_RES} WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? '
+    row = con.execute(f'SELECT lat, lng, "{value_column}" FROM national_r{BASE_RES} WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? '
                       f'ORDER BY "{column}" DESC LIMIT 1', [lat - d, lat + d, lng - d * 1.7, lng + d * 1.7]).fetchone()
-    return (float(row[0]), float(row[1])) if row else (lat, lng)
+    return (float(row[0]), float(row[1]), float(row[2])) if row else (lat, lng, value)
 
 
 def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
@@ -126,7 +131,10 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
         notes.append(NO_LAYER_NOTE)          # np. czynnik spoza zalecanych dla branży: „Gdzie otworzyć” liczy tylko tryb na żywo
     if type_id and quality_warning(TYPES[type_id].osm_quality):
         warnings.append(quality_warning(TYPES[type_id].osm_quality))
-    if "open" in layers or "competition" in layers:
+    rel_column = rel_layer(*layers["open"].split("__")[1:]) if "open" in layers else None
+    if rel_column is not None and rel_column not in meta:
+        rel_column = None                       # stara baza bez warstw „wiarygodni klienci” — mapa jak w v3.2, bez kreskowania
+    if rel_column is not None:
         notes.append(GAPS_NOTE)
     if layers:
         notes.append(f"Mapa Polski policzona dla typowego zasięgu: {str(f'{reach_km:g}').replace('.', ',')} km. "
@@ -160,7 +168,7 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
 
     spacing = _spacing_km(res)
     pad_lat, pad_lng = spacing / 110.54, spacing / (111.32 * math.cos(math.radians(mid_lat)))
-    columns = list(layers.values())
+    columns = list(layers.values()) + ([rel_column] if rel_column else [])
     sql = ", ".join(f'"{c}"' for c in columns)
     rows = con.execute(f"SELECT lat, lng, {sql} FROM national_r{res} WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
                        [south - pad_lat, north + pad_lat, west - pad_lng, east + pad_lng]).fetchall()
@@ -181,8 +189,8 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
     has_places = table_exists(con, "places")
     in_view = (lat >= south) & (lat <= north) & (lng >= west) & (lng <= east)
     min_sep_m = width_km * 1000 / 6                                   # top-5 nie z jednego rejonu: odstęp ≥ 1/6 szerokości widoku
-    for k, (logical, column) in enumerate(layers.items()):
-        v = data[:, 2 + k]
+    def to_grid(v: np.ndarray) -> np.ndarray:
+        """Wartości komórek H3 → komórki siatki odpowiedzi (NaN = brak danych)."""
         cells = np.full(nx * ny, np.nan)
         if inside.any():
             idx = gy[inside] * nx + gx[inside]
@@ -194,15 +202,32 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
             dist, near = tree.query(np.column_stack([cx.ravel()[empty], cy.ravel()[empty]]), distance_upper_bound=0.62 * spacing)
             hit = np.isfinite(dist)
             cells[empty[hit]] = v[near[hit]]
+        return cells
+
+    xy = np.column_stack([km_x(lng), km_y(lat)]) * 1000
+    for k, (logical, column) in enumerate(layers.items()):
+        v = data[:, 2 + k]
+        cells = to_grid(v)
         response["values"][logical] = [None if np.isnan(x) else float(x) for x in cells]
         response["scale"][logical] = _scale_json(column, *meta[column][:2])
 
-        xy = np.column_stack([km_x(lng), km_y(lat)]) * 1000
-        picks = top_points(np.nan_to_num(v), xy, in_view, min_sep_m)
+        score, order_column = v, column                   # czym porządkujemy najlepsze miejsca (wartość podajemy zawsze z `column`)
+        if logical == "open" and rel_column:
+            order_column = rel_column
+            rel = data[:, -1]
+            # Luka: mniej niż połowa klientów jest wiarygodna (rel < (1 − GAP_SHARE) · E). Dla res < 8 to porównanie maksimów komórek-dzieci.
+            gap_cell = rel < (1 - GAP_SHARE) * v
+            rel_grid = to_grid(rel)
+            open_grid = cells
+            gap = np.where(np.isnan(open_grid), np.nan, (rel_grid < (1 - GAP_SHARE) * open_grid).astype(float))
+            response["gap"] = {"open": [None if np.isnan(x) else int(x) for x in gap]}
+            score = np.where(gap_cell, 0.0, rel)          # miejsca w luce nie trafiają do najlepszych; kolejność wg wiarygodnych klientów
+        picks = top_points(np.nan_to_num(score), xy, in_view, min_sep_m)
         top = []
         for i in picks:
-            plat, plng = _best_cell_position(con, res, column, float(lat[i]), float(lng[i]), spacing)
-            top.append({"lat": plat, "lng": plng, "value": float(v[i]),
+            plat, plng, shown = _best_cell_position(con, res, order_column, column,
+                                                    float(lat[i]), float(lng[i]), spacing, float(v[i]))
+            top.append({"lat": plat, "lng": plng, "value": shown,
                         "name": (place_name(con, plat, plng, check_table=False) if has_places else None) or f"okolice {plat:.2f}, {plng:.2f}"})
         response["top"][logical] = top
     if any(layer_months(c) for c in columns):                                    # warstwy z pozwoleń: podajemy okres danych

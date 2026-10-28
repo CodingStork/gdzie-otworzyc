@@ -18,6 +18,11 @@ def open_layer(type_id: str, demand_id: str) -> str:
     return f"open__{type_id}__{demand_id}"
 
 
+def rel_layer(type_id: str, demand_id: str) -> str:
+    """„Wiarygodni klienci” = E minus klienci z komórek w luce danych o firmach (patrz `etl/gaps.py`); służy do kreskowania i top-5."""
+    return f"rel__{type_id}__{demand_id}"
+
+
 def comp_layer(type_id: str) -> str:
     return f"comp__{type_id}"
 
@@ -84,7 +89,8 @@ def jobs() -> list[Job]:
             if not ds:
                 continue
             reach = effective_reach_km(ds[0], t.bandwidth_km)
-            outputs = tuple(open_layer(t.id, d) for d in ds) + tuple(demand_layer(d, reach) for d in ds)
+            outputs = (tuple(open_layer(t.id, d) for d in ds) + tuple(rel_layer(t.id, d) for d in ds)
+                       + tuple(demand_layer(d, reach) for d in ds))
             out.append(Job("huff", family, reach, t.id, ds, outputs))
         out.append(Job("comp", None, effective_reach_km(None, t.bandwidth_km), t.id, (), (comp_layer(t.id),)))
     # sam popyt (bez branży): zasięg domyślny czynnika, czynniki o tym samym zasięgu liczymy razem
@@ -111,7 +117,7 @@ def expected_layers() -> list[str]:
 def layer_months(layer: str) -> int | None:
     """Okno pozwoleń (miesiące) dla warstwy zależnej od pozwoleń; None dla pozostałych."""
     parts = layer.split("__")
-    demand_id = parts[2] if parts[0] == "open" else parts[1] if parts[0] in ("demand", "trend") else None
+    demand_id = parts[2] if parts[0] in ("open", "rel") else parts[1] if parts[0] in ("demand", "trend") else None
     if demand_id and DEMANDS[demand_id].source == "permits":
         return DEFAULT_MONTHS
     return None

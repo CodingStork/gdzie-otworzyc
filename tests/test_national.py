@@ -139,3 +139,63 @@ def test_layer_computed_for_other_reach_is_recomputed(built):
     assert resumed["computed_now"] == 1
     assert con.execute("SELECT reach_km FROM national_meta WHERE layer = 'open__beauty__pop_f'").fetchone()[0] == 1.5
     assert con.execute("SELECT COUNT(*) FROM national_meta WHERE layer = 'open__beauty__pop_f'").fetchone()[0] == 1
+
+
+# ---------------------------------------------------------------- luki w danych (v3.3) ----
+
+TOWN = (52.23, 21.01)      # miasteczko bez salonów
+CITY = (51.10, 17.03)      # miasto z salonami
+
+
+@pytest.fixture
+def two_cities(tmp_path):
+    """Miasteczko (bez salonów) i miasto (100 salonów), po ~470 komórek res 9 po 1000 mieszkańców; luki policzone."""
+    pop = {c: 1000.0 for c in disk(TOWN, k=12)} | {c: 1000.0 for c in disk(CITY, k=12)}
+    pois = [("beauty", CITY[0] + (i % 10) * 0.002, CITY[1] + (i // 10) * 0.002) for i in range(100)]
+    con = duckdb.connect(str(make_db(tmp_path / "gap.duckdb", pop=pop, pois=pois, gaps=True)))
+    build_national(con, log=quiet)
+    yield con
+    con.close()
+
+
+def test_rel_layer_is_expected_and_in_pyramid(two_cities):
+    con = two_cities
+    assert "rel__beauty__pop_f" in expected_layers()
+    for res in (8, 7, 6, 5):
+        columns = {r[0] for r in con.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = 'national_r{res}'").fetchall()}
+        assert "rel__beauty__pop_f" in columns
+    assert con.execute("SELECT COUNT(*) FROM national_meta WHERE layer = 'rel__beauty__pop_f'").fetchone()[0] == 1
+
+
+def test_rel_is_zero_in_gap_and_most_of_open_in_city_centre(two_cities):
+    """Miasteczko: wszyscy klienci w luce → rel = 0, choć E > 0. Środek miasta z salonami: większość klientów wiarygodna."""
+    con = two_cities
+    q = 'SELECT "open__beauty__pop_f", "rel__beauty__pop_f" FROM national_r8 WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? ORDER BY 1 DESC LIMIT 1'
+    open_town, rel_town = con.execute(q, [TOWN[0] - 0.01, TOWN[0] + 0.01, TOWN[1] - 0.015, TOWN[1] + 0.015]).fetchone()
+    assert open_town > 0 and rel_town == 0
+    open_city, rel_city = con.execute(q, [CITY[0] + 0.005, CITY[0] + 0.015, CITY[1] + 0.005, CITY[1] + 0.02]).fetchone()   # wśród salonów
+    assert open_city > 0 and 0.5 * open_city < rel_city <= open_city
+
+
+def test_rel_pyramid_takes_max(two_cities):
+    con = two_cities
+    assert con.execute('SELECT MAX("rel__beauty__pop_f") FROM national_r5').fetchone()[0] == \
+        con.execute('SELECT MAX("rel__beauty__pop_f") FROM national_r8').fetchone()[0]
+
+
+def test_missing_rel_layer_is_computed_without_force(two_cities):
+    """Baza z v3.2 miała warstwy „open” bez „rel” — ponowne uruchomienie doliczy tylko brakujące."""
+    con = two_cities
+    con.execute("DELETE FROM national_meta WHERE layer LIKE 'rel__%'")
+    resumed = build_national(con, log=quiet)
+    assert resumed["computed_now"] == len([l for l in expected_layers() if l.startswith("rel__")])
+
+
+def test_without_gap_tables_rel_equals_open(tmp_path):
+    """Stara baza bez tabeli gap_share: wszędzie 0 luk, czyli rel = E."""
+    pop = {c: 1000.0 for c in disk(k=4)}
+    con = duckdb.connect(str(make_db(tmp_path / "old.duckdb", pop=pop, pois=POIS)))
+    build_national(con, log=quiet)
+    rows = con.execute('SELECT "open__beauty__pop_f", "rel__beauty__pop_f" FROM national_r8 WHERE "open__beauty__pop_f" > 0').fetchall()
+    assert rows and all(o == pytest.approx(r, rel=1e-3) for o, r in rows)
+    con.close()
