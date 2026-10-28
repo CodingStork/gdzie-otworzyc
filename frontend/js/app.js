@@ -1,11 +1,12 @@
 // Punkt startowy frontendu: spina mapę, panele (lewy = ustawienia, prawy = wnioski) i API.
-// Przepływ (Shneiderman 1996: przegląd → zawężenie → szczegóły na żądanie):
-//   1. użytkownik wybiera branżę/klientów, miejsce i promień → „Pokaż mapę” (zawężenie),
-//   2. mapa okolicy jako mgła + podsumowanie obszaru po prawej (przegląd),
-//   3. kliknięcie W okręgu pokazuje szczegóły punktu (okrąg zasięgu, konkurenci, liczby),
-//      kliknięcie POZA okręgiem wybiera nowe miejsce.
-// Ruch mapy NICZEGO nie przelicza — zapytania idą tylko po „Pokaż mapę” i po zmianie ustawień.
-import { getCatalog, getMeta, getPoi, point, surface } from './api.js';
+// Dwa tryby (przełącznik „Obszar analizy”, Shneiderman 1996: przegląd → zawężenie → szczegóły na żądanie):
+//   • Cała Polska (domyślny): mgła jest od razu. Po oddaleniu (widok szerszy niż ~40 km) pokazujemy GOTOWĄ mapę Polski z ETL
+//     (/api/national, stała skala kolorów); po przybliżeniu do miasta mgła liczy się NA ŻYWO z ustawieniami użytkownika
+//     (/api/surface w trybie prostokąta widoku). Zapytania idą dopiero po zakończeniu ruchu mapy (debounce) — w v2 ciągłe
+//     przeliczanie przy ruchu męczyło, dlatego oddalony widok jest natychmiastowy, a na żywo liczymy tylko po przybliżeniu.
+//   • Wybrane miejsce: jak w v3.1 — miejsce + promień → „Pokaż mapę”, podsumowanie obszaru, ruch mapy niczego nie przelicza.
+// Kliknięcie w mapę pokazuje szczegóły punktu (w trybie Polski dymek ma przycisk „Przeanalizuj to miejsce”).
+import { getCatalog, getMeta, getPoi, national, point, surface } from './api.js';
 import { logPosition, logScale, trendColor, trendPosition, trendScale } from './colors.js';
 import { initMap } from './map.js';
 import * as ui from './ui.js';
@@ -13,15 +14,24 @@ import * as ui from './ui.js';
 const $ = (id) => document.getElementById(id);
 const map = initMap('map');
 
-// place: wybrane miejsce {lat, lng, name}; result: ostatnia odpowiedź /api/surface; used: ustawienia, dla których ją policzono;
-// preview: wskazano nowe miejsce, a mapa pokazuje jeszcze stary obszar; pendingNote: dodatkowa notatka (np. po podniesieniu zasięgu).
-const state = { loading: false, place: null, result: null, used: null, controller: null, requestId: 0, preview: false, pendingNote: null };
+// mode: 'pl' | 'place'. result: ostatnia odpowiedź (/api/national, /api/surface); used: ustawienia, dla których ją policzono.
+// Tryb miejsca: place = wybrane miejsce {lat, lng, name}; preview = wskazano nowe miejsce, a mapa pokazuje jeszcze stary obszar;
+// pendingNote = dodatkowa notatka (np. po podniesieniu zasięgu). Tryb Polski: view = 'national' | 'live' (co teraz widać).
+const state = {
+  mode: 'pl', loading: false, place: null, result: null, used: null, controller: null, requestId: 0,
+  preview: false, pendingNote: null, view: null,
+};
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 const NEED_SELECTION = 'Wybierz branżę lub klientów.';
 const NEED_PLACE = 'Wybierz miejsce: wpisz miejscowość albo kliknij mapę.';
 const NEW_PLACE_INFO = 'Wybrano nowe miejsce — kliknij »Pokaż mapę«.';
 const MAP_POINT = 'punkt na mapie';   // nazwa miejsca wskazanego kliknięciem (nigdy „wybrane miejsce”)
+const LIVE_HALF_DIAGONAL_KM = 20;     // widok o półprzekątnej ≤ 20 km (ok. 28 × 28 km) liczymy na żywo
+const NO_CIRCLE = 1e9;                // „promień” maski mgły bez okręgu: w trybie Polski mgła nie jest przycinana do koła
+const NATIONAL_DEBOUNCE_MS = 250;
+const LIVE_DEBOUNCE_MS = 400;
+const FORM_DEBOUNCE_MS = 300;
 
 // Odległość po kuli w km (haversine).
 function distanceKm(lat1, lng1, lat2, lng2) {
@@ -31,7 +41,17 @@ function distanceKm(lat1, lng1, lat2, lng2) {
   return 2 * 6371 * Math.asin(Math.sqrt(a));
 }
 
-// ---- Wybór miejsca ----
+// Półprzekątna widocznego fragmentu mapy w km — decyduje, czy liczyć na żywo.
+function halfDiagonalKm(b) {
+  const midLat = (b.south + b.north) / 2;
+  const width = (b.east - b.west) * 111.32 * Math.cos(midLat * Math.PI / 180);
+  const height = (b.north - b.south) * 110.54;
+  return Math.hypot(width, height) / 2;
+}
+
+const kmText = (km) => String(km).replace('.', ',');
+
+// ---- Wybór miejsca (tryb „Wybrane miejsce”) ----
 
 // Ustawia miejsce: pinezka + okrąg. `preview` = nowe miejsce przy widocznym starym wyniku: przerywany okrąg podglądu,
 // bez przygaszenia poza okręgiem, a mgła starego obszaru przygasa do 30% i przycisk „Pokaż mapę” się wyróżnia.
@@ -56,43 +76,59 @@ function pickPlace(place) {
 const hasPermits = () => !!(state.result && state.result.permits_period);
 
 // Rysuje wybraną warstwę z ostatniego wyniku — bez ponownego zapytania do serwera.
+// Skala kolorów: gotowa mapa Polski ma STAŁĄ (result.scale, percentyle z całego kraju); okrąg i widok na żywo — lokalną (2 rzędy wielkości).
 function drawLayer() {
   const { result, used } = state;
-  const layer = ui.currentLayer();
-  const values = result.values[layer];
-  if (!values) return;                                   // warstwa z nowszych ustawień — poczekajmy na nowy wynik
+  let layer = ui.currentLayer();
+  if (!result.values[layer]) {                           // np. „Gdzie otworzyć” bez gotowej warstwy: pokazujemy pierwszą dostępną
+    layer = result.layers[0];
+    if (layer) ui.selectLayer(layer);
+  }
+  const values = layer && result.values[layer];
+  if (!values) {                                         // brak warstwy z nowszych ustawień (poczekajmy na wynik) albo brak gotowej mapy
+    map.clearFog();
+    ui.hideLegend();
+    map.setTopMarkers([], () => {});
+    ui.renderTop([], ui.currentLayer(), false, () => {}, state.mode === 'pl');
+    return;
+  }
+  const national = result.mode === 'national';
   const title = ui.legendTitle(layer, used.type, used.demand);
   const period = result.permits_period;
+  const radius = state.mode === 'place' ? used.radius_km : NO_CIRCLE;
   if (layer === 'trend') {
     // Trend ma znak (spadek / wzrost): paleta rozbieżna, środek (bez zmian) przezroczysty.
-    const scale = trendScale(values);
+    const scale = national ? result.scale.trend : trendScale(values);
     if (!scale) {
       map.clearFog();
       ui.hideLegend();
     } else {
       const t = new Float32Array(values.length);
       values.forEach((v, i) => { t[i] = v === null ? NaN : trendPosition(v, scale); });
-      map.setFog(result.grid, t, used.radius_km, trendColor);
-      ui.renderTrendLegend(title, 'mniej budów ← → więcej budów (ostatnie 12 mies. vs poprzednie 12)');
+      map.setFog(result.grid, t, radius, trendColor);
+      ui.renderTrendLegend(title, 'mniej budów ← → więcej budów (ostatnie 12 mies. vs poprzednie 12)' +
+        (national ? ` · stała skala dla całej Polski, zasięg ${kmText(result.reach_km)} km` : ' · kolory dopasowane do widoku'));
     }
   } else {
-    const scale = logScale(values);
+    const scale = national ? result.scale[layer] : logScale(values);
     if (!scale) {
       map.clearFog();
       ui.hideLegend();
     } else {
       const t = new Float32Array(values.length);
       values.forEach((v, i) => { t[i] = v === null ? NaN : logPosition(v, scale); });
-      map.setFog(result.grid, t, used.radius_km);
+      map.setFog(result.grid, t, radius);
       // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
-      const note = period && layer !== 'competition'
-        ? `Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.` : '';
-      ui.renderLegend(title, scale, note);
+      const notes = [];
+      if (period && layer !== 'competition') notes.push(`Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.`);
+      if (national) notes.push(`Gotowa mapa Polski dla typowego zasięgu: ${kmText(result.reach_km)} km. Skala jest stała dla całego kraju.`);
+      else if (state.mode === 'pl') notes.push('Kolory dopasowane do widoku.');
+      ui.renderLegend(title, scale, notes.join(' '));
     }
   }
   map.dimFog(state.preview);
   const top = result.top[layer] || [];
-  ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place));
+  ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place), state.mode === 'pl');
   map.setTopMarkers(top, (place) => openPlace(place));
 }
 
@@ -113,12 +149,30 @@ function showResult(result, used) {
   if (isMobile()) ui.setTab('insights');                 // na telefonie po „Pokaż mapę” od razu wnioski
 }
 
-// ---- Zapytanie o mapę ----
+// Czyści wynik i wszystko, co z niego narysowano (zmiana trybu, brak wyboru).
+function resetResult() {
+  state.result = null;
+  state.used = null;
+  state.view = null;
+  state.preview = false;
+  discardPoint();
+  map.clearFog();
+  map.setTopMarkers([], () => {});
+  ui.hideLegend();
+  ui.hideSummary();
+  ui.renderTop([], 'open', false, () => {});
+  $('top-title').hidden = true;
+  ui.renderWarnings([]);
+  ui.renderNotes([]);
+  ui.highlightShow(false);
+}
+
+// ---- Tryb „Wybrane miejsce”: zapytanie o mapę ----
 
 let runTimer = null;
 function scheduleRun(fit) {
   clearTimeout(runTimer);
-  runTimer = setTimeout(() => run({ fit }), 300);   // debounce: czekamy, aż użytkownik skończy zmieniać ustawienia
+  runTimer = setTimeout(() => run({ fit }), FORM_DEBOUNCE_MS);   // debounce: czekamy, aż użytkownik skończy zmieniać ustawienia
 }
 
 // Sprawdza, czy można liczyć; w przeciwnym razie pokazuje komunikat w panelu.
@@ -130,6 +184,7 @@ function validate() {
 }
 
 async function run({ fit }) {
+  if (state.mode !== 'place') return;
   const p = validate();
   if (!p) return;
   ui.showInfo('');
@@ -160,6 +215,104 @@ async function run({ fit }) {
   }
 }
 
+// ---- Tryb „Cała Polska”: gotowa mapa (daleko) albo mapa na żywo (blisko) ----
+
+let viewTimer = null;
+function scheduleView(delay) {
+  clearTimeout(viewTimer);
+  viewTimer = setTimeout(refreshView, delay);
+}
+
+// Ruch mapy: po jego zakończeniu (moveend) odświeżamy mgłę. Bez wyboru branży/klientów nie ma co liczyć.
+async function refreshView() {
+  if (state.mode !== 'pl') return;
+  const p = ui.selectedParams();
+  if (!p.type && !p.demand) {
+    if (state.controller) state.controller.abort();
+    resetResult();
+    ui.showInfo(NEED_SELECTION);
+    ui.setLoading(false);
+    return;
+  }
+  ui.showInfo('');
+  ui.showError('');
+  const bounds = map.viewBounds();
+  if (bounds.px < 50 || !(bounds.east > bounds.west) || !(bounds.north > bounds.south)) return;   // mapa jeszcze bez rozmiaru (start strony)
+  const live = halfDiagonalKm(bounds) <= LIVE_HALF_DIAGONAL_KM;
+  if (state.controller) state.controller.abort();   // wcześniejsze zapytanie (inny kadr) jest nieaktualne
+  const controller = new AbortController();
+  state.controller = controller;
+  const mine = ++state.requestId;
+  ui.setLoading(true);
+  try {
+    const box = { west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north };
+    const result = live
+      ? await surface({ type: p.type, demand: p.demand, reach_km: p.reach_km, months: p.months, ...box }, controller.signal)
+      : await national({ type: p.type, demand: p.demand, px: bounds.px, ...box }, controller.signal);
+    if (mine !== state.requestId || state.mode !== 'pl') return;
+    showView(result, { ...p, reach_km: live ? p.reach_km : result.reach_km }, live ? 'live' : 'national');
+    writeHash();
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    if (mine !== state.requestId) return;
+    ui.showError(e.message);
+  } finally {
+    if (mine === state.requestId) ui.setLoading(false);
+  }
+}
+
+function showView(result, used, kind) {
+  const firstResult = !state.result;
+  state.result = result;
+  state.used = used;
+  state.view = kind;
+  ui.hideIntro();
+  ui.showInsights();
+  if (firstResult) map.invalidateSize();                 // prawy panel pojawił się po raz pierwszy
+  ui.setReachLocked(kind === 'national');
+  drawLayer();
+  if (kind === 'live') {
+    ui.renderSummary(result.summary, { placeName: 'widoczny obszar', demandId: used.demand, permitsPeriod: result.permits_period });
+  } else {
+    ui.hideSummary();                                    // podsumowanie ze średnią krajową ma sens tylko dla konkretnego obszaru
+  }
+  ui.renderWarnings(result.warnings);
+  ui.renderNotes(result.notes);
+}
+
+// ---- Zmiana trybu ----
+
+function switchMode(mode) {
+  if (state.mode === mode) return;
+  state.mode = mode;
+  clearTimeout(viewTimer);
+  clearTimeout(runTimer);
+  if (state.controller) state.controller.abort();
+  ui.setLoading(false);
+  ui.showError('');
+  ui.setMode(mode);
+  resetResult();
+  if (mode === 'pl') {
+    map.clearArea();
+    ui.showIntro();
+    ui.showInfo('');
+    refreshView();
+  } else {
+    ui.showIntro();
+    ui.showInfo(state.place ? '' : NEED_PLACE);
+    if (state.place) setPlace(state.place.lat, state.place.lng, state.place.name);   // pinezka i okrąg wracają
+  }
+  writeHash();
+}
+
+// „Przeanalizuj to miejsce” w dymku: ten punkt staje się wybranym miejscem i od razu liczymy okrąg wokół niego.
+function analyzePlace(lat, lng) {
+  map.closeDetails();
+  switchMode('place');
+  setPlace(lat, lng, MAP_POINT);
+  run({ fit: true });
+}
+
 // ---- Szczegóły klikniętego punktu ----
 
 let pointRequest = 0;
@@ -185,7 +338,10 @@ async function showPointAt(lat, lng) {
     ]);   // brak konkurentów na mapie (poi == null) nie blokuje dymku
     if (mine !== pointRequest) return;
     const competitors = poi ? poi.items.filter((c) => distanceKm(lat, lng, c.lat, c.lng) <= data.radius_km) : [];
-    map.showDetails(lat, lng, data.radius_km, competitors, ui.pointPopup(data, () => useAsCenter(lat, lng)));
+    const popup = state.mode === 'pl'
+      ? ui.pointPopup(data, () => analyzePlace(lat, lng), 'Przeanalizuj to miejsce')
+      : ui.pointPopup(data, () => useAsCenter(lat, lng));
+    map.showDetails(lat, lng, data.radius_km, competitors, popup);
   } catch (e) {
     if (mine === pointRequest) ui.showError(e.message);
   }
@@ -206,10 +362,14 @@ function useAsCenter(lat, lng) {
 }
 
 // Kliknięcie w mapę:
-//   • bez wyniku (albo gdy właśnie wskazano nowe miejsce) — ustawia miejsce,
-//   • w okręgu obszaru — szczegóły punktu,
-//   • poza okręgiem — nowe miejsce (podgląd; trzeba kliknąć »Pokaż mapę«).
+//   • Cała Polska — szczegóły punktu (jeśli mgła już jest),
+//   • Wybrane miejsce: bez wyniku (albo gdy właśnie wskazano nowe miejsce) — ustawia miejsce,
+//     w okręgu obszaru — szczegóły punktu, poza okręgiem — nowe miejsce (podgląd; trzeba kliknąć »Pokaż mapę«).
 function onMapClick(lat, lng) {
+  if (state.mode === 'pl') {
+    if (state.result) showPointAt(lat, lng);
+    return;
+  }
   if (!state.result) {
     setPlace(lat, lng, MAP_POINT);
     ui.showInfo('');
@@ -228,48 +388,102 @@ function onMapClick(lat, lng) {
   writeHash();
 }
 
-// ---- Stan w adresie URL (#type=…&demand=…&reach=…&m=…&layer=…&lat=…&lng=…&r=…) — link można komuś wysłać ----
+// ---- Stan w adresie URL — link można komuś wysłać ----
+//   Cała Polska:      #mode=pl&type=…&demand=…&reach=…&m=…&layer=…&z=…&clat=…&clng=…
+//   Wybrane miejsce:  #mode=place&type=…&demand=…&reach=…&m=…&layer=…&lat=…&lng=…&r=…&n=…
+// Stare linki (bez mode, z lat/lng) to tryb „Wybrane miejsce”.
 
 function writeHash() {
-  if (!state.place) return;
   const p = ui.selectedParams();
-  const hash = new URLSearchParams({
-    type: p.type, demand: p.demand, reach: p.reach_km, layer: ui.currentLayer(),
-    lat: state.place.lat.toFixed(5), lng: state.place.lng.toFixed(5), r: p.radius_km, n: state.place.name,
-  });
+  let hash;
+  if (state.mode === 'pl') {
+    const c = map.leaflet.getCenter();
+    hash = new URLSearchParams({
+      mode: 'pl', type: p.type, demand: p.demand, reach: p.reach_km, layer: ui.currentLayer(),
+      z: map.leaflet.getZoom().toFixed(2), clat: c.lat.toFixed(5), clng: c.lng.toFixed(5),
+    });
+  } else {
+    if (!state.place) return;
+    hash = new URLSearchParams({
+      mode: 'place', type: p.type, demand: p.demand, reach: p.reach_km, layer: ui.currentLayer(),
+      lat: state.place.lat.toFixed(5), lng: state.place.lng.toFixed(5), r: p.radius_km, n: state.place.name,
+    });
+  }
   if (p.months) hash.set('m', p.months);   // okres tylko dla czynników z pozwoleń
   history.replaceState(null, '', '#' + hash);
 }
 
-// Odtwarza ustawienia z adresu; zwraca true, jeśli adres zawierał miejsce i wybór (wtedy od razu liczymy mapę).
+// Odtwarza ustawienia z adresu; zwraca true, gdy adres zawierał widok albo miejsce (wtedy od razu pokazujemy mapę).
 function applyHash() {
   const h = new URLSearchParams(location.hash.slice(1));
   const lat = Number(h.get('lat'));
   const lng = Number(h.get('lng'));
-  if (!h.get('lat') || !h.get('lng') || !Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-  if (!h.get('type') && !h.get('demand')) return false;
-  const clamped = ui.setSelection({
+  const hasPlace = h.get('lat') && h.get('lng') && Number.isFinite(lat) && Number.isFinite(lng);
+  const mode = h.get('mode') === 'pl' || (!h.get('mode') && !hasPlace) ? 'pl' : 'place';
+  const selection = {
     type: h.get('type'), demand: h.get('demand'), reach: Number(h.get('reach')) || null,
     months: h.get('m'), radius: Number(h.get('r')) || null,
-  });
+  };
+  if (mode === 'pl') {
+    const z = Number(h.get('z'));
+    const clat = Number(h.get('clat'));
+    const clng = Number(h.get('clng'));
+    if (!h.get('z') || !Number.isFinite(z) || !Number.isFinite(clat) || !Number.isFinite(clng)) return false;
+    const clamped = ui.setSelection(selection);
+    state.pendingNote = clamped ? ui.MIN_REACH_NOTE : null;
+    if (h.get('layer')) ui.selectLayer(h.get('layer'));
+    if (state.mode !== 'pl') {                           // link wklejony w trybie miejsca: sprzątamy pinezkę, okrąg i stary wynik
+      if (state.controller) state.controller.abort();
+      clearTimeout(runTimer);
+      resetResult();
+      map.clearArea();
+    }
+    state.mode = 'pl';
+    ui.setMode('pl');
+    map.setView(clat, clng, z);                          // wywoła moveend → odświeżenie mgły
+    scheduleView(0);
+    return true;
+  }
+  if (!hasPlace || (!h.get('type') && !h.get('demand'))) return false;
+  const clamped = ui.setSelection(selection);
   state.pendingNote = clamped ? ui.MIN_REACH_NOTE : null;   // stary link z zasięgiem < 0,3 km
   if (h.get('layer')) ui.selectLayer(h.get('layer'));
+  if (state.mode !== 'place') {
+    state.mode = 'place';
+    clearTimeout(viewTimer);
+    resetResult();
+    ui.setMode('place');
+    map.clearArea();
+  }
   setPlace(lat, lng, h.get('n') || MAP_POINT, { fit: true });
   return true;
 }
 
 // ---- Podłączenie zdarzeń ----
 map.onMapClick(onMapClick);
+map.onViewChange(() => {
+  if (state.mode !== 'pl') return;
+  scheduleView(halfDiagonalKm(map.viewBounds()) <= LIVE_HALF_DIAGONAL_KM ? LIVE_DEBOUNCE_MS : NATIONAL_DEBOUNCE_MS);
+  writeHash();
+});
 
-// Zmiana ustawień: po wyniku liczymy od nowa (z opóźnieniem), przed wynikiem tylko odświeżamy okrąg podglądu.
+// Zmiana ustawień: tryb Polski przelicza widok; tryb miejsca po wyniku liczy od nowa (z opóźnieniem),
+// a przed wynikiem tylko odświeża okrąg podglądu.
 function onFormChange() {
   discardPoint();
+  if (state.mode === 'pl') {
+    ui.showInfo('');
+    scheduleView(FORM_DEBOUNCE_MS);
+    writeHash();
+    return;
+  }
   ui.showInfo(state.preview ? NEW_PLACE_INFO : '');
   if (state.result || state.loading) scheduleRun(state.preview);   // także w trakcie pierwszego zapytania; przy podglądzie nowego miejsca dopasuj widok
   else if (state.place) map.setArea(state.place.lat, state.place.lng, ui.radiusKm(), { veil: false });
   writeHash();
 }
 
+ui.onModeChange(switchMode);
 ui.onShowClick(() => { clearTimeout(runTimer); run({ fit: true }); });
 ui.onLayerChange(() => {
   discardPoint();
@@ -283,12 +497,13 @@ ui.renderHelp();
 ui.initSearch(pickPlace);
 
 // Wklejenie innego linku w tej samej karcie zmienia tylko hash (bez przeładowania) — odtwórz widok.
-window.addEventListener('hashchange', () => { if (applyHash()) run({ fit: true }); });
+window.addEventListener('hashchange', () => { if (applyHash() && state.mode === 'place') run({ fit: true }); });
 
 getMeta().then(ui.renderFooter).catch(() => { /* stopka jest dodatkiem — brak metadanych nie przeszkadza */ });
 getCatalog()
   .then((catalog) => {
     ui.renderCatalog(catalog, onFormChange);
-    if (applyHash()) run({ fit: true });
+    ui.setMode('pl');
+    if (applyHash() && state.mode === 'place') run({ fit: true });
   })
   .catch((e) => ui.showError(e.message));

@@ -16,6 +16,9 @@ const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 
 // ---- Wyjaśnienia pod pytajnikami (teksty ze specyfikacji v3 §5, uzupełnione w v3.1 o drugie źródło firm — Overture) ----
 const HELP = {
+  area: 'Cała Polska: od razu widzisz całą mapę i możesz ją swobodnie przybliżać. Po oddaleniu pokazujemy gotową mapę dla typowego zasięgu branży, ' +
+    'a po przybliżeniu do miasta liczymy ją na żywo z Twoimi ustawieniami. Wybrane miejsce: analiza okręgu wokół jednego miejsca ' +
+    'z podsumowaniem i porównaniem ze średnią krajową.',
   open: 'Ilu klientów mogłaby przyciągnąć nowa firma w danym miejscu. Liczymy to modelem Huffa: każdy mieszkaniec wybiera między firmami, ' +
     'a bliższa firma przyciąga go mocniej. Uwzględniamy wszystkich konkurentów z OpenStreetMap i Overture Maps oraz »inne możliwości« ' +
     '(firmy, których nie ma w tych bazach, zakupy gdzie indziej). Najbardziej czerwone miejsca to najlepsze lokalizacje.',
@@ -31,7 +34,8 @@ const HELP = {
     'Najmniejszy zasięg to 0,3 km, bo dane o mieszkańcach mają rozdzielczość ok. 300 m.',
   radius: 'Jak duży obszar wokół wybranego miejsca przeanalizować. Mniejszy obszar = szybciej i dokładniej.',
   legend: 'Kolor w skali logarytmicznej: każdy krok koloru to mniej więcej podwojenie wartości. ' +
-    'Przezroczyste miejsca mają bardzo małe wartości. Dokładne liczby zobaczysz po kliknięciu mapy.',
+    'Przezroczyste miejsca mają bardzo małe wartości. Dokładne liczby zobaczysz po kliknięciu mapy. ' +
+    'Na mapie całej Polski skala jest stała (te same kolory znaczą te same liczby w każdym mieście); po przybliżeniu kolory dopasowują się do widoku.',
   summary: 'Liczby dotyczą całego zaznaczonego okręgu. Średnia krajowa pokazuje, ilu klientów przypada na jedną firmę tego typu ' +
     'w całej Polsce — jeśli tutaj jest ich wyraźnie więcej, konkurencja jest mniejsza niż zwykle. ' +
     'Firmy: OpenStreetMap + Overture Maps (mogą nie obejmować wszystkich).',
@@ -115,6 +119,31 @@ function showRadius() {
 export function setRadius(km) {
   $('radius-input').value = String(Math.min(30, Math.max(1, Math.round(Number(km)) || 10)));
   showRadius();
+}
+
+// ---- Obszar analizy: „Cała Polska” / „Wybrane miejsce” ----
+
+export const currentMode = () => (document.querySelector('input[name=mode]:checked') || { value: 'pl' }).value;
+
+// Ustawia tryb: w „Cała Polska” znikają miejsce, promień i przycisk „Pokaż mapę” (mgła pojawia się sama).
+export function setMode(mode) {
+  const place = mode === 'place';
+  const radio = [...document.querySelectorAll('input[name=mode]')].find((r) => r.value === mode);
+  if (radio) radio.checked = true;
+  $('place-controls').hidden = !place;
+  $('show-button').hidden = !place;
+  $('intro-pl').hidden = place;
+  $('intro-place').hidden = !place;
+  if (place) setReachLocked(false);
+}
+
+export const onModeChange = (cb) => document.querySelectorAll('input[name=mode]')
+  .forEach((r) => r.addEventListener('change', () => r.checked && cb(r.value)));
+
+// Zasięg jest zablokowany, gdy widać gotową mapę Polski (liczoną dla typowego zasięgu), i odblokowany przy mapie na żywo.
+export function setReachLocked(locked) {
+  $('reach-input').disabled = locked;
+  $('reach-hint').hidden = !locked;
 }
 
 // ---- Formularz ----
@@ -237,6 +266,7 @@ export function setPlaceName(name) {
 }
 
 export const hideIntro = () => { $('intro').hidden = true; };
+export const showIntro = () => { $('intro').hidden = false; };
 export const onShowClick = (cb) => $('show-button').addEventListener('click', cb);
 // Wyróżnienie przycisku „Pokaż mapę”, gdy wskazano nowe miejsce, a mapa jeszcze pokazuje stare.
 export const highlightShow = (on) => $('show-button').classList.toggle('attention', on);
@@ -423,7 +453,7 @@ export function renderSummary(summary, ctx) {
     return row;
   };
   const demand = demandById(ctx.demandId);
-  add(`Obszar: ${ctx.placeName}, promień ${fmt(summary.radius_km, 1)} km`, 'where');
+  add(summary.shape === 'view' ? 'Widoczny obszar (to, co jest teraz na mapie)' : `Obszar: ${ctx.placeName}, promień ${fmt(summary.radius_km, 1)} km`, 'where');
   if (summary.demand_total != null && demand) {
     const permits = ctx.permitsPeriod;
     add(permits
@@ -444,12 +474,14 @@ export function renderSummary(summary, ctx) {
   $('summary-box').hidden = false;
 }
 
+export const hideSummary = () => { $('summary-box').hidden = true; };
+
 // ---- Najlepsze miejsca ----
 
 const TOP_TITLES = { open: 'Najlepsze miejsca', demand: 'Najwięcej klientów', competition: 'Najwięcej firm', trend: 'Gdzie przybywa budów' };
 
-export function renderTop(list, layer, permits, onClick) {
-  $('top-title').textContent = TOP_TITLES[layer] || TOP_TITLES.open;
+export function renderTop(list, layer, permits, onClick, inView = false) {
+  $('top-title').textContent = inView && layer === 'open' ? 'Najlepsze miejsca w widoku' : (TOP_TITLES[layer] || TOP_TITLES.open);
   $('top-title').hidden = false;
   const ol = $('top-list');
   ol.innerHTML = '';
@@ -475,8 +507,8 @@ const km = (r) => fmt(r, 1);
 const dist = (m) => (m >= 1000 ? `${fmt(m / 1000, 1)} km` : `${fmt(m)} m`);
 
 // Zwraca element DOM (tekst wstawiamy przez textContent — nazwy firm nie są HTML-em).
-// onSetCenter: wywoływane po kliknięciu „Ustaw tu środek obszaru”.
-export function pointPopup(d, onSetCenter) {
+// onSetCenter: wywoływane po kliknięciu przycisku pod dymkiem (podpis: actionLabel).
+export function pointPopup(d, onSetCenter, actionLabel = 'Ustaw tu środek obszaru') {
   const box = document.createElement('div');
   const add = (text, bold = false) => {
     const p = document.createElement('div');
@@ -511,7 +543,7 @@ export function pointPopup(d, onSetCenter) {
     const link = document.createElement('button');
     link.type = 'button';
     link.className = 'link-button';
-    link.textContent = 'Ustaw tu środek obszaru';
+    link.textContent = actionLabel;
     link.addEventListener('click', onSetCenter);
     box.append(link);
   }

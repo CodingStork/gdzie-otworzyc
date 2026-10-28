@@ -27,6 +27,8 @@ async function get(path, params = {}, signal) {
 export const getCatalog = () => get('/api/catalog');
 // Mapa okolicy wybranego miejsca (mgła); `signal` pozwala przerwać zapytanie, gdy użytkownik zmienił ustawienia.
 export const surface = (params, signal) => get('/api/surface', params, signal);
+// Gotowa mapa Polski (tryb „Cała Polska”): stała skala kolorów, rozdzielczość zależna od szerokości mapy w pikselach.
+export const national = (params, signal) => get('/api/national', params, signal);
 // Szczegóły klikniętego punktu: liczby w okręgu zasięgu, model Huffa, komórki do narysowania.
 export const point = (params) => get('/api/point', params);
 // Firmy danego typu w prostokącie — tylko do narysowania konkurentów w szczegółach punktu.

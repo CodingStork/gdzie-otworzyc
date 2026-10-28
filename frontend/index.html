@@ -12,9 +12,23 @@
   <aside id="sidebar">
     <h1>Gdzie otworzyć?</h1>
 
-    <!-- Karta instrukcji: widoczna do pierwszego wyniku -->
+    <!-- Obszar analizy: cała Polska (mgła od razu, przybliżanie do miasta liczy na żywo) albo okrąg wokół jednego miejsca -->
+    <fieldset id="mode-choice">
+      <legend>Obszar analizy
+        <button type="button" class="help" data-help="area" aria-label="Co oznacza obszar analizy?">?</button>
+      </legend>
+      <label><input type="radio" name="mode" value="pl" checked> Cała Polska</label>
+      <label><input type="radio" name="mode" value="place"> Wybrane miejsce</label>
+    </fieldset>
+
+    <!-- Karta instrukcji: widoczna do pierwszego wyniku; treść zależy od trybu (ui.js: setMode) -->
     <div id="intro" class="info">
-      <ol>
+      <ol id="intro-pl">
+        <li>Wybierz branżę (i/lub klientów) — mapa Polski pojawi się od razu.</li>
+        <li>Przybliż mapę do swojego miasta.</li>
+        <li>Kliknij miejsce, żeby zobaczyć szczegóły.</li>
+      </ol>
+      <ol id="intro-place" hidden>
         <li>Wybierz branżę (i/lub klientów).</li>
         <li>Wpisz miejscowość albo kliknij mapę.</li>
         <li>Ustaw promień i kliknij »Pokaż mapę«.</li>
@@ -43,20 +57,24 @@
     </div>
     <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,3–20 km (wzór w ui.js) -->
     <input id="reach-input" type="range" min="0" max="100" step="1" value="50">
+    <div id="reach-hint" class="hint" hidden>Pokazana jest gotowa mapa dla typowego zasięgu branży — przybliż mapę, aby użyć własnego zasięgu.</div>
 
-    <label for="search-input">Miejsce</label>
-    <div id="search-wrap">
-      <input id="search-input" type="search" placeholder="Wpisz miejscowość lub adres" autocomplete="off"
-             aria-label="Miejscowość lub adres">
-      <ul id="search-results" hidden></ul>
-    </div>
-    <div id="place-hint" class="hint">albo kliknij mapę</div>
+    <!-- Tylko w trybie „Wybrane miejsce” -->
+    <div id="place-controls" hidden>
+      <label for="search-input">Miejsce</label>
+      <div id="search-wrap">
+        <input id="search-input" type="search" placeholder="Wpisz miejscowość lub adres" autocomplete="off"
+               aria-label="Miejscowość lub adres">
+        <ul id="search-results" hidden></ul>
+      </div>
+      <div id="place-hint" class="hint">albo kliknij mapę</div>
 
-    <div class="label-row">
-      <label for="radius-input">Promień obszaru: <b id="radius-value">10</b> km</label>
-      <button type="button" class="help" data-help="radius" aria-label="Co to jest promień obszaru?">?</button>
+      <div class="label-row">
+        <label for="radius-input">Promień obszaru: <b id="radius-value">10</b> km</label>
+        <button type="button" class="help" data-help="radius" aria-label="Co to jest promień obszaru?">?</button>
+      </div>
+      <input id="radius-input" type="range" min="1" max="30" step="1" value="10">
     </div>
-    <input id="radius-input" type="range" min="1" max="30" step="1" value="10">
 
     <!-- Warstwy do wyboru zależą od ustawień powyżej (ui.js: syncLayers) -->
     <fieldset id="layer-choice">
@@ -64,7 +82,7 @@
       <div id="layer-options"></div>
     </fieldset>
 
-    <button id="show-button" type="button">Pokaż mapę</button>
+    <button id="show-button" type="button" hidden>Pokaż mapę</button>
 
     <div id="info" class="info" role="status" hidden></div>
     <div id="error" role="alert" hidden></div>

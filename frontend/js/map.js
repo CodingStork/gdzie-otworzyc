@@ -125,6 +125,7 @@ export function initMap(elementId) {
   let fogOverlay = null;
   let opacity = 0.85;
   let dimmed = false;
+  const FADE_MS = 250;   // czas przenikania starej mgły w nową (musi się zgadzać z transition w style.css)
 
   // Gdy zmieni się rozmiar kontenera mapy (np. zwinięcie panelu na telefonie), Leaflet musi przeliczyć rozmiar.
   new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById(elementId));
@@ -157,15 +158,30 @@ export function initMap(elementId) {
     // Mgła: t = pozycje 0–1 na skali (NaN poza okręgiem), grid z /api/surface.
     // colorOf: funkcja t → [r,g,b,a]; domyślnie paleta żółto-czerwona (dla trendu: paleta rozbieżna).
     setFog(grid, t, radiusKm, colorOf = fogColor) {
-      if (fogOverlay) fogOverlay.remove();
       const bounds = [[grid.south, grid.west], [grid.north, grid.east]];
-      fogOverlay = L.imageOverlay(renderFog(grid, t, radiusKm, colorOf), bounds, {
-        pane: 'fog', interactive: false, opacity: opacity * (dimmed ? DIM : 1),
+      const old = fogOverlay;
+      const overlay = L.imageOverlay(renderFog(grid, t, radiusKm, colorOf), bounds, {
+        pane: 'fog', interactive: false, opacity: 0,
       }).addTo(map);
+      fogOverlay = overlay;
+      // Nowa mgła wjeżdża z przezroczystości, a stara znika po FADE_MS — bez mrugania między „gotową mapą” a mapą na żywo.
+      const target = opacity * (dimmed ? DIM : 1);
+      requestAnimationFrame(() => { if (fogOverlay === overlay) overlay.setOpacity(target); });
+      if (old) { old.setOpacity(0); setTimeout(() => old.remove(), FADE_MS + 50); }
+      if (document.hidden) { overlay.setOpacity(target); if (old) old.remove(); }   // w tle przeglądarka nie odtwarza animacji
     },
     clearFog() {
       if (fogOverlay) { fogOverlay.remove(); fogOverlay = null; }
     },
+    // Tryb „Cała Polska” nie ma pinezki, okręgu ani welonu.
+    clearArea() { areaLayer.clearLayers(); },
+    // Widoczny fragment mapy (do zapytań o gotową mapę i mapę na żywo) i szerokość mapy w pikselach.
+    viewBounds() {
+      const b = map.getBounds();
+      return { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth(), px: map.getSize().x };
+    },
+    onViewChange(cb) { map.on('moveend', cb); },
+    setView(lat, lng, zoom) { map.setView([lat, lng], zoom, { animate: false }); },
     setFogOpacity(value) {
       opacity = value;
       if (fogOverlay) fogOverlay.setOpacity(value * (dimmed ? DIM : 1));
