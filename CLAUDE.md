@@ -113,5 +113,6 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 - `docs/sciaga-do-obrony.md` — pytania i odpowiedzi, które Marcin musi umieć na obronie.
 - `docs/zrodla-danych.md` — zweryfikowane formaty i pułapki źródeł danych.
 - `docs/raport-etl.md` — wyniki i stan przetwarzania danych.
+- `docs/kompletnosc-danych.md` — jak pełne są dane o firmach wg typu i wielkości miejscowości (porównanie z GUS/D&B).
 - `docs/superpowers/specs/*-design.md` — specyfikacje kolejnych wersji (v1 2026-10-26, v2 i v3 2026-10-27).
 - `docs/superpowers/plans/*.md` — plany wykonawcze (najnowszy: `2026-10-27-v31-overture-podsumowanie.md`).
