@@ -35,6 +35,8 @@ Wybierasz typ działalności (11 typów) i/lub klientów (ludność ze spisu 202
 |---|---|
 | ![Stary link](docs/screenshots/v32-f-stary-link-brukarz.png) | ![Telefon](docs/screenshots/v32-g-telefon-nowe-domy.png) |
 
+Zrzuty z wersji 3.3 (szare kreskowanie „mało danych o firmach”, Olsztynek vs Brzeg) są w `docs/screenshots/v33-*.png`.
+
 Zrzuty z wersji 3.1 (okrąg wokół jednego miejsca, bez trybu „Cała Polska”) są w `docs/screenshots/v31-*.png`.
 
 ## Jak to działa (metoda)
@@ -52,9 +54,25 @@ Gdzie otworzyć:    E(g) = Σ_i d_i · f(d_ig) / ( f(d_ig) + C_i + A0 )     (mod
 
 ### Tryb „Cała Polska”: gotowa mapa + mapa na żywo (v3.2)
 
-Ciągłe liczenie całej Polski przy każdym ruchu mapy było męczące (v2), więc robimy to **raz w ETL** (krok `national`, `etl/national.py`): dla środków komórek H3 **res 8** (~900 m między nimi; komórki z ludnością i ich sąsiedzi, ok. 420 tys. punktów) liczymy **te same wzory i funkcje co `/api/surface`** (Huff, potencjał popytu, zagęszczenie firm, trend budów; odległości w EPSG:2180) dla **typowego zasięgu**: z branżą — jej `bandwidth_km`, bez branży — `default_reach_km` czynnika (spis 1,5 km, pozwolenia 10 km). Warstw jest 65 (`open__{typ}__{czynnik}`, `comp__{typ}`, `demand__{czynnik}__{zasięg}`, `trend__{czynnik}`), w tabeli szerokiej `national_r8` (kolumna = warstwa). Grubsze poziomy `national_r7 … r5` powstają przez **maksimum z komórek-dzieci** — oddalona mapa pokazuje „najlepsze miejsce w tym rejonie”, a średnia zalałaby małe, dobre ośrodki mgłą bez kontrastu (dla trendu bierzemy wartość o największym module, ze znakiem). Tabela `national_meta` trzyma p5 i p99 wartości dodatnich: **stałą skalę kolorów** dla całego kraju (te same kolory znaczą te same liczby w Gdańsku i w Krakowie, i nie „pływają” przy przesuwaniu mapy).
+Ciągłe liczenie całej Polski przy każdym ruchu mapy było męczące (v2), więc robimy to **raz w ETL** (krok `national`, `etl/national.py`): dla środków komórek H3 **res 8** (~900 m między nimi; komórki z ludnością i ich sąsiedzi, ok. 420 tys. punktów) liczymy **te same wzory i funkcje co `/api/surface`** (Huff, potencjał popytu, zagęszczenie firm, trend budów; odległości w EPSG:2180) dla **typowego zasięgu**: z branżą — jej `bandwidth_km`, bez branży — `default_reach_km` czynnika (spis 1,5 km, pozwolenia 10 km). Warstw jest 92 (`open__{typ}__{czynnik}`, `rel__{typ}__{czynnik}` — patrz niżej, `comp__{typ}`, `demand__{czynnik}__{zasięg}`, `trend__{czynnik}`), w tabeli szerokiej `national_r8` (kolumna = warstwa). Grubsze poziomy `national_r7 … r5` powstają przez **maksimum z komórek-dzieci** — oddalona mapa pokazuje „najlepsze miejsce w tym rejonie”, a średnia zalałaby małe, dobre ośrodki mgłą bez kontrastu (dla trendu bierzemy wartość o największym module, ze znakiem). Tabela `national_meta` trzyma p5 i p99 wartości dodatnich: **stałą skalę kolorów** dla całego kraju (te same kolory znaczą te same liczby w Gdańsku i w Krakowie, i nie „pływają” przy przesuwaniu mapy).
 
 `/api/national` wybiera rozdzielczość tak, by komórka H3 miała ≤ 4 px na ekranie (i nie więcej niż ~60 tys. komórek), układa wartości na siatce równej w rzucie Mercatora (żeby obraz przylegał do kafelków) i zwraca ją w tym samym kształcie co `/api/surface`, więc przeglądarka rysuje obie mgły tym samym kodem. Gdy dla wyboru nie ma gotowej warstwy (np. „Gdzie otworzyć” dla czynnika spoza zalecanych dla branży), odpowiedź mówi to w notatce, a użytkownik po przybliżeniu dostaje mapę na żywo. Mapa na żywo to `/api/surface` w trybie prostokąta widoku (`west,south,east,north`, bok ≤ 60 km): liczymy okrąg opisany na widoku, a maskę przycinamy do prostokąta, więc podsumowanie dotyczy „widocznego obszaru”.
+
+### „Mało danych o firmach” — szare kreskowanie (v3.3)
+
+Model Huffa wierzy danym. W miasteczku, w którym w OSM i Overture nie ma **ani jednego salonu**, „nowa firma zgarnia wszystkie klientki” — a to najczęściej luka w danych, nie okazja (przy takiej liczbie mieszkańców statystycznie byłoby ok. 4–6 salonów). Przed v3.3 na mapie Polski wygrywały więc Olsztynek, Sianów czy Nowe. Krok ETL **`gaps`** (`etl/gaps.py`) wykrywa takie miejsca, **osobno dla każdego typu firmy**:
+
+```
+oczekiwane = (mieszkańcy w promieniu 2 km od środka komórki res 9) × (firm tego typu w Polsce / mieszkańców Polski)
+w danych   = firm tego typu (tabela poi) w promieniu 2 km
+luka       = oczekiwane ≥ 3  ORAZ  w danych ≤ 0,25 · oczekiwane
+```
+
+- **Dlaczego 2 km, ≥ 3, ¼:** 2 km to promień małego miasta; poniżej 3 „oczekiwanych” firm brak firm bywa prawdziwy (wieś), więc nie oceniamy; „najwyżej ¼ średniej krajowej” to różnica, której nie tłumaczy specyfika miasteczka (miasteczka mają średnio *więcej* salonów na mieszkańca niż średnia krajowa — [docs/kompletnosc-danych.md](docs/kompletnosc-danych.md)). Progi ustalono pomiarem (w lukach mieszka 1,7% ludności dla salonów, 0,9% dla fryzjerów, 0,4% dla sklepów spożywczych; Brzeg, Oława i Wrocław bez luk) i są stałymi `GAP_*` w `backend/app/catalog.py`.
+- **Udział klientów z luki:** drugi przebieg Huffa z wagami `d_i · luka_i` (ta sama dostępność konkurencji `C_i`) daje `E_luka`; **wiarygodni klienci** to `rel = E − E_luka`. Dla źródeł popytu w res < 9 (zasięg > 2 km) `luka_i` to udział ludności komórek-dzieci res 9 w luce (tabela `gap_share`).
+- **Co widać:** kolor mgły się **nie zmienia** (model mówi, co mówi), ale miejsca, w których ponad połowa klientów mieszka w lukach (`rel < ½ E`), mają **szare ukośne kreskowanie**. Takie miejsca **nie trafiają do najlepszych miejsc** (top-5 jest sortowany po `rel`; pokazywana liczba to nadal `E` jak w dymku). Dymek po kliknięciu i podsumowanie obszaru pokazują ostrzeżenie z liczbami („w danych 0, a przy tej liczbie mieszkańców średnio w Polsce byłoby ok. 6”), a werdykt „mniej konkurencji niż przeciętnie” zastępuje „nie da się ocenić — za mało danych o firmach”.
+- **Gdzie działa:** warstwa „Gdzie otworzyć” w obu trybach (`/api/national` czyta kolumny `rel__…`, `/api/surface` liczy `E` i `E_luka` jednym przebiegiem po parach punkt–źródło).
+- **Ograniczenie:** miejscowość, w której spodziewamy się < 3 firm (np. 3-tysięczne miasteczko i salony), nie jest oceniana — przy tak małych liczbach brak firm może być prawdziwy, więc tam kreskowania nie będzie. Warstwa „Gdzie są firmy” (sam typ, bez popytu) na razie bez kreskowania. Wykrywamy tylko luki *względem średniej krajowej* — jeśli dane o firmach są słabe wszędzie podobnie, nic nie wychwycimy.
 
 Najważniejsze decyzje metodyczne (szczegółowo w [docs/sciaga-do-obrony.md](docs/sciaga-do-obrony.md)):
 
@@ -106,7 +124,8 @@ Podkład: pierwotnie planowano CARTO Positron, ale darmowe kafelki CARTO wymagaj
  │ Overture Places (S3)      → poi (dedup.)   │ plik │   top-5)                        │     │                  │
  │ GUNB RWDZ CSV + ULDK      → permits        │      │ /api/point (dymek punktu)       │     │                  │
  │ agregacja do H3 res 9 → 8 → 7 → 6 → 5      │      │ /api/national (gotowa mapa PL)  │     │                  │
- │ national: Huff dla całej Polski (res 8,    │      │ /api/poi /api/geocode /api/meta │     │                  │
+ │ gaps: luki w danych o firmach (res 9 → 6)  │      │ /api/poi /api/geocode /api/meta │     │                  │
+ │ national: Huff dla całej Polski (res 8,    │      │                                 │     │                  │
  │   piramida max → 7, 6, 5, stała skala)     │      │                                 │     │                  │
  └────────────────────────────────────────────┘      └─────────────────────────────────┘     └──────────────────┘
 ```
@@ -119,7 +138,7 @@ Struktura repozytorium:
 backend/app/        FastAPI: main.py, config.py, db.py, catalog.py, api/routes.py,
                     analysis/{kernel,surface,service,layers,national}.py, services/geocode.py
 etl/                download.py, osm_poi.py, overture.py, streets.py, buildings.py, population.py, permits.py,
-                    geocode_obreby.py, aggregate.py, national.py, meta.py, run_all.py, sanity.py
+                    geocode_obreby.py, aggregate.py, gaps.py, national.py, meta.py, run_all.py, sanity.py
 frontend/           index.html, css/style.css, js/{app,api,map,ui,colors}.js
 tests/              pytest (małe fixture'y, baza testowa budowana w locie)
 docs/               specyfikacja, plan, źródła danych, raport ETL, ściąga do obrony
@@ -132,14 +151,14 @@ Wymagania: Windows 11, ≥ 16 GB RAM, ≥ 20 GB wolnego dysku, dostęp do intern
 ```powershell
 winget install --id=astral-sh.uv -e      # menedżer Pythona (po instalacji otwórz nową powłokę)
 uv sync                                   # Python 3.13 + biblioteki (środowisko .venv)
-uv run python -m etl.run_all              # ETL: pobieranie i przetwarzanie danych (kilka godzin, jednorazowo; budynki OSM ok. 16 min, gotowa mapa Polski ok. 12 min)
+uv run python -m etl.run_all              # ETL: pobieranie i przetwarzanie danych (kilka godzin, jednorazowo; budynki OSM ok. 16 min, luki w danych ok. 2 min, gotowa mapa Polski ok. 12 min)
 uv run python -m etl.sanity               # kontrola jakości danych (powinno wypisać OK)
 start.bat                                 # serwer: http://localhost:8000
 ```
 
 Uwagi:
 - Używamy Pythona 3.13 zarządzanego przez `uv` (`.python-version`); systemowego Pythona nie trzeba instalować.
-- ETL można przerwać i wznowić — pobieranie i geokodowanie są wznawialne, a krok `national` pomija policzone warstwy (po zmianie danych użyj `--only aggregate,national --force`; ok. 12 min). `--only buildings,population,aggregate` uruchamia wybrane kroki, `--force` wymusza ponowne wykonanie.
+- ETL można przerwać i wznowić — pobieranie i geokodowanie są wznawialne, a krok `national` pomija policzone warstwy (po zmianie danych o firmach lub ludności użyj `--only aggregate,gaps,national --force`; ok. 15 min — `gaps` liczy się zawsze od nowa, ale warstwy `rel__…` w `national` odświeża dopiero `--force`). `--only buildings,population,aggregate` uruchamia wybrane kroki, `--force` wymusza ponowne wykonanie.
 - Serwer i ETL nie mogą działać jednocześnie (blokada pliku DuckDB).
 - Serwer ULDK (GUGiK) może po godzinie intensywnych zapytań zablokować połączenie (przekierowanie na stronę-pułapkę). Geokodowanie przerywa się wtedy z komunikatem; odczekaj i dokończ: `uv run python -m etl.run_all --only geocode,permits_hex,aggregate --force` (szczegóły i aktualny stan: [docs/raport-etl.md](docs/raport-etl.md)).
 - Testy: `uv run pytest -v`.
@@ -158,6 +177,7 @@ Aplikacja działa na komputerze domowym; z laptopa (np. na uczelni) otwierasz j�
 ## Ograniczenia danych
 
 - **OpenStreetMap i Overture Maps są niekompletne**, zwłaszcza dla małych usług, dlatego typów „pracujących u klienta” (brukarze, ogrodnicy, instalatorzy) nie oferujemy; dla typów o ocenie „medium” (barber, paznokcie, tatuaż, fitness) aplikacja ostrzega łagodniej. Overture wyraźnie uzupełnia salony, fryzjerów i markety, ale wynik „mało konkurencji” może nadal oznaczać „mało wpisów w bazach”; dla typów z oceną „poor” aplikacja ostrzega, że to głównie mapa popytu. Deduplikacja jest heurystyką (odległość + podobieństwo nazw) — część duplikatów może zostać, a część różnych firm w jednym budynku zostać połączona.
+- **Luki w danych o firmach wykrywamy tylko tam, gdzie jest wyraźnie mniej firm niż średnio w Polsce** (≤ ¼ przy ≥ 3 oczekiwanych w promieniu 2 km). Małe miejscowości (oczekiwane < 3) nie są oceniane, a warstwa „Gdzie są firmy” nie ma kreskowania; kreskowanie ostrzega, ale nie uzupełnia brakujących firm (to zrobi dopiero CEIDG).
 - **Spis ludności jest z 2021 r.**; uzupełniają go pozwolenia na budowę.
 - **Pozwolenie na budowę ≠ wybudowany dom** (budowa trwa 1–3 lata, część nie rusza), a lokalizacja jest z dokładnością do obrębu ewidencyjnego (miasto: osiedle, wieś: cała wieś) — dlatego zasięg dla nowych domów wynosi co najmniej 1 km.
 - **Ludność w heksagonach to szacunek modelowy** (metoda dasymetryczna): spis podaje tylko kwadraty 1 km, a rozkład wewnątrz kwadratu wynika z wag budynków OSM (nie znamy liczby mieszkań w budynku).
@@ -172,4 +192,4 @@ Aplikacja działa na komputerze domowym; z laptopa (np. na uczelni) otwierasz j�
 - **M9** integracja CEIDG jako trzecie źródło konkurencji (kody PKD są już w katalogu),
 - **M10** dokładne geokodowanie działek dla ostatnich 24 miesięcy.
 
-Dokumentacja: [specyfikacja v3](docs/superpowers/specs/2026-10-27-v3-mgla-huff-design.md), [plan v3](docs/superpowers/plans/2026-10-27-v3-mgla-huff.md), [plan v3.1 (Overture, podsumowanie, trend)](docs/superpowers/plans/2026-10-27-v31-overture-podsumowanie.md), [plan v3.2 (cała Polska)](docs/superpowers/plans/2026-10-28-v32-cala-polska.md), [kompletność danych](docs/kompletnosc-danych.md), [specyfikacja v1](docs/superpowers/specs/2026-10-26-gdzie-otworzyc-design.md), [specyfikacja v2](docs/superpowers/specs/2026-10-27-widok-dynamiczny-design.md), [plan v1](docs/superpowers/plans/2026-10-26-gdzie-otworzyc.md), [plan v2](docs/superpowers/plans/2026-10-27-widok-dynamiczny.md), [źródła danych](docs/zrodla-danych.md), [raport ETL](docs/raport-etl.md), [ściąga do obrony](docs/sciaga-do-obrony.md).
+Dokumentacja: [specyfikacja v3](docs/superpowers/specs/2026-10-27-v3-mgla-huff-design.md), [plan v3](docs/superpowers/plans/2026-10-27-v3-mgla-huff.md), [plan v3.1 (Overture, podsumowanie, trend)](docs/superpowers/plans/2026-10-27-v31-overture-podsumowanie.md), [plan v3.2 (cała Polska)](docs/superpowers/plans/2026-10-28-v32-cala-polska.md), [plan v3.3 (mało danych o firmach)](docs/superpowers/plans/2026-10-28-v33-malo-danych.md), [kompletność danych](docs/kompletnosc-danych.md), [specyfikacja v1](docs/superpowers/specs/2026-10-26-gdzie-otworzyc-design.md), [specyfikacja v2](docs/superpowers/specs/2026-10-27-widok-dynamiczny-design.md), [plan v1](docs/superpowers/plans/2026-10-26-gdzie-otworzyc.md), [plan v2](docs/superpowers/plans/2026-10-27-widok-dynamiczny.md), [źródła danych](docs/zrodla-danych.md), [raport ETL](docs/raport-etl.md), [ściąga do obrony](docs/sciaga-do-obrony.md).

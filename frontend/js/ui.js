@@ -493,13 +493,14 @@ export const hideSummary = () => { $('summary-box').hidden = true; };
 
 const TOP_TITLES = { open: 'Najlepsze miejsca', demand: 'Najwięcej klientów', competition: 'Najwięcej firm', trend: 'Gdzie przybywa budów' };
 
-export function renderTop(list, layer, permits, onClick, inView = false) {
+export function renderTop(list, layer, permits, onClick, inView = false, emptyText = 'Brak danych w tym obszarze.') {
   $('top-title').textContent = inView && layer === 'open' ? 'Najlepsze miejsca w widoku' : (TOP_TITLES[layer] || TOP_TITLES.open);
   $('top-title').hidden = false;
   const ol = $('top-list');
   ol.innerHTML = '';
   if (!list.length) {
-    ol.innerHTML = '<li class="muted">Brak danych w tym obszarze.</li>';
+    ol.innerHTML = '<li class="muted"></li>';
+    ol.firstChild.textContent = emptyText;
     return;
   }
   list.forEach((place, i) => {

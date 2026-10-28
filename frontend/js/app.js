@@ -130,7 +130,10 @@ function drawLayer() {
   map.dimFog(state.preview);
   // Gotowa mapa jest liczona dla kadru zaokrąglonego na zewnątrz, więc w „Najlepszych miejscach w widoku” zostawiamy tylko te na ekranie.
   const top = (result.top[layer] || []).filter((p) => !national || map.contains(p.lat, p.lng));
-  ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place), state.mode === 'pl');
+  // Pusta lista przy kreskowaniu to nie „brak danych”, tylko miejsca bez wiarygodnych klientów — mówimy to wprost.
+  const onlyGaps = layer === 'open' && result.gap && result.gap.open.includes(1) && !top.length;
+  ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place), state.mode === 'pl',
+    onlyGaps ? 'Brak wiarygodnych miejsc: wyniki tutaj opierają się głównie na lukach w danych o firmach (kreskowanie).' : undefined);
   map.setTopMarkers(top, (place) => openPlace(place));
 }
 

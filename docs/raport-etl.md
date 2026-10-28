@@ -290,3 +290,46 @@ Na mapie całej Polski dla salonów kosmetycznych prawie cały zaludniony kraj j
 ## Weryfikacja w przeglądarce (v3.2)
 
 Wbudowana przeglądarka (okno ok. 800 × 600 oraz emulacja telefonu 375 × 812), serwer na porcie 8001 z prawdziwą bazą. Zrzuty w `docs/screenshots/v32-*.png`. Sprawdzone scenariusze z planu: a) start „Cała Polska” z salonem i kobietami; b) przybliżanie Polska → Dolny Śląsk → Wrocław (przejście gotowa → na żywo; legenda zmienia podpis na „Kolory dopasowane do widoku”, w prawym panelu pojawia się „Podsumowanie obszaru — widoczny obszar”); c) ok. 10 szybkich obrotów kółkiem w obie strony — bez odpowiedzi 4xx/5xx w logu sieci (stare zapytania są anulowane; jedyny wpis 422 w konsoli pochodzi z pierwszego, już poprawionego błędu startowego: mapa miała wymiar 0 px i wysłała pusty prostokąt widoku); d) klik → dymek → „Przeanalizuj to miejsce” → „Wybrane miejsce” z okręgiem; e) bez branży, klienci = nowe domy jednorodzinne (mapa popytu i trendu dla Polski, podpowiedź dla rzemieślników widoczna); f) stary link z `type=paving` (bez błędu, zostaje czynnik popytu); g) telefon. **Nie sprawdzono:** Safari/Firefox, dostępu z drugiego urządzenia (Tailscale).
+
+# v3.3 (2026-10-28) — „mało danych o firmach” (kroki `gaps` i `national`)
+
+Polecenie: `GO_DATA_DIR=data/v33 uv run python -m etl.run_all --only gaps,national` na **kopii** bazy (`data/v33/app.duckdb`); `data/app.duckdb` i serwer na porcie 8000 nie były ruszane. Podmiana bazy po stronie agenta prowadzącego.
+
+## Czas i rozmiar
+
+| Co | Wynik |
+|---|---|
+| Krok `gaps` | **128 s**, 11 typów, 95 462 wierszy `gap_share` (res 9 + udziały res 8/7/6) |
+| Krok `national` (bez `--force`) | **375 s** — doliczono tylko 27 brakujących warstw `rel__…` (razem 92 warstwy); cała mapa od zera trwałaby ok. 13 min + 27 przejść |
+| Razem do podmiany bazy | ok. 8,5 min |
+| Rozmiar bazy | 365 178 880 → 407 908 352 B (**+43 MB**: `gap_share`, `gap_rates`, 27 kolumn FLOAT w 4 tabelach `national_*`) |
+| `etl.sanity` | **OK** (nowe: tabele `gap_share`/`gap_rates`; udział ludności w lukach dla salonów 1,73% mieści się w 0,5–5%) |
+
+Średnia krajowa (`gap_rates`, firm na 10 tys. mieszkańców): salon 8,45, fryzjer 5,54, sklep spożywczy 17,11, restauracja 13,57, kawiarnia 2,68, przedszkole 4,33. Ludność w lukach (res 9): salony **1,73%**, fryzjerzy 0,93%, sklepy spożywcze 0,39% — jak w pomiarze, na którym oparto progi.
+
+## Czasy odpowiedzi API (kopia bazy, bez cache)
+
+| Zapytanie | v3.2 | v3.3 |
+|---|---|---|
+| `/api/surface` Wrocław, widok 0,35° × 0,16°, salon × kobiety, zasięg 1,5 km | 0,53 s | **0,67 s** (+26%, limit z planu +30%) |
+| `/api/national` cała Polska, 1000 px | 0,25 s | 0,32–0,39 s (jedna kolumna więcej + maska) |
+
+## Wynik scenariuszy (przeglądarka, port 8001 na kopii)
+
+- (a) salon × kobiety, Cała Polska — top-5 **przed:** Olsztynek 2570, Sianów 2230, Centrum Północ 2160, Nowogrodziec 1890, Krośniewice 1870; **po:** Rudki 1650, Pruchnik 1620, Bierówki 1470, Zdzieszowice 1480, Bartoszyce 1450 (kolejność wg wiarygodnych klientów, pokazywana liczba to E). Olsztynek widać z kreskowaniem (zrzut `v33-a2`).
+- (b) Olsztynek, tryb na żywo: kreskowanie na całym mieście, dymek: „w promieniu 2 km mamy w danych 0, a … byłoby ok. 6”, podsumowanie: „nie da się ocenić konkurencji”.
+- (c) Brzeg 3 km: 36 salonów (OSM 18, Overture 18), 1 firma na ok. 520 kobiet, „konkurencja na poziomie średniej krajowej”, bez kreskowania i bez ostrzeżenia.
+- (d) Olsztynek 3 km: 0 salonów, ostrzeżenie „byłoby ok. 7”, werdykt „nie da się ocenić”, lista najlepszych miejsc pusta z komunikatem, że wyniki opierają się na lukach.
+- (e) sklep spożywczy × mieszkańcy, Cała Polska — **przed:** Cechówka 1230, Tatrzańskie 1110, Osiedle Kazimierzowskie 1100, Krakowskie Osiedle 1050, Fikakowo 1010; **po:** to samo, z jedną zmianą (Stabłowice Stare 1050 zamiast Krakowskiego Osiedla — oba bez luki, różnica wynika z sortowania po `rel`). Luka dotyka tylko 119 z 420 tys. punktów tej warstwy.
+- (f) telefon 375 × 812: legenda z próbką kreskowania mieści się w zakładce „Wnioski”.
+
+Zrzuty: `docs/screenshots/v33-*.png`.
+
+## Odchylenia od planu i decyzje podjęte samodzielnie
+
+- **Backend decyduje o ostrzeżeniu w dymku:** `data_gap` zawiera `warn` (udział > 50% **albo** sam punkt spełnia warunek luki), żeby progi były w jednym miejscu (`catalog.GAP_*`, `is_data_gap`), a nie powielone w JS. Liczby (`observed`, `expected`, `share`) są zwracane zawsze, jak w planie. Dymek zwraca też `type_plural`.
+- **Podawana wartość pinezki w oddalonym widoku:** komórka res < 8 jest wybierana wg `rel`, ale pokazywana liczba (E) pochodzi z tej samej, najlepszej komórki res 8 — a nie z maksimum E dzieci (to mogłoby być E z podejrzanej komórki obok).
+- **`load_demand` zwraca trzecią wartość** (lista H3 źródeł, wiersz w wiersz z tablicą) — zgodnie z planem „nie dopasowuj po lat/lng”.
+- **Teksty w interfejsie** mają mianownik liczby mnogiej typu („salony kosmetyczne w promieniu 2 km mamy w danych 0”), bo w katalogu nie ma dopełniacza.
+- **Pusta lista najlepszych miejsc** przy samych lukach pokazuje komunikat o lukach, a nie „Brak danych”.
+- **Nieaktualne `rel__…`:** `gaps` odświeża tabele zawsze, ale warstwy `rel__…` w `national` są pomijane, gdy już istnieją — po zmianie danych o firmach użyj `--only aggregate,gaps,national --force`.
