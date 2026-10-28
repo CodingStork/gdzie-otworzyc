@@ -19,10 +19,10 @@ import numpy as np
 
 from backend.app.analysis.kernel import LocalFrame
 from backend.app.analysis.surface import (
-    competition_availability, competition_density, demand_potential, huff_and_potential, huff_multi, make_grid,
+    competition_availability, competition_density, demand_potential, huff_multi, make_grid,
     round_significant, top_points,
 )
-from backend.app.catalog import DEMANDS, GAP_SHARE, PLURALS, TYPES, quality_warning
+from backend.app.catalog import DEMANDS, GAP_RADIUS_KM, GAP_SHARE, PLURALS, TYPES, is_data_gap, quality_warning
 from backend.app.db import DatabaseMissing, cursor, on_reset
 from etl.aggregate import table_exists
 
@@ -284,6 +284,14 @@ def national_per_firm(con, type_id: str, demand_id: str, months: int) -> float |
     return _national[key]
 
 
+def gap_rate(con, type_id: str) -> float | None:
+    """Średnia krajowa: firm danego typu na mieszkańca (z kroku ETL `gaps`); None, gdy brak tabeli albo firm tego typu."""
+    if not table_exists(con, "gap_rates"):
+        return None
+    row = con.execute("SELECT rate FROM gap_rates WHERE type_id = ?", [type_id]).fetchone()
+    return float(row[0]) if row and row[0] else None
+
+
 def verdict(per_firm: float | None, national: float | None) -> str | None:
     """„less” = mniej konkurencji niż przeciętnie (na firmę przypada >125% średniej), „more” = więcej (<80%).
 
@@ -314,6 +322,7 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
     box = _box(p.lat, p.lng, p.radius_km)
     summary = {"demand_total": None, "demand_genitive": None, "competitors": None, "type_plural": None,
                "per_firm": None, "national_per_firm": None, "verdict": None, "radius_km": p.radius_km,
+               "expected_firms": None, "data_gap": False,
                "shape": "view" if rect is not None else "circle"}
     if p.demand_id:
         arr, _, _ = load_demand(con, p.demand_id, 9, box, p.months)
@@ -341,6 +350,15 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
         national = national_per_firm(con, p.type_id, p.demand_id, p.months)
         summary["national_per_firm"] = round(national, 1) if national else None
         summary["verdict"] = verdict(summary["per_firm"], national)
+    rate = gap_rate(con, p.type_id) if p.type_id else None
+    if rate is not None:
+        # Ile firm tego typu byłoby w obszarze przy średniej krajowej (mieszkańcy × firm na mieszkańca) — a ile mamy w danych.
+        arr, _, _ = load_demand(con, "pop_total", 9, box, p.months)
+        residents = float(arr[_inside(frame.to_metric(arr[:, 0], arr[:, 1]), radius_m, rect), 2].sum()) if len(arr) else 0.0
+        summary["expected_firms"] = round(residents * rate, 1)
+        if is_data_gap(residents * rate, summary["competitors"]["total"]):
+            summary["data_gap"] = True
+            summary["verdict"] = "unknown" if summary["verdict"] else None     # „mniej konkurencji” to tu pewnie luka w danych
     return summary
 
 
@@ -480,7 +498,7 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
     radius_km = effective_reach_km(demand_id, reach_km)
     notes: list[str] = _reach_notes(demand_id, reach_km)
     result: dict = {"radius_km": radius_km, "demand": None, "demand_name": None, "competitors": None,
-                    "type_name": None, "expected": None, "nearest": [], "notes": notes}
+                    "type_name": None, "expected": None, "data_gap": None, "nearest": [], "notes": notes}
 
     # Prostokąt zawiera margines 0,2 km (promień komórki res 9), żeby do zapytania trafiła też komórka klikniętego punktu.
     box = _box(lat, lng, radius_km + 0.2)
@@ -532,17 +550,50 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
         result["nearest"] = nearest
 
     if type_id and demand_id:
-        result["expected"] = _expected_at(con, lat, lng, type_id, demand_id, radius_km, months)
+        result["expected"], gap_customers = _expected_at(con, lat, lng, type_id, demand_id, radius_km, months)
+        result["data_gap"] = _data_gap_at(con, lat, lng, type_id, gap_customers / result["expected"] if result["expected"] else 0.0)
     return result
 
 
-def _expected_at(con, lat: float, lng: float, type_id: str, demand_id: str, reach_km: float, months: int) -> float:
-    """E (model Huffa) dla jednego punktu — te same źródła i wzór co w /api/surface, ale bez siatki."""
-    arr, _, _ = load_demand(con, demand_id, demand_res(reach_km), _box(lat, lng, 4 * reach_km), months)
+def _data_gap_at(con, lat: float, lng: float, type_id: str, share: float) -> dict | None:
+    """Czy wokół punktu jest za mało firm w danych (ostrzeżenie w dymku): ile jest w 2 km, a ile byłoby przy średniej krajowej.
+
+    `share` — jaka część klientów nowej firmy w tym punkcie mieszka w lukach (z modelu Huffa). Ostrzegamy (`warn`), gdy ponad
+    połowa albo gdy sama okolica punktu spełnia warunek luki. None, gdy baza nie ma kroku `gaps` (stara baza).
+    """
+    rate = gap_rate(con, type_id)
+    if rate is None:
+        return None
+    box = _box(lat, lng, GAP_RADIUS_KM + 0.2)
+    pop = con.execute("SELECT lat, lng, pop_total FROM hex_pop_r9 WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?", box).fetchall()
+    residents = 0.0
+    if pop:
+        arr = np.array(pop, dtype=float)
+        residents = float(arr[_haversine_m(lat, lng, arr[:, 0], arr[:, 1]) <= GAP_RADIUS_KM * 1000, 2].sum())
+    firms = con.execute("SELECT lat, lng FROM poi WHERE type_id = ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                        [type_id, *box]).fetchall()
+    observed = 0
+    if firms:
+        arr = np.array(firms, dtype=float)
+        observed = int((_haversine_m(lat, lng, arr[:, 0], arr[:, 1]) <= GAP_RADIUS_KM * 1000).sum())
+    expected = residents * rate
+    return {"share": round(share, 3), "observed": observed, "expected": round(expected, 1), "radius_km": GAP_RADIUS_KM,
+            "warn": bool(share > GAP_SHARE or is_data_gap(expected, observed))}
+
+
+def _expected_at(con, lat: float, lng: float, type_id: str, demand_id: str, reach_km: float, months: int) -> tuple[float, float]:
+    """(E, E_luka) w jednym punkcie — te same źródła i wzór co w /api/surface, ale bez siatki.
+
+    E_luka to część E pochodząca od klientów z „luk” w danych o firmach (patrz `etl/gaps.py`)."""
+    res = demand_res(reach_km)
+    arr, _, cells = load_demand(con, demand_id, res, _box(lat, lng, 4 * reach_km), months)
     if not len(arr):
-        return 0.0
+        return 0.0, 0.0
     comp = load_competitors(con, type_id, _box(lat, lng, 8 * reach_km))
     frame = LocalFrame(lat, lng)
     comp_xy = frame.to_metric(comp[:, 0], comp[:, 1]) if len(comp) else np.empty((0, 2))
-    here = np.zeros((1, 2))
-    return float(huff_and_potential(here, frame.to_metric(arr[:, 0], arr[:, 1]), arr[:, 2], comp_xy, reach_km * 1000)[0][0])
+    dem_xy = frame.to_metric(arr[:, 0], arr[:, 1])
+    gap_share = load_gap_share(con, type_id, res, cells)
+    availability = competition_availability(dem_xy, comp_xy, reach_km * 1000)
+    e, _ = huff_multi(np.zeros((1, 2)), dem_xy, np.column_stack([arr[:, 2], arr[:, 2] * gap_share]), availability, reach_km * 1000)
+    return float(e[0, 0]), float(e[0, 1])

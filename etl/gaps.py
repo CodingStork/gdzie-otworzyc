@@ -22,7 +22,7 @@ import pandas as pd
 from scipy.spatial import cKDTree
 
 from backend.app.analysis.kernel import to_metric
-from backend.app.catalog import GAP_MAX_RATIO, GAP_MIN_EXPECTED, GAP_RADIUS_KM, TYPES
+from backend.app.catalog import GAP_RADIUS_KM, TYPES, is_data_gap
 from etl.aggregate import table_exists
 
 SHARE_RESOLUTIONS = (8, 7, 6)      # res 9 jest zapisywana wprost (udział 1)
@@ -51,7 +51,7 @@ def gap_flags(pop_xy: np.ndarray, pop_w: np.ndarray, firm_xy: np.ndarray, rate: 
         observed = cKDTree(firm_xy).query_ball_point(pop_xy, radius_m, return_length=True)
     else:
         observed = np.zeros(n)
-    return (expected >= GAP_MIN_EXPECTED) & (observed <= GAP_MAX_RATIO * expected)
+    return is_data_gap(expected, observed)
 
 
 def share_by_parent(parent_codes: np.ndarray, pop: np.ndarray, flags: np.ndarray, n_parents: int) -> np.ndarray:

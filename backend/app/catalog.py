@@ -68,6 +68,12 @@ GAP_MAX_RATIO = 0.25     # luka: w danych jest najwyżej ¼ tego, co dałaby śr
 GAP_SHARE = 0.5          # miejsce jest „podejrzane”, gdy ponad połowa jego klientów mieszka w lukach
 
 
+def is_data_gap(expected, observed):
+    """Czy w okolicy jest podejrzanie mało firm: oczekiwane (wg średniej krajowej) ≥ 3, a w danych najwyżej ¼ z nich.
+    Działa na liczbach i na tablicach numpy."""
+    return (expected >= GAP_MIN_EXPECTED) & (observed <= GAP_MAX_RATIO * expected)
+
+
 def _census(id: str, name: str, column: str, genitive: str) -> Demand:
     return Demand(id, name, "census", column, (), False, genitive)
 
