@@ -498,7 +498,7 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
     radius_km = effective_reach_km(demand_id, reach_km)
     notes: list[str] = _reach_notes(demand_id, reach_km)
     result: dict = {"radius_km": radius_km, "demand": None, "demand_name": None, "competitors": None,
-                    "type_name": None, "expected": None, "data_gap": None, "nearest": [], "notes": notes}
+                    "type_name": None, "type_plural": None, "expected": None, "data_gap": None, "nearest": [], "notes": notes}
 
     # Prostokąt zawiera margines 0,2 km (promień komórki res 9), żeby do zapytania trafiła też komórka klikniętego punktu.
     box = _box(lat, lng, radius_km + 0.2)
@@ -535,6 +535,7 @@ def point_details(con: duckdb.DuckDBPyConnection, lat: float, lng: float, type_i
 
     if type_id:
         result["type_name"] = TYPES[type_id].name
+        result["type_plural"] = PLURALS[type_id]
         rows = []
         if table_exists(con, "poi"):
             rows = con.execute("SELECT name, lat, lng, source FROM poi WHERE type_id = ? "

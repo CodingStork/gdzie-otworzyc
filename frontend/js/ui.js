@@ -36,6 +36,10 @@ const HELP = {
   legend: 'Kolor w skali logarytmicznej: każdy krok koloru to mniej więcej podwojenie wartości. ' +
     'Przezroczyste miejsca mają bardzo małe wartości. Dokładne liczby zobaczysz po kliknięciu mapy. ' +
     'Na mapie całej Polski skala jest stała (te same kolory znaczą te same liczby w każdym mieście); po przybliżeniu kolory dopasowują się do widoku.',
+  gaps: 'Szare kreskowanie: większość klientów tego miejsca mieszka tam, gdzie w danych jest podejrzanie mało firm ' +
+    '(najwyżej ¼ tego, co wynika ze średniej krajowej przy takiej liczbie mieszkańców). Wynik może być wtedy skutkiem luki w danych ' +
+    '(brak firm w OpenStreetMap i Overture Maps), a nie braku konkurencji. Takich miejsc nie pokazujemy w najlepszych miejscach. ' +
+    'Małych miejscowości, w których średnio byłyby mniej niż 3 firmy, nie oceniamy.',
   summary: 'Liczby dotyczą całego zaznaczonego okręgu. Średnia krajowa pokazuje, ilu klientów przypada na jedną firmę tego typu ' +
     'w całej Polsce — jeśli tutaj jest ich wyraźnie więcej, konkurencja jest mniejsza niż zwykle. ' +
     'Firmy: OpenStreetMap + Overture Maps (mogą nie obejmować wszystkich).',
@@ -365,10 +369,11 @@ const legendDigits = (v) => (v < 1 ? 2 : v < 10 ? 1 : 0);
 // Końce skali to percentyle — podajemy je z dokładnością do 2 cyfr, żeby nie sugerować fałszywej precyzji.
 const twoDigits = (v) => Number(v.toPrecision(2));
 
-function legendHtml(title, bar, rows, note) {
+function legendHtml(title, bar, rows, note, gapHint = false) {
   const el = $('legend');
   el.innerHTML = '<div class="legend-title"><b></b> <button type="button" class="help" data-help="legend" aria-label="Jak czytać kolory?">?</button></div>' +
     `<div class="legend-body"><div class="bar" style="background:${bar}"></div><div class="stops">${rows}</div></div>` +
+    (gapHint ? '<div class="legend-gap"><span class="hatch"></span> mało danych o firmach <button type="button" class="help" data-help="gaps" aria-label="Co oznacza kreskowanie?">?</button></div>' : '') +
     (note ? '<div class="note"></div>' : '');
   el.querySelector('b').textContent = title;   // tytuł zawiera nazwy z katalogu — wstawiamy jako tekst
   if (note) el.querySelector('.note').textContent = note;
@@ -379,7 +384,7 @@ const stopRow = (t, text) =>
   `<div class="stop" style="bottom:${(t * 100).toFixed(1)}%"><span class="tick"></span>${text}</div>`;
 
 // scale: { lo, hi } z logScale() — wartości, przy których kolor jest najjaśniejszy / najciemniejszy.
-export function renderLegend(title, scale, note = '') {
+export function renderLegend(title, scale, note = '', gapHint = false) {
   if (!scale) { $('legend').hidden = true; return; }
   const label = (prefix, v) => `${prefix}${fmt(v, legendDigits(v))}`;
   const stops = [{ t: 1, text: label('≥ ', twoDigits(scale.hi)) }, { t: 0, text: label('≤ ', twoDigits(scale.lo)) }];
@@ -388,7 +393,7 @@ export function renderLegend(title, scale, note = '') {
     const narrow = window.innerWidth < 768;
     for (const tick of niceLogTicks(scale, narrow ? 2 : 5, narrow ? 0.2 : 0.1)) stops.push({ t: tick.t, text: label('', tick.v) });
   }
-  legendHtml(title, fogGradientCss('to top'), stops.map((s) => stopRow(s.t, s.text)).join(''), note);
+  legendHtml(title, fogGradientCss('to top'), stops.map((s) => stopRow(s.t, s.text)).join(''), note, gapHint);
 }
 
 // Legenda trendu: paleta rozbieżna, podpisy słowne zamiast liczb (wartości to ważone odległością przyrosty pozwoleń).
@@ -440,6 +445,7 @@ const VERDICTS = {
   less: 'Konkurencji jest tu mniej niż przeciętnie w Polsce.',
   more: 'Konkurencji jest tu więcej niż przeciętnie w Polsce.',
   similar: 'Konkurencja na poziomie średniej krajowej.',
+  unknown: 'Nie da się ocenić konkurencji — za mało danych o firmach.',
 };
 
 // summary z /api/surface; ctx: { placeName, demandId, permitsPeriod }. Pokazujemy tylko wiersze, które mają sens
@@ -472,6 +478,11 @@ export function renderSummary(summary, ctx) {
       : '→ brak firm tego typu w obszarze', 'strong');
     if (summary.national_per_firm != null) add(`Średnio w Polsce: 1 na ok. ${fmt(roundEstimate(summary.national_per_firm))}`);
     if (summary.verdict) add(VERDICTS[summary.verdict], `verdict ${summary.verdict}`);
+  }
+  if (summary.data_gap) {
+    add(`⚠ Mało danych o firmach: ${summary.type_plural} w obszarze mamy w danych ${fmt(summary.competitors.total)}, ` +
+      `a przy tej liczbie mieszkańców średnio w Polsce byłoby ok. ${fmt(Math.round(summary.expected_firms))}. ` +
+      'Prawdopodobnie część firm nie jest jeszcze na mapach — sprawdź na miejscu.', 'warn');
   }
   $('summary-box').hidden = false;
 }
@@ -529,6 +540,12 @@ export function pointPopup(d, onSetCenter, actionLabel = 'Ustaw tu środek obsza
   if (d.competitors != null) add(`${d.type_name} w okolicy: ${fmt(d.competitors)}`);
   if (d.expected != null) {
     add(`Otwierając tu, zdobyłbyś ok. ${fmt(roundEstimate(d.expected))} ${clientsNoun(permits)} (model Huffa).`, true);
+  }
+  if (d.data_gap && d.data_gap.warn) {
+    const g = d.data_gap;
+    add(`⚠ Mało danych o firmach: ${d.type_plural} w promieniu ${fmt(g.radius_km)} km mamy w danych ${fmt(g.observed)}, ` +
+      `a przy tej liczbie mieszkańców średnio w Polsce byłoby ok. ${fmt(Math.round(g.expected))}. ` +
+      'Prawdopodobnie część firm nie jest jeszcze na mapach — sprawdź na miejscu.').className = 'warn';
   }
   if (d.nearest.length) {
     add('Najbliżsi:');

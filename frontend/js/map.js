@@ -35,7 +35,9 @@ const smoothstep = (f) => f * f * (3 - 2 * f);
 // siatkę pikseli i DOPIERO TERAZ kolorujemy. Interpolowanie wartości (a nie gotowych kolorów) nie daje obwódek
 // ani widocznych kwadratów; funkcja smoothstep wygładza też załamania na granicach komórek.
 // Piksele poza okręgiem są przezroczyste (krawędź wygładzona na 1 piksel). Zwraca data URL obrazu PNG.
-function renderFog(grid, t, radiusKm, colorOf) {
+// `gap` (opcjonalnie): ta sama siatka co `t`, 1 = „mało danych o firmach”. Na takich komórkach rysujemy ukośne szare paski
+// (okres `hatch.period` i grubość `hatch.width` w pikselach obrazu); kolor mgły pod paskami zostaje bez zmian.
+function renderFog(grid, t, radiusKm, colorOf, gap = null, hatch = { period: 10, width: 3 }) {
   const { nx, ny, cell_m: cell } = grid;
   const w = nx * UPSCALE;
   const h = ny * UPSCALE;
@@ -80,6 +82,13 @@ function renderFog(grid, t, radiusKm, colorOf) {
       image.data[o + 1] = g;
       image.data[o + 2] = b;
       image.data[o + 3] = Math.round(a * 255 * Math.min(1, edge));
+      if (gap && (px + py) % hatch.period < hatch.width && gap[Math.floor(py / UPSCALE) * nx + Math.floor(px / UPSCALE)] === 1) {
+        // pasek: szary (#6b6b6b), półprzezroczysty — widoczny także tam, gdzie sama mgła jest prawie przezroczysta
+        image.data[o] = 107;
+        image.data[o + 1] = 107;
+        image.data[o + 2] = 107;
+        image.data[o + 3] = Math.round(0.55 * 255 * Math.min(1, edge));
+      }
     }
   }
   ctx.putImageData(image, 0, 0);
@@ -157,10 +166,15 @@ export function initMap(elementId) {
 
     // Mgła: t = pozycje 0–1 na skali (NaN poza okręgiem), grid z /api/surface.
     // colorOf: funkcja t → [r,g,b,a]; domyślnie paleta żółto-czerwona (dla trendu: paleta rozbieżna).
-    setFog(grid, t, radiusKm, colorOf = fogColor) {
+    // gap: opcjonalna tablica (1 = mało danych o firmach) na tej samej siatce — rysowana jako szare kreskowanie.
+    setFog(grid, t, radiusKm, colorOf = fogColor, gap = null) {
       const bounds = [[grid.south, grid.west], [grid.north, grid.east]];
       const old = fogOverlay;
-      const overlay = L.imageOverlay(renderFog(grid, t, radiusKm, colorOf), bounds, {
+      // Paski mają mieć ok. 8 px NA EKRANIE, a obraz jest gęstszy niż ekran — przeliczamy okres na piksele obrazu.
+      const screenW = Math.abs(map.latLngToContainerPoint([grid.south, grid.east]).x - map.latLngToContainerPoint([grid.south, grid.west]).x);
+      const perScreenPx = (grid.nx * UPSCALE) / Math.max(1, screenW);
+      const hatch = { period: Math.max(5, Math.round(8 * perScreenPx)), width: Math.max(2, Math.round(2.5 * perScreenPx)) };
+      const overlay = L.imageOverlay(renderFog(grid, t, radiusKm, colorOf, gap, hatch), bounds, {
         pane: 'fog', interactive: false, opacity: 0,
       }).addTo(map);
       fogOverlay = overlay;

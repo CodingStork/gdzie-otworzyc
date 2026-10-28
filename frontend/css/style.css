@@ -117,6 +117,10 @@ label.disabled { opacity: .4; }
 #legend .stop { position: absolute; left: 0; transform: translateY(50%); white-space: nowrap; line-height: 1; }
 #legend .tick { display: inline-block; width: 5px; height: 1px; background: #556; margin-right: 4px; vertical-align: middle; }
 #legend .note { margin-top: 6px; color: var(--muted); }
+#legend .legend-gap { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+#legend .hatch { width: 14px; height: 14px; border: 1px solid #0002; flex: none;
+  background: repeating-linear-gradient(135deg, #6b6b6b 0 2px, #fff 2px 5px); }
+#summary .warn, .point-popup .warn { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: var(--warn-bg); border: 1px solid var(--warn-line); }
 
 /* Dymek klikniętego punktu */
 .point-popup .strong { font-weight: 700; margin: 3px 0; }

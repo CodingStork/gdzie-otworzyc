@@ -115,13 +115,16 @@ function drawLayer() {
     } else {
       const t = new Float32Array(values.length);
       values.forEach((v, i) => { t[i] = v === null ? NaN : logPosition(v, scale); });
-      map.setFog(result.grid, t, radius);
+      // Szare kreskowanie „mało danych o firmach” — tylko na warstwie „Gdzie otworzyć”.
+      const gapCells = layer === 'open' && result.gap && result.gap.open;
+      const gap = gapCells ? Float32Array.from(gapCells, (g) => (g === null ? NaN : g)) : null;
+      map.setFog(result.grid, t, radius, undefined, gap);
       // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
       const notes = [];
       if (period && layer !== 'competition') notes.push(`Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.`);
       if (national) notes.push('Skala jest stała dla całego kraju: te same kolory znaczą te same liczby (na oddalonych poziomach pokazujemy najlepsze miejsce w rejonie).');
       else if (state.mode === 'pl') notes.push('Kolory dopasowane do widoku.');
-      ui.renderLegend(title, scale, notes.join(' '));
+      ui.renderLegend(title, scale, notes.join(' '), !!gap && gap.includes(1));
     }
   }
   map.dimFog(state.preview);
