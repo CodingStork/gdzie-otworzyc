@@ -113,16 +113,33 @@ function setReach(km) {
   return wanted < KM_MIN;
 }
 
-// ---- Promień obszaru: 1–30 km ----
-export const radiusKm = () => Math.min(30, Math.max(1, Math.round(Number($('radius-input').value)) || 10));
+// ---- Promień obszaru: 1–30 km, krok 0,5 km poniżej 5 km, dalej 1 km ----
+export const snapRadius = (km) => {
+  const n = Number(km);
+  if (!Number.isFinite(n)) return 10;
+  return Math.min(30, Math.max(1, n < 5 ? Math.round(n * 2) / 2 : Math.round(n)));
+};
+export const radiusKm = () => snapRadius($('radius-input').value);
 
 function showRadius() {
-  $('radius-value').textContent = String(radiusKm());
+  $('radius-value').textContent = fmt(radiusKm(), 1);
 }
 
 export function setRadius(km) {
-  $('radius-input').value = String(Math.min(30, Math.max(1, Math.round(Number(km)) || 10)));
+  $('radius-input').value = String(snapRadius(km));
   showRadius();
+}
+
+// Suwak w lewym panelu i suwak na karcie wyboru to dwa widoki jednej wartości: ruch pierwszego woła cb(km).
+export const onRadiusInput = (cb) => $('radius-input').addEventListener('input', () => cb(radiusKm()));
+
+// Lewy panel w trybie prostokąta: zamiast suwaka promienia napis z wymiarami i link „zmień na okrąg” (text = null → suwak).
+export function setRectInfo(text, onToCircle) {
+  $('radius-row').hidden = text !== null;
+  $('radius-input').hidden = text !== null;
+  $('rect-info').hidden = text === null;
+  if (text !== null) $('rect-text').textContent = text;
+  if (onToCircle) $('rect-to-circle').onclick = onToCircle;
 }
 
 // ---- Obszar analizy: „Cała Polska” / „Wybrane miejsce” ----
@@ -230,7 +247,7 @@ export function renderCatalog(data, onChange) {
   $('reach-input').addEventListener('input', showReach);
   $('reach-input').addEventListener('change', onChange);
   $('radius-input').addEventListener('input', showRadius);
-  $('radius-input').addEventListener('change', onChange);
+  $('radius-input').addEventListener('change', () => onChange('radius'));
   setReach(1.5);
   setRadius(10);
   syncMonthsRow();
@@ -274,8 +291,6 @@ export function setPlaceName(name) {
 export const hideIntro = () => { $('intro').hidden = true; };
 export const showIntro = () => { $('intro').hidden = false; };
 export const onShowClick = (cb) => $('show-button').addEventListener('click', cb);
-// Wyróżnienie przycisku „Pokaż mapę”, gdy wskazano nowe miejsce, a mapa jeszcze pokazuje stare.
-export const highlightShow = (on) => $('show-button').classList.toggle('attention', on);
 
 // ---- Warstwy mapy: wybór w lewym panelu (radio), tylko dostępne dla bieżących ustawień ----
 // typ + klienci → „Gdzie otworzyć”, „Gdzie są klienci”; sam popyt → „Gdzie są klienci”; sama branża → „Gdzie są {firmy}”;
@@ -513,6 +528,58 @@ export function renderTop(list, layer, permits, onClick, inView = false, emptyTe
     li.addEventListener('click', () => onClick(place, i));
     ol.append(li);
   });
+}
+
+// ---- Karta wyboru obszaru (po kliknięciu w mapę): liczby punktu, suwak promienia, ✓ i ✕ ----
+
+// Zwraca { el, setBody(element | tekst), setRadius(km) }. Treść z /api/point (ui.pointPopup) wstawia się po przyjściu odpowiedzi.
+// onRadius(km): ruch suwaka; onConfirm: ✓ Analizuj obszar; onCancel: ✕.
+export function selectionCard({ title, radiusKm: radius, onRadius, onConfirm, onCancel }) {
+  const el = document.createElement('div');
+  el.className = 'selection-card';
+  const head = document.createElement('div');
+  head.className = 'sel-title';
+  head.textContent = title;
+  const body = document.createElement('div');
+  body.className = 'sel-body';
+  body.textContent = 'Ładuję liczby…';
+  const label = document.createElement('label');
+  label.className = 'sel-radius';
+  const value = document.createElement('b');
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '1';
+  slider.max = '30';
+  slider.step = '0.5';
+  const show = (km) => { slider.value = String(km); value.textContent = fmt(km, 1); };
+  show(radius);
+  label.append('Obszar analizy: ', value, ' km', slider);
+  slider.addEventListener('input', () => {
+    const km = snapRadius(slider.value);
+    show(km);
+    onRadius(km);
+  });
+  const buttons = document.createElement('div');
+  buttons.className = 'sel-buttons';
+  const ok = document.createElement('button');
+  ok.type = 'button';
+  ok.className = 'sel-ok';
+  ok.textContent = '✓ Analizuj obszar';
+  ok.addEventListener('click', onConfirm);
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'sel-cancel';
+  cancel.textContent = '✕';
+  cancel.title = 'Anuluj';
+  cancel.setAttribute('aria-label', 'Anuluj wybór');
+  cancel.addEventListener('click', onCancel);
+  buttons.append(ok, cancel);
+  el.append(head, body, label, buttons);
+  return {
+    el,
+    setBody(content) { body.replaceChildren(content); },
+    setRadius: show,
+  };
 }
 
 // ---- Dymek klikniętego punktu (dokładne liczby z /api/point, spec v3 §4) ----

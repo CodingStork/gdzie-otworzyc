@@ -44,8 +44,6 @@ input[type=range] { width: 100%; }
   color: #fff; font: 600 15px system-ui, sans-serif; cursor: pointer;
 }
 #show-button:hover { background: #1c2870; }
-#show-button.attention { animation: pulse 1.2s ease-in-out infinite; box-shadow: 0 0 0 3px #fdb02f; }
-@keyframes pulse { 50% { box-shadow: 0 0 0 7px #fdb02f55; } }
 #layer-choice { margin: 14px 0 0; padding: 4px 10px 8px; border: 1px solid var(--line); border-radius: 8px; }
 #layer-choice legend { padding: 0 4px; font-weight: 600; font-size: 13px; }
 #layer-choice label { margin: 3px 0; font-weight: 400; }
@@ -138,6 +136,25 @@ label.disabled { opacity: .4; }
 }
 #search-results li { padding: 7px 9px; cursor: pointer; font-size: 13px; }
 #search-results li.active, #search-results li:hover { background: #e8ecfa; }
+
+/* Karta wyboru obszaru (po kliknięciu w mapę): liczby punktu, suwak promienia, ✓ / ✕ */
+.selection-popup .leaflet-popup-content { margin: 10px 12px; }
+.selection-card .sel-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.selection-card .sel-body { font-size: 13px; line-height: 1.4; max-height: 38vh; overflow-y: auto; }
+.selection-card .sel-body .strong { font-weight: 700; margin: 3px 0; }
+.selection-card .sel-body ul { margin: 2px 0 0; padding-left: 18px; }
+.selection-card .sel-body .note { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.selection-card .sel-body .warn { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: var(--warn-bg); border: 1px solid var(--warn-line); }
+.selection-card .sel-radius { display: block; margin: 10px 0 0; font-size: 13px; }
+.selection-card .sel-radius input { margin: 4px 0 0; }
+.sel-buttons { display: flex; gap: 8px; margin-top: 10px; }
+.sel-buttons button { border-radius: 8px; font: 600 14px system-ui, sans-serif; cursor: pointer; padding: 9px 12px; }
+.sel-ok { flex: 1; border: 0; background: var(--accent); color: #fff; }
+.sel-ok:hover:not(:disabled) { background: #1c2870; }
+.sel-ok:disabled { opacity: .45; cursor: not-allowed; }
+.sel-cancel { border: 1px solid #bbc; background: #fff; color: #445; }
+#rect-info[hidden] { display: none; }
+#rect-info .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
 
 /* Telefon: mapa na górze, pod nią arkusz z jednym z paneli (zakładka) i pasek zakładek */
 @media (max-width: 767px) {

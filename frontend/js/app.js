@@ -5,7 +5,8 @@
 //     (/api/surface w trybie prostokąta widoku). Zapytania idą dopiero po zakończeniu ruchu mapy (debounce) — w v2 ciągłe
 //     przeliczanie przy ruchu męczyło, dlatego oddalony widok jest natychmiastowy, a na żywo liczymy tylko po przybliżeniu.
 //   • Wybrane miejsce: jak w v3.1 — miejsce + promień → „Pokaż mapę”, podsumowanie obszaru, ruch mapy niczego nie przelicza.
-// Kliknięcie w mapę pokazuje szczegóły punktu (w trybie Polski dymek ma przycisk „Przeanalizuj to miejsce”).
+// Kliknięcie w mapę tworzy WYBÓR: pinezka, okrąg podglądu i karta z liczbami punktu, suwakiem promienia i przyciskiem ✓ (analiza obszaru).
+// Wyjątek: kliknięcie wewnątrz bieżącej analizy pokazuje szczegóły punktu (dymek z konkurentami).
 import { getCatalog, getMeta, getPoi, national, point, surface } from './api.js';
 import { logPosition, logScale, trendColor, trendPosition, trendScale } from './colors.js';
 import { initMap } from './map.js';
@@ -15,17 +16,17 @@ const $ = (id) => document.getElementById(id);
 const map = initMap('map');
 
 // mode: 'pl' | 'place'. result: ostatnia odpowiedź (/api/national, /api/surface); used: ustawienia, dla których ją policzono.
-// Tryb miejsca: place = wybrane miejsce {lat, lng, name}; preview = wskazano nowe miejsce, a mapa pokazuje jeszcze stary obszar;
-// pendingNote = dodatkowa notatka (np. po podniesieniu zasięgu). Tryb Polski: view = 'national' | 'live' (co teraz widać).
+// Tryb miejsca: place = wybrane miejsce {lat, lng, name}; pendingNote = dodatkowa notatka (np. po podniesieniu zasięgu).
+// Tryb Polski: view = 'national' | 'live' (co teraz widać).
+// selection = wybór w toku (jeszcze nie przeanalizowany): { kind: 'circle', lat, lng, name, radiusKm }, card = jego karta.
 const state = {
   mode: 'pl', loading: false, place: null, result: null, used: null, controller: null, requestId: 0,
-  preview: false, pendingNote: null, view: null,
+  pendingNote: null, view: null, selection: null, card: null,
 };
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 const NEED_SELECTION = 'Wybierz branżę lub klientów.';
 const NEED_PLACE = 'Wybierz miejsce: wpisz miejscowość albo kliknij mapę.';
-const NEW_PLACE_INFO = 'Wybrano nowe miejsce — kliknij »Pokaż mapę«.';
 const MAP_POINT = 'punkt na mapie';   // nazwa miejsca wskazanego kliknięciem (nigdy „wybrane miejsce”)
 const LIVE_HALF_DIAGONAL_KM = 20;     // widok o półprzekątnej ≤ 20 km (ok. 28 × 28 km) liczymy na żywo
 const NO_CIRCLE = 1e9;                // „promień” maski mgły bez okręgu: w trybie Polski mgła nie jest przycinana do koła
@@ -54,22 +55,91 @@ const kmText = (km) => String(km).replace('.', ',');
 
 // ---- Wybór miejsca (tryb „Wybrane miejsce”) ----
 
-// Ustawia miejsce: pinezka + okrąg. `preview` = nowe miejsce przy widocznym starym wyniku: przerywany okrąg podglądu,
-// bez przygaszenia poza okręgiem, a mgła starego obszaru przygasa do 30% i przycisk „Pokaż mapę” się wyróżnia.
-function setPlace(lat, lng, name, { fit = false, preview = false } = {}) {
+// Ustawia miejsce analizy: pinezka + okrąg (z przygaszeniem poza okręgiem, gdy jest już wynik).
+function setPlace(lat, lng, name, { fit = false } = {}) {
   state.place = { lat, lng, name };
-  state.preview = preview;
   ui.setPlaceName(name);
-  map.setArea(lat, lng, ui.radiusKm(), { veil: !!state.result && !preview, fit });
-  map.dimFog(preview);
-  ui.highlightShow(preview);
+  map.setArea(lat, lng, ui.radiusKm(), { veil: !!state.result, fit });
 }
 
+// Wybór z wyszukiwarki działa tak samo jak kliknięcie w mapę: pinezka i karta z ✓ (mapa dopasowuje się do okręgu).
 function pickPlace(place) {
-  setPlace(place.lat, place.lng, place.name.split(',')[0], { fit: true });
+  beginSelection(place.lat, place.lng, place.name.split(',')[0], { fit: true });
+}
+
+// ---- Wybór obszaru kliknięciem: pinezka + okrąg podglądu + karta (suwak promienia, ✓, ✕) ----
+
+let selectionInfoRequest = 0;
+
+function clearSelection() {
+  selectionInfoRequest++;                                // spóźniona odpowiedź nie dopisze się do usuniętej karty
+  state.selection = null;
+  state.card = null;
+  map.clearSelection();
+}
+
+function beginSelection(lat, lng, name, { fit = false } = {}) {
   discardPoint();
-  if (state.result) scheduleRun(true);
-  writeHash();
+  clearSelection();
+  const radiusKm = ui.radiusKm();                        // jedna wartość promienia: suwak w lewym panelu i na karcie
+  state.selection = { kind: 'circle', lat, lng, name, radiusKm };
+  state.card = ui.selectionCard({
+    title: name === MAP_POINT ? 'Wybrany punkt' : name, radiusKm,
+    onRadius: (km) => setSelectionRadius(km, true), onConfirm: confirmSelection, onCancel: clearSelection,
+  });
+  map.showSelection(lat, lng, radiusKm, state.card.el);
+  if (fit) map.fitCircle(lat, lng, radiusKm);
+  if (isMobile()) ui.collapseSheet();                    // arkusz paneli zasłaniałby kartę
+  loadSelectionInfo();
+}
+
+// Promień z suwaka (na karcie albo w lewym panelu): okrąg podglądu zmienia się od razu, bez zapytań do serwera.
+function setSelectionRadius(km, fromCard) {
+  const s = state.selection;
+  if (!s || s.kind !== 'circle') return;
+  s.radiusKm = km;
+  if (fromCard) ui.setRadius(km); else state.card.setRadius(km);
+  map.updateSelectionRadius(s.lat, s.lng, km);
+}
+
+// Liczby punktu (to samo co dymek w v3.3: klienci w zasięgu, model Huffa, ostrzeżenie o lukach) dopisujemy do karty po odpowiedzi serwera.
+async function loadSelectionInfo() {
+  const s = state.selection;
+  const card = state.card;
+  const mine = ++selectionInfoRequest;
+  const u = state.result ? state.used : ui.selectedParams();
+  if (!u.type && !u.demand) {
+    card.setBody('Wybierz branżę lub klientów w panelu po lewej, żeby zobaczyć liczby.');
+    map.refreshSelectionCard();
+    return;
+  }
+  try {
+    const data = await point({ lat: s.lat, lng: s.lng, type: u.type, demand: u.demand, reach_km: u.reach_km, months: u.months });
+    if (mine !== selectionInfoRequest) return;
+    card.setBody(ui.pointPopup(data, null));
+  } catch (e) {
+    if (mine !== selectionInfoRequest) return;
+    card.setBody(e.message);
+  }
+  map.refreshSelectionCard();
+}
+
+// ✓ na karcie: przejście do trybu „Wybrane miejsce” i analiza.
+function confirmSelection() {
+  const s = state.selection;
+  if (!s) return;
+  const p = ui.selectedParams();
+  if (!p.type && !p.demand) { state.card.setBody(NEED_SELECTION); map.refreshSelectionCard(); return; }
+  analyzeCircle(s.lat, s.lng, s.name, s.radiusKm);
+}
+
+function analyzeCircle(lat, lng, name, radiusKm) {
+  clearSelection();
+  map.closeDetails();
+  ui.setRadius(radiusKm);
+  switchMode('place');
+  setPlace(lat, lng, name);
+  run({ fit: true });
 }
 
 // ---- Rysowanie wyniku ----
@@ -127,7 +197,6 @@ function drawLayer() {
       ui.renderLegend(title, scale, notes.join(' '), !!gap && gap.includes(1));
     }
   }
-  map.dimFog(state.preview);
   // Gotowa mapa jest liczona dla kadru zaokrąglonego na zewnątrz, więc w „Najlepszych miejscach w widoku” zostawiamy tylko te na ekranie.
   const top = (result.top[layer] || []).filter((p) => !national || map.contains(p.lat, p.lng));
   // Pusta lista przy kreskowaniu to nie „brak danych”, tylko miejsca bez wiarygodnych klientów — mówimy to wprost.
@@ -140,8 +209,6 @@ function drawLayer() {
 function showResult(result, used) {
   state.result = result;
   state.used = used;
-  state.preview = false;
-  ui.highlightShow(false);
   ui.hideIntro();
   ui.showInsights();                                     // panel po prawej zmienia szerokość mapy
   map.invalidateSize();
@@ -159,7 +226,6 @@ function resetResult() {
   state.result = null;
   state.used = null;
   state.view = null;
-  state.preview = false;
   discardPoint();
   map.clearFog();
   map.setTopMarkers([], () => {});
@@ -169,7 +235,6 @@ function resetResult() {
   $('top-title').hidden = true;
   ui.renderWarnings([]);
   ui.renderNotes([]);
-  ui.highlightShow(false);
 }
 
 // ---- Tryb „Wybrane miejsce”: zapytanie o mapę ----
@@ -296,6 +361,7 @@ function switchMode(mode) {
   if (state.controller) state.controller.abort();
   ui.setLoading(false);
   state.loading = false;                                 // przerwane zapytanie nie dojdzie do swojego finally (requestId już inny)
+  clearSelection();
   ui.showError('');
   ui.setMode(mode);
   resetResult();
@@ -314,10 +380,7 @@ function switchMode(mode) {
 
 // „Przeanalizuj to miejsce” w dymku: ten punkt staje się wybranym miejscem i od razu liczymy okrąg wokół niego.
 function analyzePlace(lat, lng) {
-  map.closeDetails();
-  switchMode('place');
-  setPlace(lat, lng, MAP_POINT);
-  run({ fit: true });
+  analyzeCircle(lat, lng, MAP_POINT, ui.radiusKm());
 }
 
 // ---- Szczegóły klikniętego punktu ----
@@ -356,6 +419,7 @@ async function showPointAt(lat, lng) {
 
 // Wskazane miejsce (z listy top-5 albo ze znacznika): przybliżamy mapę i pokazujemy szczegóły.
 function openPlace(place) {
+  clearSelection();
   if (isMobile()) ui.collapseSheet();                    // arkusz zasłaniałby mapę i dymek
   map.safeFlyTo(place.lat, place.lng, Math.max(map.getView().zoom, 13));
   showPointAt(place.lat, place.lng);
@@ -368,31 +432,14 @@ function useAsCenter(lat, lng) {
   run({ fit: true });
 }
 
-// Kliknięcie w mapę:
-//   • Cała Polska — szczegóły punktu (jeśli mgła już jest),
-//   • Wybrane miejsce: bez wyniku (albo gdy właśnie wskazano nowe miejsce) — ustawia miejsce,
-//     w okręgu obszaru — szczegóły punktu, poza okręgiem — nowe miejsce (podgląd; trzeba kliknąć »Pokaż mapę«).
+// Kliknięcie w mapę: wewnątrz bieżącej analizy (tryb „Wybrane miejsce”) — szczegóły punktu,
+// wszędzie indziej (Cała Polska, poza obszarem, brak wyniku) — nowy wybór z kartą i przyciskiem ✓.
 function onMapClick(lat, lng) {
-  if (state.mode === 'pl') {
-    if (state.result) showPointAt(lat, lng);
-    return;
-  }
-  if (!state.result) {
-    setPlace(lat, lng, MAP_POINT);
-    ui.showInfo('');
-    writeHash();
-    return;
-  }
-  const u = state.used;
-  if (!state.preview && distanceKm(lat, lng, u.lat, u.lng) <= u.radius_km) {
+  if (state.mode === 'place' && state.result && !state.selection && distanceKm(lat, lng, state.used.lat, state.used.lng) <= state.used.radius_km) {
     showPointAt(lat, lng);
     return;
   }
-  discardPoint();
-  setPlace(lat, lng, MAP_POINT, { preview: true });
-  ui.showInfo(NEW_PLACE_INFO);
-  if (isMobile()) ui.setTab('settings');                 // tam jest przycisk „Pokaż mapę”
-  writeHash();
+  beginSelection(lat, lng, MAP_POINT);
 }
 
 // ---- Stan w adresie URL — link można komuś wysłać ----
@@ -476,22 +523,28 @@ map.onViewChange(() => {
 
 // Zmiana ustawień: tryb Polski przelicza widok; tryb miejsca po wyniku liczy od nowa (z opóźnieniem),
 // a przed wynikiem tylko odświeża okrąg podglądu.
-function onFormChange() {
+function onFormChange(source) {
   discardPoint();
+  if (state.selection) loadSelectionInfo();              // liczby na karcie zależą od branży, klientów i zasięgu
+  if (source === 'radius' && state.selection) return;    // promień zmienia tylko okrąg podglądu, nie starą analizę
   if (state.mode === 'pl') {
     ui.showInfo('');
     scheduleView(FORM_DEBOUNCE_MS);
     writeHash();
     return;
   }
-  ui.showInfo(state.preview ? NEW_PLACE_INFO : '');
-  if (state.result || state.loading) scheduleRun(state.preview);   // także w trakcie pierwszego zapytania; przy podglądzie nowego miejsca dopasuj widok
+  ui.showInfo('');
+  if (state.result || state.loading) scheduleRun(false);   // także w trakcie pierwszego zapytania
   else if (state.place) map.setArea(state.place.lat, state.place.lng, ui.radiusKm(), { veil: false });
   writeHash();
 }
 
 ui.onModeChange(switchMode);
-ui.onShowClick(() => { clearTimeout(runTimer); run({ fit: true }); });
+ui.onShowClick(() => {
+  clearTimeout(runTimer);
+  if (state.selection) confirmSelection(); else run({ fit: true });   // wybór w toku: »Pokaż mapę« działa jak ✓
+});
+ui.onRadiusInput((km) => setSelectionRadius(km, false));
 ui.onLayerChange(() => {
   discardPoint();
   if (state.result) drawLayer();

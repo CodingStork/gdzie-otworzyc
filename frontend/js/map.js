@@ -15,7 +15,6 @@ const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/';
 const MAX_ZOOM = 16; // Esri Light Gray ma kafelki do poziomu 16
 const MIN_ZOOM = 5;
 
-const DIM = 0.3;      // mnożnik przezroczystości przygaszonej mgły
 const UPSCALE = 4;   // obraz mgły jest 4 razy gęstszy niż siatka obliczeniowa (płynne przejścia zamiast kwadratów)
 
 // Leaflet wstawia tekst podpowiedzi jako HTML — nazwy firm z OSM (edytowane przez wolontariuszy)
@@ -117,6 +116,7 @@ export function initMap(elementId) {
   map.createPane('fog').style.zIndex = 410;
   map.createPane('area').style.zIndex = 420;
   map.createPane('details').style.zIndex = 430;
+  map.createPane('selection').style.zIndex = 440;   // wybór w toku (okrąg podglądu, prostokąt) leży nad szczegółami
   const labels = map.createPane('labels');
   labels.style.zIndex = 450;
   labels.style.pointerEvents = 'none';
@@ -131,9 +131,12 @@ export function initMap(elementId) {
   // Okrąg, welon i szczegóły: SVG (nie canvas) i nieinteraktywne, żeby nie przechwytywały kliknięć w mapę.
   const areaRenderer = L.svg({ pane: 'area' });
   const detailsRenderer = L.svg({ pane: 'details' });
+  const selectionRenderer = L.svg({ pane: 'selection' });
+  const selectionLayer = L.layerGroup().addTo(map);   // pinezka, okrąg podglądu / prostokąt i uchwyty wyboru
+  let selectionCircle = null;                          // okrąg podglądu (zmieniany suwakiem)
+  let selectionPopup = null;                           // karta wyboru (własny popup: nie zamyka go kliknięcie w mapę)
   let fogOverlay = null;
   let opacity = 0.85;
-  let dimmed = false;
   const FADE_MS = 250;   // czas przenikania starej mgły w nową (musi się zgadzać z transition w style.css)
 
   // Gdy zmieni się rozmiar kontenera mapy (np. zwinięcie panelu na telefonie), Leaflet musi przeliczyć rozmiar.
@@ -141,6 +144,7 @@ export function initMap(elementId) {
 
   let clickCb = null;
   map.on('click', (e) => clickCb && clickCb(e.latlng.lat, e.latlng.lng));
+  const isNarrow = () => window.innerWidth < 768;
   // Zamknięcie dymku (krzyżyk, Escape, kliknięcie w inne miejsce) usuwa szczegóły punktu.
   map.on('popupclose', () => detailsLayer.clearLayers());
 
@@ -179,7 +183,7 @@ export function initMap(elementId) {
       }).addTo(map);
       fogOverlay = overlay;
       // Nowa mgła wjeżdża z przezroczystości, a stara znika po FADE_MS — bez mrugania między „gotową mapą” a mapą na żywo.
-      const target = opacity * (dimmed ? DIM : 1);
+      const target = opacity;
       requestAnimationFrame(() => { if (fogOverlay === overlay) overlay.setOpacity(target); });
       if (old) { old.setOpacity(0); setTimeout(() => old.remove(), FADE_MS + 50); }
       if (document.hidden) { overlay.setOpacity(target); if (old) old.remove(); }   // w tle przeglądarka nie odtwarza animacji
@@ -199,13 +203,7 @@ export function initMap(elementId) {
     setView(lat, lng, zoom) { map.setView([lat, lng], zoom, { animate: false }); },
     setFogOpacity(value) {
       opacity = value;
-      if (fogOverlay) fogOverlay.setOpacity(value * (dimmed ? DIM : 1));
-    },
-    // Przygaszenie mgły starego obszaru, gdy użytkownik wskazał nowe miejsce (do 30% zwykłej przezroczystości).
-    dimFog(on) {
-      const changed = on !== dimmed;               // bez zmiany nie ruszamy przezroczystości — przerwałoby przenikanie nowej mgły
-      dimmed = on;
-      if (fogOverlay && changed) fogOverlay.setOpacity(opacity * (on ? DIM : 1));
+      if (fogOverlay) fogOverlay.setOpacity(value);
     },
 
     // Wybrane miejsce: pinezka i okrąg obszaru; z `veil` także przygaszenie wszystkiego poza okręgiem
@@ -253,6 +251,41 @@ export function initMap(elementId) {
       }).setLatLng([lat, lng]).setContent(element).openOn(map);
     },
     closeDetails() { map.closePopup(); },
+
+    // Wybór kliknięciem: pinezka + przerywany okrąg podglądu + karta (element DOM z ui.selectionCard) przy punkcie.
+    // Karta jest własnym popupem (autoClose / closeOnClick wyłączone), żeby kliknięcie w mapę jej nie zamykało — o tym decyduje app.js.
+    showSelection(lat, lng, radiusKm, cardEl) {
+      this.clearSelection();
+      selectionCircle = L.polygon(circleRing(lat, lng, radiusKm), {
+        renderer: selectionRenderer, interactive: false, color: '#800026', weight: 2, dashArray: '6 4',
+        fillColor: '#800026', fillOpacity: 0.06,
+      }).addTo(selectionLayer);
+      L.marker([lat, lng], {
+        icon: L.divIcon({ className: 'place-pin', iconSize: [14, 14], iconAnchor: [7, 7] }),
+        pane: 'selection', interactive: false, keyboard: false,
+      }).addTo(selectionLayer);
+      selectionPopup = L.popup({
+        className: 'selection-popup', closeButton: false, autoClose: false, closeOnClick: false,
+        maxWidth: isNarrow() ? 250 : 300, minWidth: isNarrow() ? 220 : 260, offset: [0, -8],
+        autoPanPaddingTopLeft: [50, 10], autoPanPaddingBottomRight: [10, 10],   // 50 px z lewej: przyciski zoomu i prostokąta
+      }).setLatLng([lat, lng]).setContent(cardEl);
+      map.addLayer(selectionPopup);
+    },
+    // Dopasowanie widoku do okręgu o danym promieniu (bez animacji).
+    fitCircle(lat, lng, radiusKm) {
+      map.fitBounds(L.latLng(lat, lng).toBounds(radiusKm * 2000), { animate: false, padding: [40, 40] });
+    },
+    // Suwak promienia: zmiana okręgu podglądu na żywo, bez zapytań do serwera.
+    updateSelectionRadius(lat, lng, radiusKm) {
+      if (selectionCircle) selectionCircle.setLatLngs(circleRing(lat, lng, radiusKm));
+    },
+    // Po dołożeniu treści do karty (odpowiedź serwera) popup musi przeliczyć rozmiar i położenie.
+    refreshSelectionCard() { if (selectionPopup) selectionPopup.update(); },
+    clearSelection() {
+      if (selectionPopup) { map.removeLayer(selectionPopup); selectionPopup = null; }
+      selectionLayer.clearLayers();
+      selectionCircle = null;
+    },
 
     // Numerowane znaczniki top-5 (DOM, nie canvas): klik w znacznik wywołuje onClick(place, i).
     setTopMarkers(list, onClick) {
