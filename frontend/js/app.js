@@ -113,7 +113,17 @@ function clearSelection() {
 function beginSelection(lat, lng, name, { fit = false } = {}) {
   discardPoint();
   clearSelection();
-  const radiusKm = ui.radiusKm();                        // jedna wartość promienia: suwak w lewym panelu i na karcie
+  let radiusKm = ui.radiusKm();                          // jedna wartość promienia: suwak w lewym panelu i na karcie
+  if (!fit) {
+    // Kliknięcie przy przybliżonej mapie: okrąg 10 km wychodziłby poza ekran i podgląd nic by nie pokazywał.
+    // Zaczynamy wtedy od ok. 30% krótszego boku widoku (suwak i tak pozwala to zmienić).
+    const b = map.viewBounds();
+    const sideKm = Math.min((b.east - b.west) * 111.32 * Math.cos(lat * Math.PI / 180), (b.north - b.south) * 110.54);
+    if (radiusKm > 0.45 * sideKm) {
+      radiusKm = ui.snapRadius(0.3 * sideKm);
+      ui.setRadius(radiusKm);
+    }
+  }
   state.selection = { kind: 'circle', lat, lng, name, radiusKm };
   state.card = ui.selectionCard({
     title: name === MAP_POINT ? 'Wybrany punkt' : name, radiusKm,
