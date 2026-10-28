@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.app.analysis.service import SurfaceParams, cached_surface, point_details
 from backend.app.analysis.national import (
-    NATIONAL_MISSING_MESSAGE, PX_RANGE, NationalMissing, cached_national,
+    NATIONAL_MISSING_MESSAGE, NationalMissing, cached_national,
 )
 from backend.app.catalog import DEFAULT_MONTHS, DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
 from backend.app.config import ATTRIBUTION, USER_AGENT
@@ -142,8 +142,8 @@ def national(
     _check_selection(type_id, demand, DEFAULT_MONTHS)
     if not all(math.isfinite(v) for v in (west, south, east, north)) or not (west < east and south < north):
         raise _bad_request("Nieprawidłowy prostokąt widoku")
-    if not PX_RANGE[0] <= px <= PX_RANGE[1]:
-        raise _bad_request(f"Szerokość mapy (px) musi mieścić się w zakresie {PX_RANGE[0]}–{PX_RANGE[1]}")
+    if px <= 0:
+        raise _bad_request("Szerokość mapy (px) musi być dodatnia")
     try:
         return cached_national(type_id or None, demand or None, west, south, east, north, px)
     except DatabaseMissing:

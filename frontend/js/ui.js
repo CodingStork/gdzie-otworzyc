@@ -140,9 +140,11 @@ export function setMode(mode) {
 export const onModeChange = (cb) => document.querySelectorAll('input[name=mode]')
   .forEach((r) => r.addEventListener('change', () => r.checked && cb(r.value)));
 
-// Zasięg jest zablokowany, gdy widać gotową mapę Polski (liczoną dla typowego zasięgu), i odblokowany przy mapie na żywo.
+// Zasięg i okres pozwoleń są zablokowane, gdy widać gotową mapę Polski (liczoną dla typowego zasięgu i 24 miesięcy),
+// a odblokowane przy mapie na żywo.
 export function setReachLocked(locked) {
   $('reach-input').disabled = locked;
+  $('months-select').disabled = locked;
   $('reach-hint').hidden = !locked;
 }
 

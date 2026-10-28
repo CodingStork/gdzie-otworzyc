@@ -87,8 +87,9 @@ def test_national_validation(client):
     assert national(client, type="xxx").status_code == 422
     assert national(client, demand="xxx").status_code == 422
     assert national(client, west=LNG + 1).status_code == 422                      # west > east
-    assert national(client, px=10).status_code == 422
-    assert national(client, px=99999).status_code == 422
+    assert national(client, px=0).status_code == 422
+    assert national(client, px=10).status_code == 200                              # px poza zakresem jest przycinane
+    assert national(client, px=99999).status_code == 200
     assert national(client, north=None).status_code == 422
     assert national(client, type="paving").status_code == 422                     # usunięty z katalogu
 
@@ -153,3 +154,36 @@ def test_view_place_name_prefers_larger_place_over_distant_village():
 def test_national_notes_warn_about_data_gaps(client):
     assert any("luk" in n for n in national(client).json()["notes"])           # warstwy z konkurencją
     assert not any("luk" in n for n in national(client, type="").json()["notes"])   # sam popyt nie zależy od firm
+
+
+def test_national_top_is_refined_to_best_child_cell(client):
+    """W oddalonym widoku (res < 8) pinezka stoi na faktycznie najlepszej komórce res 8, a nie na środku komórki-rodzica."""
+    from backend.app.db import cursor
+    j = national(client, px=200, west=LNG - 3, south=LAT - 2, east=LNG + 3, north=LAT + 2).json()
+    assert j["resolution"] < 8
+    con = cursor()
+    for item in j["top"]["open"]:
+        (value,) = con.execute('SELECT "open__beauty__pop_f" FROM national_r8 WHERE lat = ? AND lng = ?',
+                               [item["lat"], item["lng"]]).fetchone()
+        assert value == pytest.approx(item["value"], rel=1e-6)
+
+
+def test_national_reports_reach_of_each_layer(client):
+    """Trend jest zawsze liczony dla zasięgu domyślnego czynnika (10 km), a „Gdzie otworzyć” dla zasięgu branży (diy: 15 km)."""
+    j = national(client, type="diy", demand="new_sf").json()
+    assert j["layer_reach_km"] == {"open": 15.0, "demand": 15.0, "trend": 10.0}
+
+
+def test_national_ignores_layer_missing_in_pyramid(make_client, tmp_path):
+    """Przerwany ETL mógł zapisać warstwę w res 8 bez piramidy — API nie może jej oferować (zapytanie o res 5–7 dałoby błąd 500)."""
+    import duckdb
+    from backend.app import config
+    from backend.app.db import reset_connection
+    client = make_client(pop={c: 1000.0 for c in disk(k=3)}, pois=POIS, national=True)
+    reset_connection()
+    con = duckdb.connect(str(config.DB_PATH))
+    con.execute('ALTER TABLE national_r6 DROP COLUMN "open__beauty__pop_f"')
+    con.close()
+    reset_connection()
+    j = national(client).json()
+    assert j["layers"] == ["demand"]

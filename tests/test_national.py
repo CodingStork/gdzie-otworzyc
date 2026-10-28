@@ -129,3 +129,13 @@ def test_requires_aggregate_first(tmp_path):
         build_national(con, log=quiet)
     assert not table_exists(con, "national_meta")
     con.close()
+
+
+def test_layer_computed_for_other_reach_is_recomputed(built):
+    """Zmiana zasięgu typu w katalogu (bandwidth_km) unieważnia gotową warstwę, choć jej nazwa się nie zmienia."""
+    con, _ = built
+    con.execute("UPDATE national_meta SET reach_km = 99 WHERE layer = 'open__beauty__pop_f'")
+    resumed = build_national(con, log=quiet)
+    assert resumed["computed_now"] == 1
+    assert con.execute("SELECT reach_km FROM national_meta WHERE layer = 'open__beauty__pop_f'").fetchone()[0] == 1.5
+    assert con.execute("SELECT COUNT(*) FROM national_meta WHERE layer = 'open__beauty__pop_f'").fetchone()[0] == 1

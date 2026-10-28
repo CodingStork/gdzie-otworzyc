@@ -166,7 +166,10 @@ def build_national(con: duckdb.DuckDBPyConnection, force: bool = False, log=prin
     cells = con.execute(f"SELECT h3, lat, lng FROM national_r{BASE_RES} ORDER BY h3").fetchall()
     ids = [c[0] for c in cells]
     targets_xy = to_metric(np.array([c[1] for c in cells]), np.array([c[2] for c in cells]))
-    done = {r[0] for r in con.execute("SELECT layer FROM national_meta").fetchall()}
+    # Warstwa policzona dla INNEGO zasięgu niż obecny w katalogu (ktoś zmienił bandwidth_km / default_reach_km) jest nieaktualna.
+    expected_reach = {layer: job.reach_km for job in jobs() for layer in job.outputs}
+    done = {layer for layer, reach in con.execute("SELECT layer, reach_km FROM national_meta").fetchall()
+            if layer in expected_reach and abs(reach - expected_reach[layer]) < 1e-9}
     sources = _Sources(con)
     computed = 0
     for job in jobs():
@@ -187,6 +190,7 @@ def build_national(con: duckdb.DuckDBPyConnection, force: bool = False, log=prin
                         f"FROM layer_values WHERE national_r{BASE_RES}.h3 = layer_values.h3")
             con.unregister("layer_values")
             p5, p99 = _scale(v.astype(float), layer)
+            con.execute("DELETE FROM national_meta WHERE layer = ?", [layer])      # po zmianie zasięgu stary wpis jest nieaktualny
             con.execute("INSERT INTO national_meta VALUES (?, ?, ?, ?, ?, ?)",
                         [layer, p5, p99, job.reach_km, layer_months(layer), datetime.datetime.now()])
             done.add(layer)

@@ -181,6 +181,7 @@ export function initMap(elementId) {
       return { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth(), px: map.getSize().x };
     },
     onViewChange(cb) { map.on('moveend', cb); },
+    contains(lat, lng) { return map.getBounds().contains([lat, lng]); },
     setView(lat, lng, zoom) { map.setView([lat, lng], zoom, { animate: false }); },
     setFogOpacity(value) {
       opacity = value;
@@ -188,8 +189,9 @@ export function initMap(elementId) {
     },
     // Przygaszenie mgły starego obszaru, gdy użytkownik wskazał nowe miejsce (do 30% zwykłej przezroczystości).
     dimFog(on) {
+      const changed = on !== dimmed;               // bez zmiany nie ruszamy przezroczystości — przerwałoby przenikanie nowej mgły
       dimmed = on;
-      if (fogOverlay) fogOverlay.setOpacity(opacity * (on ? DIM : 1));
+      if (fogOverlay && changed) fogOverlay.setOpacity(opacity * (on ? DIM : 1));
     },
 
     // Wybrane miejsce: pinezka i okrąg obszaru; z `veil` także przygaszenie wszystkiego poza okręgiem

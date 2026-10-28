@@ -32,6 +32,7 @@ const NO_CIRCLE = 1e9;                // „promień” maski mgły bez okręgu:
 const NATIONAL_DEBOUNCE_MS = 250;
 const LIVE_DEBOUNCE_MS = 400;
 const FORM_DEBOUNCE_MS = 300;
+const DEFAULT_MONTHS = 24;            // okno pozwoleń gotowej mapy Polski (zgodne z catalog.DEFAULT_MONTHS)
 
 // Odległość po kuli w km (haversine).
 function distanceKm(lat1, lng1, lat2, lng2) {
@@ -80,10 +81,7 @@ const hasPermits = () => !!(state.result && state.result.permits_period);
 function drawLayer() {
   const { result, used } = state;
   let layer = ui.currentLayer();
-  if (!result.values[layer]) {                           // np. „Gdzie otworzyć” bez gotowej warstwy: pokazujemy pierwszą dostępną
-    layer = result.layers[0];
-    if (layer) ui.selectLayer(layer);
-  }
+  if (!result.values[layer]) layer = result.layers[0];   // np. „Gdzie otworzyć” bez gotowej warstwy: rysujemy pierwszą dostępną (wybór w panelu zostaje)
   const values = layer && result.values[layer];
   if (!values) {                                         // brak warstwy z nowszych ustawień (poczekajmy na wynik) albo brak gotowej mapy
     map.clearFog();
@@ -107,7 +105,7 @@ function drawLayer() {
       values.forEach((v, i) => { t[i] = v === null ? NaN : trendPosition(v, scale); });
       map.setFog(result.grid, t, radius, trendColor);
       ui.renderTrendLegend(title, 'mniej budów ← → więcej budów (ostatnie 12 mies. vs poprzednie 12)' +
-        (national ? ` · stała skala dla całej Polski, zasięg ${kmText(result.reach_km)} km` : ' · kolory dopasowane do widoku'));
+        (national ? ` · stała skala dla całej Polski, zasięg ${kmText(result.layer_reach_km.trend)} km` : ' · kolory dopasowane do widoku'));
     }
   } else {
     const scale = national ? result.scale[layer] : logScale(values);
@@ -121,13 +119,14 @@ function drawLayer() {
       // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
       const notes = [];
       if (period && layer !== 'competition') notes.push(`Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.`);
-      if (national) notes.push(`Gotowa mapa Polski dla typowego zasięgu: ${kmText(result.reach_km)} km. Skala jest stała dla całego kraju.`);
+      if (national) notes.push('Skala jest stała dla całego kraju: te same kolory znaczą te same liczby (na oddalonych poziomach pokazujemy najlepsze miejsce w rejonie).');
       else if (state.mode === 'pl') notes.push('Kolory dopasowane do widoku.');
       ui.renderLegend(title, scale, notes.join(' '));
     }
   }
   map.dimFog(state.preview);
-  const top = result.top[layer] || [];
+  // Gotowa mapa jest liczona dla kadru zaokrąglonego na zewnątrz, więc w „Najlepszych miejscach w widoku” zostawiamy tylko te na ekranie.
+  const top = (result.top[layer] || []).filter((p) => !national || map.contains(p.lat, p.lng));
   ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place), state.mode === 'pl');
   map.setTopMarkers(top, (place) => openPlace(place));
 }
@@ -266,6 +265,7 @@ function showView(result, used, kind) {
   state.result = result;
   state.used = used;
   state.view = kind;
+  if (kind === 'national') used.months = DEFAULT_MONTHS;   // gotowa mapa jest policzona dla 24 miesięcy — dymek ma liczyć tak samo
   ui.hideIntro();
   ui.showInsights();
   if (firstResult) map.invalidateSize();                 // prawy panel pojawił się po raz pierwszy
@@ -289,6 +289,7 @@ function switchMode(mode) {
   clearTimeout(runTimer);
   if (state.controller) state.controller.abort();
   ui.setLoading(false);
+  state.loading = false;                                 // przerwane zapytanie nie dojdzie do swojego finally (requestId już inny)
   ui.showError('');
   ui.setMode(mode);
   resetResult();

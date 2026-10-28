@@ -11,14 +11,15 @@ import h3
 import numpy as np
 from scipy.spatial import cKDTree
 
-from backend.app.analysis.layers import is_trend, layers_for
+from backend.app.analysis.layers import is_trend, layer_months, layers_for
 from backend.app.analysis.service import _haversine_km, _permit_window, _period
 from backend.app.analysis.surface import top_points
 from backend.app.catalog import DEFAULT_MONTHS, TYPES, quality_warning
 from backend.app.db import DatabaseMissing, cursor, on_reset
 from etl.aggregate import table_exists
 
-PX_RANGE = (200, 4000)
+PX_RANGE = (200, 4000)       # szerokość mapy w px poza zakresem jest przycinana (nie jest błędem)
+BASE_RES = 8
 GRID_CELL_PX = 4              # komórka siatki odpowiedzi ma ok. 4 px ekranu
 TARGET_CELL_PX = 4            # wybieramy najgrubszą rozdzielczość H3, której komórki mają co najwyżej tyle pikseli
 MAX_CELLS = 60_000            # tyle komórek H3 najwyżej czytamy z bazy na jedno zapytanie
@@ -87,17 +88,33 @@ def _scale_json(layer: str, p5, p99):
     return {"lo": float(max(p5, p99 / 100)), "hi": float(p99)}     # jak logScale w frontendzie: najwyżej 2 rzędy wielkości
 
 
-_tables_ok = [False]          # sprawdzenie istnienia tabel kosztuje kilka ms — robimy je raz na otwarcie bazy
-on_reset(lambda: _tables_ok.__setitem__(0, False))
+_available: list[set | None] = [None]    # warstwy obecne we WSZYSTKICH poziomach piramidy; liczone raz na otwarcie bazy
+on_reset(lambda: _available.__setitem__(0, None))
 
 
 def _read_meta(con) -> dict:
-    if not _tables_ok[0]:
+    """national_meta jako {warstwa: (p5, p99, zasięg)}, tylko dla warstw, które mają kolumnę w każdej tabeli national_r5…r8
+    (przerwany ETL mógł zapisać warstwę w res 8, a nie zdążyć zbudować piramidy — wtedy zapytanie o res 5–7 kończyłoby się błędem)."""
+    if _available[0] is None:
         if not (table_exists(con, "national_meta") and all(table_exists(con, f"national_r{r}") for r in RESOLUTIONS)):
             raise NationalMissing()
-        _tables_ok[0] = True
+        per_table = [{row[0] for row in con.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?", [f"national_r{r}"]).fetchall()}
+            for r in RESOLUTIONS]
+        _available[0] = set.intersection(*per_table)
     return {layer: (p5, p99, reach) for layer, p5, p99, reach in
-            con.execute("SELECT layer, p5, p99, reach_km FROM national_meta").fetchall()}
+            con.execute("SELECT layer, p5, p99, reach_km FROM national_meta").fetchall() if layer in _available[0]}
+
+
+def _best_cell_position(con, res: int, column: str, lat: float, lng: float, spacing_km: float) -> tuple[float, float]:
+    """Położenie maksimum w komórce res < 8: piramida trzyma środek komórki-rodzica, a wartość to max dzieci,
+    więc pinezka stawiana w środku rodzica mogłaby leżeć kilka km od faktycznie najlepszego miejsca (res 5: ~17 km między środkami)."""
+    if res >= BASE_RES:
+        return lat, lng
+    d = spacing_km / 110.54 * 0.6
+    row = con.execute(f'SELECT lat, lng FROM national_r{BASE_RES} WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? '
+                      f'ORDER BY "{column}" DESC LIMIT 1', [lat - d, lat + d, lng - d * 1.7, lng + d * 1.7]).fetchone()
+    return (float(row[0]), float(row[1])) if row else (lat, lng)
 
 
 def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
@@ -124,13 +141,20 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
     y_north, y_south = float(_merc_y(north)), float(_merc_y(south))
     cell_y = math.radians(east - west) / nx                          # komórka kwadratowa w rzucie Mercatora
     ny = max(1, round((y_north - y_south) / cell_y))
-    while nx * ny > MAX_CELLS:                                       # wąski, wysoki widok: rzadsza siatka
-        nx, ny = max(1, nx // 2), max(1, ny // 2)
+    if nx * ny > MAX_CELLS:                                          # bardzo duży ekran: komórki siatki większe niż 4 px, ale nie więcej niż trzeba
+        nx = max(1, int(nx * math.sqrt(MAX_CELLS / (nx * ny))))
         cell_y = math.radians(east - west) / nx
-    grid = {"west": west, "east": east, "south": south, "north": north, "nx": nx, "ny": ny,
+        ny = max(1, round((y_north - y_south) / cell_y))
+        while nx * ny > MAX_CELLS and nx > 1:
+            nx -= 1
+            cell_y = math.radians(east - west) / nx
+            ny = max(1, round((y_north - y_south) / cell_y))
+    grid_south = float(_merc_lat(y_north - ny * cell_y))             # ny to liczba całkowita wierszy, więc dolna krawędź obrazu leży tu
+    grid = {"west": west, "east": east, "south": grid_south, "north": north, "nx": nx, "ny": ny,
             "cell_m": (east - west) / nx * 111_320 * math.cos(math.radians(mid_lat)), "projection": "mercator"}
     response = {"mode": "national", "layers": list(layers), "reach_km": reach_km, "resolution": res, "grid": grid,
-                "values": {}, "scale": {}, "top": {}, "notes": notes, "warnings": warnings}
+                "values": {}, "scale": {}, "top": {}, "notes": notes, "warnings": warnings,
+                "layer_reach_km": {logical: float(meta[column][2]) for logical, column in layers.items()}}
     if not layers:
         return response
 
@@ -167,7 +191,7 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
             cells[idx[order]] = vals[order]
         empty = np.flatnonzero(np.isnan(cells))
         if tree is not None and len(empty):
-            dist, near = tree.query(np.column_stack([cx.ravel()[empty], cy.ravel()[empty]]), distance_upper_bound=0.58 * spacing)
+            dist, near = tree.query(np.column_stack([cx.ravel()[empty], cy.ravel()[empty]]), distance_upper_bound=0.62 * spacing)
             hit = np.isfinite(dist)
             cells[empty[hit]] = v[near[hit]]
         response["values"][logical] = [None if np.isnan(x) else float(x) for x in cells]
@@ -175,15 +199,21 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
 
         xy = np.column_stack([km_x(lng), km_y(lat)]) * 1000
         picks = top_points(np.nan_to_num(v), xy, in_view, min_sep_m)
-        response["top"][logical] = [
-            {"lat": float(lat[i]), "lng": float(lng[i]), "value": float(v[i]),
-             "name": (place_name(con, float(lat[i]), float(lng[i]), check_table=False) if has_places else None) or f"okolice {lat[i]:.2f}, {lng[i]:.2f}"}
-            for i in picks]
-    if any("__new_" in c or c.startswith("trend__") for c in columns):          # warstwy z pozwoleń: podajemy okres danych
+        top = []
+        for i in picks:
+            plat, plng = _best_cell_position(con, res, column, float(lat[i]), float(lng[i]), spacing)
+            top.append({"lat": plat, "lng": plng, "value": float(v[i]),
+                        "name": (place_name(con, plat, plng, check_table=False) if has_places else None) or f"okolice {plat:.2f}, {plng:.2f}"})
+        response["top"][logical] = top
+    if any(layer_months(c) for c in columns):                                    # warstwy z pozwoleń: podajemy okres danych
         window = _permit_window(con, 5, DEFAULT_MONTHS)
         if window is not None:
             response["permits_period"] = _period(window)
     return response
+
+
+def clamp_px(px: int) -> int:
+    return min(PX_RANGE[1], max(PX_RANGE[0], round(px / 250) * 250))
 
 
 def _quantum(span_deg: float) -> float:
@@ -205,7 +235,7 @@ def cached_national(type_id, demand_id, west, south, east, north, px) -> dict:
     q = _quantum(max(east - west, north - south))
     west, south = math.floor(west / q) * q, math.floor(south / q) * q
     east, north = math.ceil(east / q) * q, math.ceil(north / q) * q
-    px = min(PX_RANGE[1], max(PX_RANGE[0], round(px / 250) * 250))
+    px = clamp_px(px)
     return _cached(type_id, demand_id, west, south, east, north, px)
 
 
