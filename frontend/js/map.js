@@ -169,13 +169,20 @@ export function initMap(elementId) {
   rectButton.setAttribute('role', 'button');
   rectButton.textContent = '▭ Prostokąt';
   rectButton.title = 'Zaznacz obszar na mapie przeciągnięciem';
+  const helpButton = L.DomUtil.create('a', 'intro-button');   // „?” — pokazuje animację wprowadzającą jeszcze raz
+  helpButton.href = '#';
+  helpButton.setAttribute('role', 'button');
+  helpButton.textContent = '?';
+  helpButton.title = 'Jak wybrać obszar na mapie?';
+  let helpCb = null;
   const toolbar = L.Control.extend({
     options: { position: 'topleft' },
     onAdd() {
       const bar = L.DomUtil.create('div', 'leaflet-bar rect-bar');
-      bar.append(rectButton);
+      bar.append(rectButton, helpButton);
       L.DomEvent.disableClickPropagation(bar);
       L.DomEvent.on(rectButton, 'click', (e) => { L.DomEvent.preventDefault(e); drawing ? stopDraw() : startDraw(); });
+      L.DomEvent.on(helpButton, 'click', (e) => { L.DomEvent.preventDefault(e); if (helpCb) helpCb(); });
       return bar;
     },
   });
@@ -375,6 +382,7 @@ export function initMap(elementId) {
 
     // Przycisk „▭ Prostokąt”: onDrawStart — użytkownik włączył rysowanie; onRectDrawn({west, south, east, north}) — skończył.
     onDrawStart(cb) { drawStartCb = cb; },
+    onHelpClick(cb) { helpCb = cb; },
     onRectDrawn(cb) { rectDrawnCb = cb; },
     stopDraw() { if (drawing) stopDraw(); },
 

@@ -9,6 +9,7 @@
 // Wyjątek: kliknięcie wewnątrz bieżącej analizy pokazuje szczegóły punktu (dymek z konkurentami).
 import { getCatalog, getMeta, getPoi, national, point, surface } from './api.js';
 import { logPosition, logScale, trendColor, trendPosition, trendScale } from './colors.js';
+import { initIntro } from './intro.js';
 import { initMap } from './map.js';
 import * as ui from './ui.js';
 
@@ -634,6 +635,8 @@ ui.onShowClick(() => {
 ui.onRadiusInput((km) => setSelectionRadius(km, false));
 map.onDrawStart(() => { discardPoint(); clearSelection(); });   // „▭ Prostokąt”: poprzedni wybór znika
 map.onRectDrawn(beginRectSelection);
+const intro = initIntro(map.leaflet.getContainer());
+map.onHelpClick(intro.show);
 ui.onLayerChange(() => {
   discardPoint();
   if (state.result) drawLayer();
@@ -653,6 +656,10 @@ getCatalog()
   .then((catalog) => {
     ui.renderCatalog(catalog, onFormChange);
     ui.setMode('pl');
-    if (applyHash() && state.mode === 'place') run({ fit: true });
+    if (applyHash()) {
+      if (state.mode === 'place') run({ fit: true });
+    } else {
+      intro.showFirstTime();                             // pierwsza wizyta bez linku: pokaż, jak wybrać obszar
+    }
   })
   .catch((e) => ui.showError(e.message));

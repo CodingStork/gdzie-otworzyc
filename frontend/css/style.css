@@ -156,8 +156,61 @@ label.disabled { opacity: .4; }
 .selection-card .sel-title.bad { color: #c00000; }
 #rect-info[hidden], #radius-row[hidden], #radius-input[hidden] { display: none; }
 
+/* Animacja wprowadzająca (frontend/js/intro.js): nakładka na mapie, pod przyciskami mapy; położenia podaje JS przez zmienne --…x/--…y.
+   Dwa przebiegi po 6 s: kliknięcie → okrąg, potem przeciągnięcie prostokąta od przycisku. Elementy animacji nie przechwytują myszy. */
+#map-intro { position: absolute; inset: 0; z-index: 790; pointer-events: none; overflow: hidden; }
+#map-intro[hidden] { display: none; }
+#map-intro > div { position: absolute; left: 0; top: 0; opacity: 0; }
+.intro-cursor { animation: intro-cursor 6s ease-in-out 2 forwards; filter: drop-shadow(0 1px 2px #0006); }
+.intro-ring { width: 44px; height: 44px; margin: -22px 0 0 -22px; border: 3px solid var(--accent); border-radius: 50%;
+  transform: translate(var(--cx), var(--cy)) scale(0); animation: intro-ring 6s ease-out 2 forwards; }
+.intro-circle { width: var(--cd); height: var(--cd); margin: calc(var(--cd) / -2) 0 0 calc(var(--cd) / -2); border: 2px dashed #800026;
+  border-radius: 50%; background: #8000261a; transform: translate(var(--cx), var(--cy)) scale(.2); animation: intro-circle 6s ease-out 2 forwards; }
+.intro-rect { width: var(--rw); height: var(--rh); border: 2px dashed var(--accent); background: #2534941a; transform-origin: 0 0;
+  transform: translate(var(--r0x), var(--r0y)) scale(0); animation: intro-rect 6s ease-in-out 2 forwards; }
+@keyframes intro-cursor {
+  0%, 6% { transform: translate(var(--sx), var(--sy)); }
+  6% { opacity: 1; }
+  20%, 46% { transform: translate(var(--cx), var(--cy)); opacity: 1; }
+  23% { transform: translate(var(--cx), var(--cy)) scale(.8); opacity: 1; }
+  27% { transform: translate(var(--cx), var(--cy)) scale(1); opacity: 1; }
+  60%, 68% { transform: translate(var(--bx), var(--by)); opacity: 1; }
+  64% { transform: translate(var(--bx), var(--by)) scale(.8); opacity: 1; }
+  74% { transform: translate(var(--r0x), var(--r0y)); opacity: 1; animation-timing-function: linear; }
+  92%, 97% { transform: translate(var(--r1x), var(--r1y)); opacity: 1; }
+  100% { transform: translate(var(--r1x), var(--r1y)); opacity: 0; }
+}
+@keyframes intro-ring {
+  0%, 21% { opacity: 0; transform: translate(var(--cx), var(--cy)) scale(0); }
+  22% { opacity: .9; transform: translate(var(--cx), var(--cy)) scale(.2); }
+  40%, 100% { opacity: 0; transform: translate(var(--cx), var(--cy)) scale(1.8); }
+}
+@keyframes intro-circle {
+  0%, 22% { opacity: 0; transform: translate(var(--cx), var(--cy)) scale(.2); }
+  32%, 46% { opacity: 1; transform: translate(var(--cx), var(--cy)) scale(1); }
+  52%, 100% { opacity: 0; transform: translate(var(--cx), var(--cy)) scale(1); }
+}
+@keyframes intro-rect {
+  0%, 73% { opacity: 0; transform: translate(var(--r0x), var(--r0y)) scale(0); }
+  74% { opacity: 1; transform: translate(var(--r0x), var(--r0y)) scale(0); animation-timing-function: linear; }
+  92%, 97% { opacity: 1; transform: translate(var(--r0x), var(--r0y)) scale(1); }
+  100% { opacity: 0; transform: translate(var(--r0x), var(--r0y)) scale(1); }
+}
+#map-intro .intro-caption { left: 50%; top: auto; bottom: 16px; opacity: 1; width: min(420px, calc(100% - 32px)); transform: translateX(-50%);
+  pointer-events: auto; padding: 12px 14px; border-radius: 12px; background: #fff; box-shadow: 0 4px 16px #0004; text-align: center; }
+.intro-caption p { margin: 6px 0 10px; font-size: 14px; line-height: 1.4; }
+.intro-icons { display: flex; justify-content: center; gap: 18px; }
+.intro-ok { padding: 8px 20px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+.rect-button.intro-pulse { animation: intro-pulse 1.4s ease-in-out infinite; }
+@keyframes intro-pulse { 50% { box-shadow: 0 0 0 5px #fdb02f99; } }
+@media (prefers-reduced-motion: reduce) {
+  .intro-cursor, .intro-ring, .intro-circle, .intro-rect { display: none; }
+  .rect-button.intro-pulse { animation: none; box-shadow: 0 0 0 3px #fdb02f; }
+}
+
 /* Przycisk „▭ Prostokąt” (pod przyciskami +/−), tryb rysowania i uchwyty rogów prostokąta */
 .rect-bar a.rect-button { width: auto; padding: 0 9px; font: 600 13px/30px system-ui, sans-serif; text-decoration: none; white-space: nowrap; }
+.rect-bar a.intro-button { width: 30px; text-decoration: none; font: 700 14px/30px system-ui, sans-serif; cursor: help; }
 .rect-bar a.rect-button.active { background: var(--accent); color: #fff; }
 .leaflet-container.drawing, .leaflet-container.drawing .leaflet-interactive { cursor: crosshair; touch-action: none; }
 .rect-handle { background: #fff; border: 2px solid var(--accent); border-radius: 4px; box-shadow: 0 1px 4px #0006; cursor: grab; }
