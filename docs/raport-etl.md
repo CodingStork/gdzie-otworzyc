@@ -239,3 +239,50 @@ Odchylenia od planu:
 - **Warstwa trendu:** 12 pełnych miesięcy kończy się na miesiącu poprzedzającym najnowszy w danych (najnowszy jest niepełny — w danych z 2026-10 ma 4,5 tys. pozwoleń na domy jednorodzinne wobec ok. 8,5 tys. w pełnym miesiącu; bez tej korekty cały kraj wychodził lekko „na minus”). Zwykły popyt z pozwoleń nadal liczy okno do najnowszego miesiąca (jak w v3).
 - Poprawki po przeglądzie świeżym recenzentem: `etl/streets.py` pomija węzły (node) z tagiem `highway`; `verdict` zwraca `None`, gdy brak średniej krajowej; `street_label` zna więcej nazw bez „ul.” (Rynek, Droga, Most, Park, Wybrzeże, „ul.”/„ulica”) i porównuje nazwę miejsca jako całe słowo; podgląd nowego miejsca + zmiana ustawień dopasowuje widok; nazwa warstwy z linku nie trafia do selektora CSS; usunięty martwy kod.
 - Odłożone (drobne): deduplikacja „jeden do wielu” (jeden punkt OSM usuwa wszystkie punkty Overture tego typu w 50 m — dla sklepów spożywczych i restauracji odpada ok. 2/3), `/api/poi` bez `ORDER BY` przy limicie 5 000, próg `overture_min` liczy wiersze typ×firma, brak pliku `.release` daje „Overture Maps nieznane” w stopce, końce linii CRLF→LF w `download.py`/`osm_poi.py`.
+
+
+---
+
+# v3.2 (2026-10-28) — gotowa mapa Polski (krok `national`)
+
+Polecenie: `uv run python -m etl.run_all --only national` (na prawdziwej bazie `data/app.duckdb`; serwer musiał być zatrzymany).
+
+## Czas i rozmiar
+
+| Co | Wynik |
+|---|---|
+| Czas całego kroku `national` | **780 s (13 min)**, cel < 30 min (druga, niezależna próba na kopii bazy: 750 s) |
+| Punkty docelowe (`national_r8`) | 420 330 komórek H3 res 8 (komórki z ludnością + pierścień sąsiadów) |
+| Piramida `national_r7 / r6 / r5` | 65 055 / 9 707 / 1 455 komórek (maksimum z dzieci) |
+| Warstwy (kolumny FLOAT) | 65, wpisy w `national_meta` (p5, p99, zasięg, okno pozwoleń) |
+| Rozmiar bazy | 346 304 512 → 365 178 880 B (**+19 MB** razem ze wszystkimi tabelami `national_*`; limit z planu to 300 MB samej tabeli res 8) |
+| `etl.sanity` | **OK** (nowe sprawdzenia: każda warstwa z katalogu istnieje i ma wartości dodatnie, centrum Warszawy w górnych 5% popytu) |
+
+Czasy zadań (kopia bazy, jedno przejście po 420 tys. punktów): Huff dla typu z zasięgiem ≤ 2 km (źródła popytu res 9, ~940 tys. komórek) 16–34 s, tatuaż (5 km) 43 s, markety i przedszkola 9–19 s, sam popyt 11–16 s, trend 7–11 s, zagęszczenie firm < 1 s (market budowlany 8 s). Reszta czasu to zapis kolumn (`ALTER TABLE … ADD COLUMN` + `UPDATE`) i piramida. Dostępność konkurencji `C_i` liczona jest raz na typ i rodzinę czynników (spis / pozwolenia), a wszystkie czynniki typu liczone są jednym przebiegiem po parach (punkt, źródło) (`surface.py: huff_multi`).
+
+## Czasy odpowiedzi API (prawdziwa baza)
+
+| Zapytanie | Pierwsze (bez cache) | Z cache |
+|---|---|---|
+| `/api/national` — cała Polska, 1000 px (rozdzielczość res 6, ~190 kB JSON) | 0,21–0,26 s | 6–24 ms |
+| `/api/national` — kadr 4° × 3° (res 7) | ok. 0,26 s | ok. 10 ms |
+| `/api/surface` w trybie widoku, ~30 × 22 km, siatka promień/60 | 0,7 s (z siatką promień/90 było 1,9–2,7 s) | 17 ms |
+
+## Odchylenia od planu i decyzje podjęte samodzielnie
+
+- **`HIDDEN_TYPES` zostały w kodzie** (ETL `poi` nadal je zbiera, `match_types`/`match_overture` sięgają po `ALL_TYPES`); nie psuje to API: dla usuniętego typu `/api/surface` zwraca 422 jak dla nieznanego.
+- **Grupa „Budowlanka / dom” zniknęła**, a market budowlany (`diy`) przeniesiono do „Handel / gastro / sport” zamiast tworzyć grupę z jednym typem. Typów w katalogu jest 11.
+- **Oceny `osm_quality`** wg `docs/kompletnosc-danych.md`; dla `medium` jest łagodne ostrzeżenie („Dane o tych firmach są niepełne — część firm może nie być widoczna.”), dla `poor` nie ma już żadnego typu.
+- **`/api/surface` w trybie widoku:** wybrano wariant „okrąg opisany na widoku + maska przycięta do prostokąta” (plan dopuszczał oba). Siatka widoku jest rzadsza (promień/60 zamiast /90), bo bez tego widok 30 km liczył się ok. 2 s.
+- **Wspólny kod:** `huff_and_potential` jest teraz cienką nakładką na `huff_multi` (wiele czynników naraz), a `round_significant` przeniesiono do `surface.py` — te same funkcje liczą API na żywo i ETL (test sprawdza zgodność wartości w punkcie res 8 z `huff_expected`).
+- **Siatka odpowiedzi `/api/national`** jest równa w rzucie Mercatora (nie w stopniach), żeby obraz mgły przylegał do kafelków; pola wypełniane są wartością najbliższej komórki H3, gdy komórka H3 jest większa od komórki siatki.
+- **Nazwa miejsca w dużym widoku:** `service.nearest_place_name` faworyzuje osiedla i wsie nad miastami (dobre dla okręgu, złe dla kraju: rynek Olsztynka nazywał się „Mierki”), więc w trybie Polski nazwę wybiera `national.place_name` (odległość dzielona przez wagę rodzaju miejsca).
+- **Notatka o lukach w danych** w odpowiedzi `/api/national` dla warstw zależnych od firm: największe wartości w skali kraju to często miejsca bez wpisów o firmach (np. Olsztynek: 3,6 tys. kobiet w kwadracie 3 × 3 km i 0 salonów w OSM + Overture). Tego nie „naprawia” żaden model — pokazujemy to uczciwie.
+
+## Obserwacja dotycząca czytelności (scenariusz a)
+
+Na mapie całej Polski dla salonów kosmetycznych prawie cały zaludniony kraj jest pomarańczowo-czerwony: stała skala (p5–p99 z res 8) i maksimum z dzieci na res 6 podnoszą typowy kolor (mediana res 6 to 458 przy skali 116–993). Duże miasta nie wygrywają tylko dlatego, że są duże (Huff uwzględnia konkurencję; centrum Wrocławia jest jasne, jasne są też lasy), ale kontrast na poziomie kraju jest umiarkowany — przy przybliżeniu rośnie. Rozważana, odłożona zmiana: osobna stała skala dla każdego poziomu piramidy.
+
+## Weryfikacja w przeglądarce (v3.2)
+
+Wbudowana przeglądarka (okno ok. 800 × 600 oraz emulacja telefonu 375 × 812), serwer na porcie 8001 z prawdziwą bazą. Zrzuty w `docs/screenshots/v32-*.png`. Sprawdzone scenariusze z planu: a) start „Cała Polska” z salonem i kobietami; b) przybliżanie Polska → Dolny Śląsk → Wrocław (przejście gotowa → na żywo; legenda zmienia podpis na „Kolory dopasowane do widoku”, w prawym panelu pojawia się „Podsumowanie obszaru — widoczny obszar”); c) ok. 10 szybkich obrotów kółkiem w obie strony — bez odpowiedzi 4xx/5xx w logu sieci (stare zapytania są anulowane; jedyny wpis 422 w konsoli pochodzi z pierwszego, już poprawionego błędu startowego: mapa miała wymiar 0 px i wysłała pusty prostokąt widoku); d) klik → dymek → „Przeanalizuj to miejsce” → „Wybrane miejsce” z okręgiem; e) bez branży, klienci = nowe domy jednorodzinne (mapa popytu i trendu dla Polski, podpowiedź dla rzemieślników widoczna); f) stary link z `type=paving` (bez błędu, zostaje czynnik popytu); g) telefon. **Nie sprawdzono:** Safari/Firefox, dostępu z drugiego urządzenia (Tailscale).

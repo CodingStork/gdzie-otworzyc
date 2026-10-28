@@ -62,10 +62,11 @@ Traktuj to jak własny produkt. Konkretnie oznacza to:
 | v1 | Heksagony H3 dla całej Polski, wskaźnik „klienci na 1 konkurenta”, skala percentylowa | Kolory zlewały 4 600 i 19 000; heksagony rosły z oddaleniem; niezrozumiałe „okazja/popyt/konkurencja” |
 | v2 / v2.1 | Mapa dynamiczna z poziomami szczegółowości (LOD), dasymetria na budynki, okrąg 2SFCA, skala log | Ciągłe przeliczanie całej Polski przy ruchu mapy było męczące; mapa „zalana kolorem” po oddaleniu |
 | v3 | Przepływ **miejsce + promień → „Pokaż mapę”**, **mgła** (powierzchnia ciągła YlOrRd, log, przezroczystość), **model Huffa** z opcją zewnętrzną, szczegóły po kliknięciu | Uwagi: brak danych o firmach, panele pomieszane, heksagony w szczegółach zbędne, nie da się kliknąć poza okrąg |
-| v3.1 | Firmy z **OSM + Overture Maps** (deduplikacja), **podsumowanie obszaru** ze średnią krajową, ulice w top-5, **trend budów**, lewo = ustawienia / prawo = wnioski, klik poza okręgiem = nowe miejsce, zasięg min. 0,3 km, zakładki na telefonie | — (aktualna, commit 5d9dbf8, zweryfikowana w przeglądarce 2026-10-27; czeka na testy Marcina) |
+| v3.1 | Firmy z **OSM + Overture Maps** (deduplikacja), **podsumowanie obszaru** ze średnią krajową, ulice w top-5, **trend budów**, lewo = ustawienia / prawo = wnioski, klik poza okręgiem = nowe miejsce, zasięg min. 0,3 km, zakładki na telefonie | — (commit 5d9dbf8; tryb „Wybrane miejsce” działa dalej bez zmian) |
+| v3.2 | Przełącznik **Cała Polska / Wybrane miejsce**: po oddaleniu **gotowa mapa Polski z ETL** (krok `national`: Huff dla 420 tys. punktów res 8, piramida **max** res 7–5, **stała skala** z `national_meta`, `/api/national`), po przybliżeniu (półprzekątna ≤ 20 km) **mapa na żywo** (`/api/surface` w trybie prostokąta widoku); katalog **bez rzemieślników** (brukarz, ogrody, okna, kuchnie, instalatorzy → `HIDDEN_TYPES`), podpowiedź dla nich, „Przeanalizuj to miejsce” w dymku, hash `mode=pl` | — (aktualna, zweryfikowana w przeglądarce 2026-10-28; czeka na testy Marcina) |
 
-Odrzucone świadomie: heksagony jako główna warstwa, przeliczanie przy ruchu mapy, przełącznik „Konkurencja”, mapa bivariate, Leaflet.heat,
-tęczowe palety, zasięg < 0,3 km (dane ludności mają ~300 m rozdzielczości), Overpass API na żywo (blokuje automaty).
+Odrzucone świadomie: heksagony jako główna warstwa, ciągłe przeliczanie przy ruchu mapy (v3.2 liczy na żywo dopiero PO przybliżeniu do miasta i po zakończeniu ruchu; oddalony widok jest gotowy z ETL), przełącznik „Konkurencja”, mapa bivariate, Leaflet.heat,
+tęczowe palety, zasięg < 0,3 km (dane ludności mają ~300 m rozdzielczości), typy firm pracujących u klienta w katalogu (dopóki nie ma CEIDG — „konkurencja” byłaby fikcją), średnia zamiast maksimum w piramidzie (zalewa małe ośrodki), Overpass API na żywo (blokuje automaty).
 
 ## 5. Stan techniczny
 
@@ -75,13 +76,16 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
   numpy/scipy (cKDTree), pyproj, shapely, h3 v4, pyosmium. Frontend: czysty JS + Leaflet 1.9.4, bez Node i bez budowania.
 - **Dane:** Eurostat Census GRID 2021 (1 km) rozłożony dasymetrycznie na H3 res 9; OSM (Geofabrik) → firmy, miejscowości, ulice, wagi budynków;
   Overture Places → firmy; GUNB RWDZ + ULDK → pozwolenia na budowę (dokładność do obrębu). Układy: EPSG:2180/lokalny metryczny do odległości, 3035 spis, 4326 H3/mapa.
-- **Stan v3.1:** 195 testów zielonych, `etl.sanity` OK. Tabela `poi` ma kolumny `source` (`osm`/`overture`) i `source_id` (dawniej `osm_id`).
+- **Stan v3.2:** 226 testów zielonych, `etl.sanity` OK (sprawdza też gotową mapę Polski). Krok `national` = 780 s, 65 warstw, baza 346 → 365 MB (szczegóły: `docs/raport-etl.md`, sekcja v3.2). `/api/national` ~0,25 s bez cache, kilkanaście ms z cache; widok na żywo ~0,7 s. Typów w katalogu jest 11 (rzemieślnicy w `HIDDEN_TYPES`, ETL nadal je zbiera do `poi`). Przy zmianie danych: `uv run python -m etl.run_all --only aggregate,national --force`.
+- **Stan v3.1 (dalej aktualny dla danych):** Tabela `poi` ma kolumny `source` (`osm`/`overture`) i `source_id` (dawniej `osm_id`).
   Salony kosmetyczne: 7 206 z OSM + 24 133 z Overture. Zasięg 0,1–0,3 km API podnosi do 0,3 z notatką; trend pomija ostatni, niepełny miesiąc danych.
-- **API:** `/api/surface` (mgła + podsumowanie + top-5 + trend), `/api/point` (dymek), `/api/catalog`, `/api/poi`, `/api/geocode`, `/api/meta`.
-- **Komendy:** `uv sync` · `uv run pytest -v` · `uv run python -m etl.run_all [--only kroki] [--force]` · `uv run python -m etl.sanity` · `start.bat` (port 8000).
+- **API:** `/api/national` (gotowa mapa Polski: stała skala, rozdzielczość wg `px`), `/api/surface` (mgła + podsumowanie + top-5 + trend; okrąg `lat,lng,radius_km` albo prostokąt widoku `west,south,east,north`), `/api/point` (dymek), `/api/catalog`, `/api/poi`, `/api/geocode`, `/api/meta`.
+- **Komendy:** `uv sync` · `uv run pytest -v` · `uv run python -m etl.run_all [--only kroki] [--force]` (kroki: …, `aggregate`, `national`) · `uv run python -m etl.sanity` · `start.bat` (port 8000).
 
 ### Pułapki, które już kosztowały czas
 - **`data/` nie jest w repozytorium** (gitignore). Na nowym komputerze trzeba uruchomić cały ETL (kilka godzin, ~3 GB pobierania, ≥ 20 GB dysku).
+- **Mapa Polski jest policzona dla typowego zasięgu** — jeśli zmienisz `bandwidth_km` typu, `default_reach_km` czynnika, katalog albo dane, trzeba przeliczyć krok `national` (`--only aggregate,national --force`; sanity wykryje brakującą warstwę, ale nie nieaktualną).
+- **Największe wartości na mapie Polski to często luki w danych o firmach** (np. Olsztynek: 3,6 tys. kobiet w kwadracie 3 × 3 km i 0 salonów w OSM + Overture) — API dopisuje o tym notatkę; nie „naprawiaj” tego w kodzie.
 - **Serwer i ETL nie mogą działać naraz** (blokada pliku DuckDB → API zwraca 503). Nie zabijaj serwera Marcina bez pytania.
 - **ULDK (GUGiK)** po ~1 h intensywnych zapytań blokuje IP (przekierowanie 302 na WAF) — geokodowanie jest wznawialne, odczekaj i dokończ.
 - Formaty danych GUNB/ULDK/spisu są pełne niespodzianek — zanim coś zmienisz w ETL, przeczytaj `docs/zrodla-danych.md`.
@@ -93,11 +97,12 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 1. **CEIDG** jako trzecie źródło firm (kody PKD już są w katalogu) — najważniejsze dla branż, których nie ma w OSM/Overture (brukarze, ogrodnicy).
    Marcin musi złożyć wniosek o token API (dane.biznes.gov.pl, Profil Zaufany). **Token trafia do pliku `.env` (w gitignore), nigdy do czatu ani repo.**
 2. **Tailscale** (dostęp z uczelni) + reguła zapory dla portu 8000 — instrukcja w README; robimy dopiero, gdy Marcin przetestuje wersję lokalnie.
-3. Drobne, odłożone z przeglądu v3.1: deduplikacja „jeden do wielu” (dla sklepów i restauracji odpada ok. 2/3 punktów Overture — sprawdzić, czy nie za agresywnie),
+3. Z v3.2: osobna stała skala kolorów dla każdego poziomu piramidy (na mapie całej Polski kontrast jest umiarkowany — mediana res 6 leży wyżej niż mediana res 8, od której liczy się skala); powrót typów rzemieślniczych po dołączeniu CEIDG (są w `HIDDEN_TYPES`).
+4. Drobne, odłożone z przeglądu v3.1: deduplikacja „jeden do wielu” (dla sklepów i restauracji odpada ok. 2/3 punktów Overture — sprawdzić, czy nie za agresywnie),
    `/api/poi` bez `ORDER BY` przy limicie 5 000, sanity liczy wiersze typ×firma, brak pliku `.release` → „Overture Maps nieznane”,
    promień obszaru ma krok 1 km, w podsumowaniu „Obszar: punkt na mapie”, gdy miejsce wybrano kliknięciem (można dociągnąć nazwę najbliższej miejscowości).
-4. Opcjonalnie: hot-spoty Getis-Ord Gi\*, model ML „luki rynkowej” z walidacją przestrzenną, dokładne geokodowanie działek.
-5. Przy każdej nowej wersji: **zaktualizuj ten plik** (tabela w §4, stan w §5–6), README i ściągę.
+5. Opcjonalnie: hot-spoty Getis-Ord Gi\*, model ML „luki rynkowej” z walidacją przestrzenną, dokładne geokodowanie działek.
+6. Przy każdej nowej wersji: **zaktualizuj ten plik** (tabela w §4, stan w §5–6), README i ściągę.
 
 ## 7. Zasady stałe
 
@@ -112,7 +117,7 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 - `README.md` — opis dla ludzi: jak używać, metoda, źródła, architektura, instalacja, ograniczenia.
 - `docs/sciaga-do-obrony.md` — pytania i odpowiedzi, które Marcin musi umieć na obronie.
 - `docs/zrodla-danych.md` — zweryfikowane formaty i pułapki źródeł danych.
-- `docs/raport-etl.md` — wyniki i stan przetwarzania danych.
+- `docs/raport-etl.md` — wyniki i stan przetwarzania danych (w tym czas i rozmiar kroku `national`).
 - `docs/kompletnosc-danych.md` — jak pełne są dane o firmach wg typu i wielkości miejscowości (porównanie z GUS/D&B).
 - `docs/superpowers/specs/*-design.md` — specyfikacje kolejnych wersji (v1 2026-10-26, v2 i v3 2026-10-27).
-- `docs/superpowers/plans/*.md` — plany wykonawcze (najnowszy: `2026-10-27-v31-overture-podsumowanie.md`).
+- `docs/superpowers/plans/*.md` — plany wykonawcze (najnowszy: `2026-10-28-v32-cala-polska.md`).

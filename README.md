@@ -4,7 +4,7 @@ Aplikacja webowa, która na mapie Polski pokazuje, **gdzie jest dużo potencjaln
 
 Wybierasz typ działalności (11 typów) i/lub klientów (ludność ze spisu 2021 albo nowe domy z pozwoleń na budowę) i od razu widzisz **mgłę** — płynną żółto-czerwoną mapę — **na całą Polskę**. Przybliżasz mapę do swojego miasta, a mgła przelicza się **na żywo** z Twoimi ustawieniami (**zasięg klienta** 0,3–20 km); kliknięcie w mapę pokazuje szczegóły. Drugi tryb, **„Wybrane miejsce”**, analizuje okrąg (1–30 km) wokół jednego miejsca z podsumowaniem i porównaniem ze średnią krajową. Po lewej są **same ustawienia**, po prawej **wnioski**: legenda, top-5 miejsc w widoku i (dla widoku na żywo oraz wybranego miejsca) podsumowanie obszaru.
 
-![Brzeg — salon kosmetyczny i kobiety, „Gdzie otworzyć” z podsumowaniem obszaru](docs/screenshots/v31-a-brzeg-salony-kobiety.png)
+![Cała Polska — salon kosmetyczny i kobiety: gotowa mapa Polski od razu po wybraniu branży](docs/screenshots/v32-a-cala-polska-salony-kobiety.png)
 
 ## Jak używać
 
@@ -19,17 +19,23 @@ Wybierasz typ działalności (11 typów) i/lub klientów (ludność ze spisu 202
 
 ## Przykłady użycia
 
-| Brzeg: szczegóły po kliknięciu w okręgu (bez heksagonów) | Klik poza okręgiem = nowe miejsce |
+| Przybliżanie: gotowa mapa Dolnego Śląska (stała skala) | Wrocław: gotowa mapa |
 |---|---|
-| ![Szczegóły](docs/screenshots/v31-a-szczegoly-bez-heksagonow.png) | ![Nowe miejsce](docs/screenshots/v31-c-klik-poza-okregiem-nowe-miejsce.png) |
+| ![Dolny Śląsk](docs/screenshots/v32-b1-dolny-slask-gotowa-mapa.png) | ![Wrocław, gotowa](docs/screenshots/v32-b2-wroclaw-gotowa-mapa.png) |
 
-| Wrocław Psie Pole: salony kosmetyczne (OSM + Overture) | Brukarstwo pod Wrocławiem: „Gdzie budowy przybywa” |
+| Dalsze przybliżenie: mapa na żywo + podsumowanie widocznego obszaru | Klik w mapę: szczegóły i „Przeanalizuj to miejsce” |
 |---|---|
-| ![Wrocław](docs/screenshots/v31-b-wroclaw-psie-pole.png) | ![Trend budów](docs/screenshots/v31-d-brukarstwo-trend-budow.png) |
+| ![Wrocław, na żywo](docs/screenshots/v32-b3-wroclaw-na-zywo.png) | ![Dymek](docs/screenshots/v32-d1-klik-dymek-przeanalizuj.png) |
 
-| Telefon (375×812): zakładka „Wnioski” |
-|---|
-| ![Telefon](docs/screenshots/v31-e-telefon-wnioski.png) |
+| Tryb „Wybrane miejsce” po „Przeanalizuj to miejsce” | Brukarz: bez branży, klienci = nowe domy (mapa Polski) |
+|---|---|
+| ![Wybrane miejsce](docs/screenshots/v32-d2-wybrane-miejsce-po-przeanalizuj.png) | ![Nowe domy](docs/screenshots/v32-e-nowe-domy-cala-polska.png) |
+
+| Stary link z usuniętym typem (brukarstwo): działa, zostaje czynnik popytu | Telefon (375×812) |
+|---|---|
+| ![Stary link](docs/screenshots/v32-f-stary-link-brukarz.png) | ![Telefon](docs/screenshots/v32-g-telefon-nowe-domy.png) |
+
+Zrzuty z wersji 3.1 (okrąg wokół jednego miejsca, bez trybu „Cała Polska”) są w `docs/screenshots/v31-*.png`.
 
 ## Jak to działa (metoda)
 
