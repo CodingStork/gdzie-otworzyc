@@ -70,8 +70,8 @@ def test_summary_only_demand_and_only_type(make_client):
 
 def test_summary_permits_demand(make_client):
     permits = [(LAT, LNG, "2026-09-01", "sf", 5), (LAT + FAR, LNG, "2026-09-01", "sf", 100)]
-    client = make_client(pop=POP, pois=[("paving", LAT, LNG)], permits=permits)
-    s = surface(client, type="paving", demand="new_sf", radius_km=3, reach_km=2).json()["summary"]
+    client = make_client(pop=POP, pois=[("diy", LAT, LNG)], permits=permits)
+    s = surface(client, type="diy", demand="new_sf", radius_km=3, reach_km=2).json()["summary"]
     assert s["demand_total"] == 5 and s["demand_genitive"] == "nowych domów jednorodzinnych"
     assert s["national_per_firm"] == pytest.approx(105 / 1)           # wszystkie pozwolenia w oknie / wszystkie firmy
 
@@ -103,13 +103,13 @@ def trend_client(make_client):
     permits = [(LAT, LNG, "2025-03-01", "sf", 1), (LAT, LNG, "2026-03-01", "sf", 9),
                (north, LNG, "2025-03-01", "sf", 5), (north, LNG, "2026-08-01", "sf", 5),
                (LAT + FAR, LNG, "2026-09-01", "sf", 1)]       # daleko stąd; wyznacza najnowszy miesiąc danych (2026-09)
-    return make_client(pop=POP, pois=[("paving", LAT, LNG)], permits=permits)
+    return make_client(pop=POP, pois=[("diy", LAT, LNG)], permits=permits)
 
 
 def test_trend_layer_only_for_permits(make_client):
     client = trend_client(make_client)
-    assert surface(client, type="paving", demand="pop_total", reach_km=1).json()["layers"] == ["open", "demand"]
-    j = surface(client, type="paving", demand="new_sf", reach_km=1, radius_km=6).json()
+    assert surface(client, type="diy", demand="pop_total", reach_km=1).json()["layers"] == ["open", "demand"]
+    j = surface(client, type="diy", demand="new_sf", reach_km=1, radius_km=6).json()
     assert j["layers"] == ["open", "demand", "trend"]
     assert surface(client, type="", demand="new_sf", reach_km=1, radius_km=6).json()["layers"] == ["demand", "trend"]
 
@@ -140,7 +140,7 @@ def test_trend_ignores_incomplete_newest_month(make_client):
 
 def test_verdict_without_national_average_is_none(make_client):
     """Brak danych o pozwoleniach w kraju: nie ma z czym porównać, więc nie ma też werdyktu „mniej konkurencji”."""
-    s = surface(make_client(pop=POP, pois=[("paving", LAT, LNG)]), type="paving", demand="new_sf",
+    s = surface(make_client(pop=POP, pois=[("diy", LAT, LNG)]), type="diy", demand="new_sf",
                 reach_km=2).json()["summary"]
     assert s["competitors"]["total"] == 1 and s["national_per_firm"] is None and s["verdict"] is None
 

@@ -20,7 +20,7 @@ from backend.app.analysis.kernel import LocalFrame
 from backend.app.analysis.surface import (
     competition_density, demand_potential, huff_and_potential, make_grid, top_points,
 )
-from backend.app.catalog import DEMANDS, PLURALS, POOR_WARNING, TYPES
+from backend.app.catalog import DEMANDS, PLURALS, TYPES, quality_warning
 from backend.app.db import DatabaseMissing, cursor, on_reset
 from etl.aggregate import table_exists
 
@@ -336,8 +336,8 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
     notes: list[str] = []
     warnings: list[str] = []
     btype = TYPES[p.type_id] if p.type_id else None
-    if btype and btype.osm_quality == "poor":
-        warnings.append(POOR_WARNING)
+    if btype and quality_warning(btype.osm_quality):
+        warnings.append(quality_warning(btype.osm_quality))
     notes += _reach_notes(p.demand_id, p.reach_km)
 
     frame = LocalFrame(p.lat, p.lng)                     # metry względem wybranego miejsca (osie na północ i wschód)

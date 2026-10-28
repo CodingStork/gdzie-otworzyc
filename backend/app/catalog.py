@@ -39,13 +39,22 @@ class BusinessType:
     overture: tuple[str, ...] = ()        # kategorie Overture Maps (`taxonomy.primary`) liczone do tego typu
 
 
+# Grupa „Budowlanka / dom” zniknęła razem z rzemieślnikami (patrz HIDDEN_TYPES) — został w niej tylko market budowlany,
+# który jest zwykłym handlem z lokalem, więc przeniesiono go do „Handel / gastro / sport”.
 GROUPS: tuple[tuple[str, str], ...] = (
     ("personal", "Usługi osobiste"),
-    ("construction", "Budowlanka / dom"),
     ("retail", "Handel / gastro / sport"),
 )
 
 POOR_WARNING = "Dane o firmach tego typu (OpenStreetMap, Overture Maps) są bardzo niepełne. Traktuj mapę głównie jako mapę popytu."
+MEDIUM_WARNING = "Dane o tych firmach są niepełne — część firm może nie być widoczna."
+
+
+def quality_warning(quality: str) -> str | None:
+    """Ostrzeżenie o kompletności danych o firmach: „poor” — mocne, „medium” — łagodne, „good” — brak."""
+    return POOR_WARNING if quality == "poor" else MEDIUM_WARNING if quality == "medium" else None
+
+
 MONTHS_OPTIONS = (12, 24, 36)
 DEFAULT_MONTHS = 24
 
@@ -94,47 +103,28 @@ _RESTAURANTS = (
 TYPES: dict[str, BusinessType] = {t.id: t for t in (
     # --- Usługi osobiste ---
     _type("hairdresser", "personal", "Fryzjer", _rules({"shop": "hairdresser"}), "96.02.Z",
-          ("pop_total", "pop_f", "pop_1564"), 1.5, "medium",
+          ("pop_total", "pop_f", "pop_1564"), 1.5, "good",
           overture=("hair_salon", "barber", "hair_stylist")),
     _type("barber", "personal", "Barber",
           _rules({"shop": "hairdresser", "hairdresser": "barber"}, {"shop": "hairdresser", "male": "yes"},
                  {"shop": "barber"}),
-          "96.02.Z", ("pop_m", "pop_total", "pop_1564"), 2, "poor",
+          "96.02.Z", ("pop_m", "pop_total", "pop_1564"), 2, "medium",
           overture=("barber",)),
     _type("beauty", "personal", "Salon kosmetyczny", _rules({"shop": "beauty"}), "96.02.Z",
-          ("pop_f", "pop_total", "pop_1564"), 1.5, "medium",
+          ("pop_f", "pop_total", "pop_1564"), 1.5, "good",
           overture=("beauty_salon", "skin_care_and_makeup", "nail_salon")),
     _type("nails", "personal", "Stylizacja paznokci",
           _rules({"shop": "beauty", "beauty": "nails"}, {"shop": "nails"}), "96.02.Z",
-          ("pop_f", "pop_total"), 1.5, "poor",
+          ("pop_f", "pop_total"), 1.5, "medium",
           overture=("nail_salon",)),
     _type("tattoo", "personal", "Studio tatuażu", _rules({"shop": "tattoo"}), "96.09.Z",
           ("pop_1564", "pop_total"), 5, "medium",
           overture=("tattoo_and_piercing",)),
-    # --- Budowlanka / dom ---
-    _type("paving", "construction", "Brukarstwo", _rules({"craft": "paver"}, {"craft": "stonemason"}), "43.99.Z",
-          ("new_sf", "new_all", "pop_total"), 15, "poor",
-          overture=("paving_contractor", "masonry_concrete")),
-    _type("garden", "construction", "Ogrody i zieleń", _rules({"craft": "gardener"}, {"shop": "garden_centre"}),
-          "81.30.Z", ("new_sf", "new_all", "pop_total"), 15, "poor",
-          overture=("gardener", "landscaping", "nursery_and_gardening_store")),
-    _type("windows", "construction", "Okna i drzwi",
-          _rules({"shop": "windows"}, {"shop": "doors"}, {"craft": "window_construction"}), "43.32.Z",
-          ("new_all", "new_sf", "pop_total"), 15, "poor",
-          overture=("window_supplier", "door_supplier", "windows_installation", "door_sales_service")),
-    _type("diy", "construction", "Market / hurtownia budowlana",
+    # --- Handel / gastro / sport ---
+    _type("diy", "retail", "Market / hurtownia budowlana",
           _rules({"shop": "doityourself"}, {"shop": "hardware"}, {"shop": "trade", "trade": "building_supplies"}),
           "47.52.Z", ("new_all", "new_sf", "pop_total"), 15, "good",
           overture=("building_supply_store", "hardware_store", "home_improvement_store", "hardware_home_and_garden_store")),
-    _type("kitchen", "construction", "Meble kuchenne / stolarz",
-          _rules({"shop": "kitchen"}, {"craft": "carpenter"}, {"craft": "joiner"}), "31.02.Z",
-          ("new_all", "new_sf", "pop_total"), 10, "poor",
-          overture=("carpenter", "cabinetry", "kitchen_and_bath_store")),
-    _type("installer", "construction", "Instalatorzy (hydraulik, elektryk)",
-          _rules({"craft": "plumber"}, {"craft": "electrician"}, {"craft": "hvac"}), "43.22.Z",
-          ("new_all", "new_sf", "pop_total"), 10, "poor",
-          overture=("plumbing", "electrician", "hvac_service")),
-    # --- Handel / gastro / sport ---
     _type("grocery", "retail", "Sklep spożywczy", _rules({"shop": "convenience"}, {"shop": "supermarket"}),
           "47.11.Z", ("pop_total", "pop_ge65"), 1, "good",
           overture=("grocery_store", "convenience_store", "supermarket", "organic_grocery_store")),
@@ -154,6 +144,35 @@ TYPES: dict[str, BusinessType] = {t.id: t for t in (
           ("pop_lt15", "new_sf", "new_all"), 2, "good",
           overture=("preschool", "day_care_preschool", "child_care_and_day_care", "kindergarten")),
 )}
+
+
+# Firmy pracujące u klienta (brukarz, ogrodnik, instalator, okna, kuchnie) prawie nie mają lokali, więc w OSM i Overture
+# jest ich o rząd wielkości mniej niż w rzeczywistości (docs/kompletnosc-danych.md). Pokazywanie „konkurencji” dla nich
+# wprowadzałoby w błąd, dlatego NIE trafiają do TYPES ani do /api/catalog. ETL nadal je zbiera do tabeli `poi`
+# (match_types / match_overture sięgają po ALL_TYPES) — przydadzą się po dołączeniu CEIDG (M9). Popyt „nowe domy”
+# jest nadal dostępny w interfejsie jako samodzielny czynnik („Twoi klienci to”).
+HIDDEN_TYPES: dict[str, BusinessType] = {t.id: t for t in (
+    _type("paving", "construction", "Brukarstwo", _rules({"craft": "paver"}, {"craft": "stonemason"}), "43.99.Z",
+          ("new_sf", "new_all", "pop_total"), 15, "poor",
+          overture=("paving_contractor", "masonry_concrete")),
+    _type("garden", "construction", "Ogrody i zieleń", _rules({"craft": "gardener"}, {"shop": "garden_centre"}),
+          "81.30.Z", ("new_sf", "new_all", "pop_total"), 15, "poor",
+          overture=("gardener", "landscaping", "nursery_and_gardening_store")),
+    _type("windows", "construction", "Okna i drzwi",
+          _rules({"shop": "windows"}, {"shop": "doors"}, {"craft": "window_construction"}), "43.32.Z",
+          ("new_all", "new_sf", "pop_total"), 15, "poor",
+          overture=("window_supplier", "door_supplier", "windows_installation", "door_sales_service")),
+    _type("kitchen", "construction", "Meble kuchenne / stolarz",
+          _rules({"shop": "kitchen"}, {"craft": "carpenter"}, {"craft": "joiner"}), "31.02.Z",
+          ("new_all", "new_sf", "pop_total"), 10, "poor",
+          overture=("carpenter", "cabinetry", "kitchen_and_bath_store")),
+    _type("installer", "construction", "Instalatorzy (hydraulik, elektryk)",
+          _rules({"craft": "plumber"}, {"craft": "electrician"}, {"craft": "hvac"}), "43.22.Z",
+          ("new_all", "new_sf", "pop_total"), 10, "poor",
+          overture=("plumbing", "electrician", "hvac_service")),
+)}
+
+ALL_TYPES: dict[str, BusinessType] = {**TYPES, **HIDDEN_TYPES}
 
 
 # Nazwy typów w liczbie mnogiej, mianownik — do podpisów „Gdzie są {firmy}” (np. „Gdzie są fryzjerzy”).
@@ -179,14 +198,14 @@ def _tag_matches(tags: Mapping[str, str], key: str, wanted: str) -> bool:
 def match_types(tags: Mapping[str, str]) -> list[str]:
     """Zwraca id typów działalności pasujących do tagów obiektu OSM (w kolejności katalogu)."""
     return [
-        t.id for t in TYPES.values()
+        t.id for t in ALL_TYPES.values()
         if any(all(_tag_matches(tags, k, v) for k, v in rule.tags.items()) for rule in t.rules)
     ]
 
 
 def match_overture(category: str | None) -> list[str]:
     """Id typów działalności, do których należy kategoria Overture (`taxonomy.primary`), w kolejności katalogu."""
-    return [t.id for t in TYPES.values() if category in t.overture]
+    return [t.id for t in ALL_TYPES.values() if category in t.overture]
 
 
 def catalog_json() -> dict:
@@ -202,7 +221,7 @@ def catalog_json() -> dict:
                 "suggested_demands": list(t.suggested_demands),
                 "bandwidth_km": t.bandwidth_km,
                 "osm_quality": t.osm_quality,
-                "warning": POOR_WARNING if t.osm_quality == "poor" else None,
+                "warning": quality_warning(t.osm_quality),
             }
             for t in TYPES.values() if t.group == group_id
         ]
