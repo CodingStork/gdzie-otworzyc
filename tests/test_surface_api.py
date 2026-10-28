@@ -160,3 +160,36 @@ def test_surface_open_value_unchanged_by_gap_logic(client):
 def test_surface_other_layers_have_no_gap(client):
     assert "gap" not in surface(client, type="").json()
     assert "gap" not in surface(client, demand="").json()
+
+
+# ---- v3.4: prostokąt zaznaczony przez użytkownika (area=rect) ----
+
+def rect_surface(client, **kw):
+    params = dict(type="hairdresser", demand="pop_total", reach_km=0.5, area="rect",
+                  west=LNG - 0.03, south=LAT - 0.02, east=LNG + 0.03, north=LAT + 0.02)
+    params.update(kw)
+    return client.get("/api/surface", params={k: v for k, v in params.items() if v is not None})
+
+
+def test_surface_rect_summary_has_size_and_denser_grid(client):
+    rect = rect_surface(client).json()
+    view = rect_surface(client, area=None).json()               # bez area: widok mapy (zachowanie z v3.2)
+    assert rect["summary"]["shape"] == "rect" and view["summary"]["shape"] == "view"
+    assert abs(rect["summary"]["width_km"] - 0.06 * 111.32 * 0.6) < 1.5 and rect["summary"]["height_km"] > 4
+    assert rect["grid"]["nx"] > view["grid"]["nx"]              # divisions 90 zamiast 60
+    values = rect["values"]["open"]
+    assert values[0] is None and max(x for x in values if x is not None) > 0     # poza prostokątem null
+
+
+def test_surface_rect_limits(client):
+    assert rect_surface(client, east=LNG + 1).status_code == 422                 # bok > 60 km
+    tiny = rect_surface(client, west=LNG - 0.002, east=LNG + 0.002, south=LAT - 0.002, north=LAT + 0.002)
+    assert tiny.status_code == 422 and "najmniej" in tiny.json()["detail"]       # bok < 0,6 km
+    assert rect_surface(client, area="x").status_code == 422
+    # widok mapy nie ma dolnego limitu (zachowanie sprzed v3.4)
+    assert rect_surface(client, area=None, west=LNG - 0.002, east=LNG + 0.002, south=LAT - 0.002, north=LAT + 0.002).status_code == 200
+
+
+def test_surface_rect_and_view_cached_separately(client):
+    assert rect_surface(client).json()["summary"]["shape"] == "rect"
+    assert rect_surface(client, area=None).json()["summary"]["shape"] == "view"

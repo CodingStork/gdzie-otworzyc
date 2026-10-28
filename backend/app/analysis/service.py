@@ -142,6 +142,9 @@ class SurfaceParams:
     # Tryb „widoczny obszar” (west, south, east, north): zamiast okręgu analizujemy prostokąt widoku mapy. Wtedy lat/lng to jego
     # środek, a radius_km promień okręgu OPISANEGO na prostokącie (z niego bierzemy dane i siatkę), maska przycina siatkę do prostokąta.
     bbox: tuple[float, float, float, float] | None = None
+    # Skąd bierze się prostokąt: "view" = widok mapy (podsumowanie „Widoczny obszar”, rzadsza siatka, bo liczy się po każdym ruchu),
+    # "rect" = prostokąt zaznaczony przez użytkownika (v3.4: gęstsza siatka, podsumowanie z wymiarami „Zaznaczony obszar”).
+    area: str = "view"
 
 
 def _is_permits(demand_id: str | None) -> bool:
@@ -323,7 +326,10 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
     summary = {"demand_total": None, "demand_genitive": None, "competitors": None, "type_plural": None,
                "per_firm": None, "national_per_firm": None, "verdict": None, "radius_km": p.radius_km,
                "expected_firms": None, "data_gap": False,
-               "shape": "view" if rect is not None else "circle"}
+               "shape": ("rect" if p.area == "rect" else "view") if rect is not None else "circle"}
+    if rect is not None:                                 # wymiary prostokąta w km (do napisu „12,4 × 8,1 km”)
+        summary["width_km"] = round((rect[2] - rect[0]) / 1000, 1)
+        summary["height_km"] = round((rect[3] - rect[1]) / 1000, 1)
     if p.demand_id:
         arr, _, _ = load_demand(con, p.demand_id, 9, box, p.months)
         total = 0.0
@@ -383,8 +389,9 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
 
     center = np.zeros(2)
     # Widok na żywo liczy się po każdym przybliżeniu mapy, więc siatka jest rzadsza (promień/60 zamiast /90): to ~2× mniej punktów,
-    # a mgła i tak jest wygładzana ×4 przy rysowaniu.
-    grid_xy, mask, cell_m, nx, ny = make_grid(center, radius_m, divisions=60 if rect is not None else 90)
+    # a mgła i tak jest wygładzana ×4 przy rysowaniu. Zaznaczony prostokąt liczymy raz, na życzenie — dlatego gęściej jak okrąg.
+    divisions = 60 if rect is not None and p.area != "rect" else 90
+    grid_xy, mask, cell_m, nx, ny = make_grid(center, radius_m, divisions=divisions)
     if rect is not None:
         mask = _inside(grid_xy, radius_m, rect)
     g = grid_xy[mask]                                    # liczymy tylko punkty w okręgu
@@ -470,7 +477,7 @@ def cached_surface(p: SurfaceParams) -> dict:
     """run_surface z pamięcią podręczną (LRU 32); klucz ma zaokrąglone parametry (miejsce ~10 m, promień 0,5 km, zasięg 0,1 km)."""
     key = SurfaceParams(p.type_id, p.demand_id, round(p.lat, 4), round(p.lng, 4),
                         round(p.radius_km * 2) / 2, round(p.reach_km, 1), p.months,
-                        tuple(round(v, 4) for v in p.bbox) if p.bbox else None)
+                        tuple(round(v, 4) for v in p.bbox) if p.bbox else None, p.area)
     return _cached(key)
 
 
