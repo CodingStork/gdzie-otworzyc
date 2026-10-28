@@ -476,7 +476,9 @@ export function renderSummary(summary, ctx) {
     return row;
   };
   const demand = demandById(ctx.demandId);
-  add(summary.shape === 'view' ? 'Widoczny obszar (to, co jest teraz na mapie)' : `Obszar: ${ctx.placeName}, promień ${fmt(summary.radius_km, 1)} km`, 'where');
+  add(summary.shape === 'view' ? 'Widoczny obszar (to, co jest teraz na mapie)'
+    : summary.shape === 'rect' ? `Zaznaczony obszar: ${sizeText(summary.width_km, summary.height_km)}`
+      : `Obszar: ${ctx.placeName}, promień ${fmt(summary.radius_km, 1)} km`, 'where');
   if (summary.demand_total != null && demand) {
     const permits = ctx.permitsPeriod;
     add(permits
@@ -528,6 +530,46 @@ export function renderTop(list, layer, permits, onClick, inView = false, emptyTe
     li.addEventListener('click', () => onClick(place, i));
     ol.append(li);
   });
+}
+
+// Wymiary prostokąta, np. „12,4 × 8,1 km”.
+export const sizeText = (widthKm, heightKm) => `${fmt(widthKm, 1)} × ${fmt(heightKm, 1)} km`;
+
+// Karta przy zaznaczonym prostokącie: wymiary (albo komunikat o przekroczonym limicie), ✓ i ✕.
+// Zwraca { el, setSize(tekst, problem) } — gdy `problem` jest niepustym tekstem, ✓ jest nieaktywny.
+export function rectCard({ onConfirm, onCancel }) {
+  const el = document.createElement('div');
+  el.className = 'selection-card';
+  const head = document.createElement('div');
+  head.className = 'sel-title';
+  const hint = document.createElement('div');
+  hint.className = 'sel-body';
+  hint.textContent = 'Przeciągnij róg, żeby zmienić rozmiar.';
+  const buttons = document.createElement('div');
+  buttons.className = 'sel-buttons';
+  const ok = document.createElement('button');
+  ok.type = 'button';
+  ok.className = 'sel-ok';
+  ok.textContent = '✓ Analizuj obszar';
+  ok.addEventListener('click', onConfirm);
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'sel-cancel';
+  cancel.textContent = '✕';
+  cancel.title = 'Anuluj';
+  cancel.setAttribute('aria-label', 'Anuluj wybór');
+  cancel.addEventListener('click', onCancel);
+  buttons.append(ok, cancel);
+  el.append(head, hint, buttons);
+  return {
+    el,
+    setSize(text, problem) {
+      head.textContent = problem || text;
+      head.classList.toggle('bad', !!problem);
+      hint.textContent = problem ? `Zaznaczono ${text}.` : 'Przeciągnij róg, żeby zmienić rozmiar.';
+      ok.disabled = !!problem;
+    },
+  };
 }
 
 // ---- Karta wyboru obszaru (po kliknięciu w mapę): liczby punktu, suwak promienia, ✓ i ✕ ----

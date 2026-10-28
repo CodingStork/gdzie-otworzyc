@@ -95,6 +95,10 @@ function renderFog(grid, t, radiusKm, colorOf, gap = null, hatch = { period: 10,
 }
 
 // Pierścień współrzędnych okręgu o promieniu w km (przybliżenie płaskie — wystarcza dla ≤ 30 km).
+const RECT_COLOR = '#253494';
+const RECT_BAD_COLOR = '#e00000';   // prostokąt poza limitami (za duży / za mały)
+const boundsObject = (b) => ({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() });
+
 function circleRing(lat, lng, radiusKm, points = 120) {
   const dlat = radiusKm / 110.54;
   const dlng = radiusKm / (111.32 * Math.cos(lat * Math.PI / 180));
@@ -143,8 +147,88 @@ export function initMap(elementId) {
   new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById(elementId));
 
   let clickCb = null;
-  map.on('click', (e) => clickCb && clickCb(e.latlng.lat, e.latlng.lng));
+  let suppressClickUntil = 0;                          // po narysowaniu prostokąta przeglądarka wysyła jeszcze „click” — ignorujemy go
+  map.on('click', (e) => {
+    if (drawing || Date.now() < suppressClickUntil) return;
+    if (clickCb) clickCb(e.latlng.lat, e.latlng.lng);
+  });
   const isNarrow = () => window.innerWidth < 768;
+  const isTouchUi = () => window.matchMedia('(pointer: coarse), (max-width: 767px)').matches;
+
+  // ---- Prostokąt: przycisk „▭ Prostokąt”, rysowanie przeciągnięciem (Pointer Events: mysz, dotyk i rysik jednym kodem) ----
+  // Po kliknięciu przycisku mapa przestaje się przesuwać (dragging.disable) i przeciągnięcie rysuje ramkę; po puszczeniu tryb się
+  // wyłącza i przesuwanie wraca. Dzięki przyciskowi zwykłe przeciągnięcie (także palcem na telefonie) nadal przesuwa mapę.
+  let drawing = false;
+  let drawStartCb = null;
+  let rectDrawnCb = null;
+  let drawFrom = null;                                 // { latlng, x, y } — początek przeciągnięcia
+  let drawPreview = null;
+  const rectButton = L.DomUtil.create('a', 'rect-button');
+  rectButton.id = 'rect-button';
+  rectButton.href = '#';
+  rectButton.setAttribute('role', 'button');
+  rectButton.textContent = '▭ Prostokąt';
+  rectButton.title = 'Zaznacz obszar na mapie przeciągnięciem';
+  const toolbar = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd() {
+      const bar = L.DomUtil.create('div', 'leaflet-bar rect-bar');
+      bar.append(rectButton);
+      L.DomEvent.disableClickPropagation(bar);
+      L.DomEvent.on(rectButton, 'click', (e) => { L.DomEvent.preventDefault(e); drawing ? stopDraw() : startDraw(); });
+      return bar;
+    },
+  });
+  new toolbar().addTo(map);
+
+  function startDraw() {
+    drawing = true;
+    rectButton.classList.add('active');
+    map.dragging.disable();
+    map.getContainer().classList.add('drawing');
+    if (drawStartCb) drawStartCb();
+  }
+  function stopDraw() {
+    drawing = false;
+    drawFrom = null;
+    if (drawPreview) { drawPreview.remove(); drawPreview = null; }
+    rectButton.classList.remove('active');
+    map.dragging.enable();
+    map.getContainer().classList.remove('drawing');
+  }
+  const container = map.getContainer();
+  container.addEventListener('pointerdown', (e) => {
+    if (!drawing || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (e.target.closest('.leaflet-control, .leaflet-popup')) return;
+    drawFrom = { latlng: map.mouseEventToLatLng(e), x: e.clientX, y: e.clientY };
+    container.setPointerCapture(e.pointerId);          // ruch i puszczenie dochodzą do mapy także poza jej krawędzią
+    drawPreview = L.rectangle([drawFrom.latlng, drawFrom.latlng], {
+      renderer: selectionRenderer, interactive: false, color: RECT_COLOR, weight: 2, dashArray: '6 4', fillColor: RECT_COLOR, fillOpacity: 0.08,
+    }).addTo(selectionLayer);
+    e.preventDefault();
+  });
+  container.addEventListener('pointermove', (e) => {
+    if (drawFrom) drawPreview.setBounds(L.latLngBounds(drawFrom.latlng, map.mouseEventToLatLng(e)));
+  });
+  container.addEventListener('pointerup', (e) => {
+    if (!drawFrom) return;
+    const from = drawFrom;
+    suppressClickUntil = Date.now() + 400;
+    drawFrom = null;
+    if (drawPreview) { drawPreview.remove(); drawPreview = null; }
+    if (Math.hypot(e.clientX - from.x, e.clientY - from.y) < 12) return;   // samo stuknięcie, nie przeciągnięcie: dalej rysujemy
+    const bounds = L.latLngBounds(from.latlng, map.mouseEventToLatLng(e));
+    stopDraw();
+    if (rectDrawnCb) rectDrawnCb(boundsObject(bounds));
+  });
+  container.addEventListener('pointercancel', () => { drawFrom = null; if (drawPreview) { drawPreview.remove(); drawPreview = null; } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawing) stopDraw(); });
+
+  // Prostokąt wyboru: ramka + 4 uchwyty w rogach (przeciągnięcie rogu zmienia prostokąt, przeciwległy róg stoi) + karta.
+  let rectShape = null;
+  let rectHandles = [];
+  const cornerLatLngs = (b) => [[b.getNorth(), b.getWest()], [b.getNorth(), b.getEast()], [b.getSouth(), b.getEast()], [b.getSouth(), b.getWest()]];
+  const cardAnchor = (b) => [b.getNorth(), (b.getWest() + b.getEast()) / 2];   // karta przy środku północnej krawędzi
   // Zamknięcie dymku (krzyżyk, Escape, kliknięcie w inne miejsce) usuwa szczegóły punktu.
   map.on('popupclose', () => detailsLayer.clearLayers());
 
@@ -285,6 +369,73 @@ export function initMap(elementId) {
       if (selectionPopup) { map.removeLayer(selectionPopup); selectionPopup = null; }
       selectionLayer.clearLayers();
       selectionCircle = null;
+      rectShape = null;
+      rectHandles = [];
+    },
+
+    // Przycisk „▭ Prostokąt”: onDrawStart — użytkownik włączył rysowanie; onRectDrawn({west, south, east, north}) — skończył.
+    onDrawStart(cb) { drawStartCb = cb; },
+    onRectDrawn(cb) { rectDrawnCb = cb; },
+    stopDraw() { if (drawing) stopDraw(); },
+
+    // Prostokąt wyboru z uchwytami w rogach i kartą (cardEl). onChange(bounds) woła się przy każdym ruchu uchwytu.
+    showRect(bounds, cardEl, onChange) {
+      this.clearSelection();
+      let box = L.latLngBounds([bounds.south, bounds.west], [bounds.north, bounds.east]);
+      rectShape = L.rectangle(box, {
+        renderer: selectionRenderer, interactive: false, color: RECT_COLOR, weight: 2, dashArray: '6 4', fillColor: RECT_COLOR, fillOpacity: 0.06,
+      }).addTo(selectionLayer);
+      const size = isTouchUi() ? 28 : 18;                // na dotyk uchwyt jest większy, żeby dało się go złapać palcem
+      selectionPopup = L.popup({
+        className: 'selection-popup', closeButton: false, autoClose: false, closeOnClick: false,
+        maxWidth: isNarrow() ? 250 : 300, minWidth: isNarrow() ? 200 : 220, offset: [0, -8],
+        autoPanPaddingTopLeft: [50, 10], autoPanPaddingBottomRight: [10, 10],
+      }).setLatLng(cardAnchor(box)).setContent(cardEl);
+      // Rogi 0–3: NW, NE, SE, SW. Uchwyt i przeciwległy róg (i + 2) są względem siebie „przekątną”; dwa pozostałe dzielą z uchwytem
+      // szerokość albo długość geograficzną — dlatego po przeciągnięciu za przeciwległy róg prostokąt się odwraca, a nie psuje.
+      const sharesLat = (i, j) => (i < 2) === (j < 2);
+      const sharesLng = (i, j) => (i === 0 || i === 3) === (j === 0 || j === 3);
+      rectHandles = cornerLatLngs(box).map((latlng, i) => {
+        const handle = L.marker(latlng, {
+          draggable: true, keyboard: false, autoPan: false,
+          icon: L.divIcon({ className: 'rect-handle', iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+        }).addTo(selectionLayer);
+        let fixed = null;                                // przeciwległy róg stoi w miejscu
+        handle.on('dragstart', () => { fixed = rectHandles[(i + 2) % 4].getLatLng(); });
+        handle.on('drag', (e) => {
+          const d = e.latlng;
+          box = L.latLngBounds(fixed, d);
+          rectShape.setBounds(box);
+          rectHandles.forEach((other, j) => {
+            if (j !== i) other.setLatLng([sharesLat(i, j) ? d.lat : fixed.lat, sharesLng(i, j) ? d.lng : fixed.lng]);
+          });
+          selectionPopup.setLatLng(cardAnchor(box));
+          onChange(boundsObject(box));
+        });
+        handle.on('dragend', () => rectHandles.forEach((h, j) => h.setLatLng(cornerLatLngs(box)[j])));   // porządkujemy rogi po ewentualnym odwróceniu
+        return handle;
+      });
+      map.addLayer(selectionPopup);
+    },
+    // Czerwona ramka, gdy prostokąt jest poza limitami.
+    setRectInvalid(bad) {
+      if (rectShape) rectShape.setStyle({ color: bad ? RECT_BAD_COLOR : RECT_COLOR, weight: bad ? 3 : 2 });
+    },
+
+    // Wynik dla prostokąta: obramowanie i (z `veil`) przygaszenie wszystkiego poza nim; `fit` dopasowuje mapę (bez animacji).
+    setRectArea(bounds, { veil = false, fit = false } = {}) {
+      areaLayer.clearLayers();
+      const box = L.latLngBounds([bounds.south, bounds.west], [bounds.north, bounds.east]);
+      if (veil) {
+        const world = [[-85, -180], [-85, 180], [85, 180], [85, -180]];
+        L.polygon([world, cornerLatLngs(box)], {
+          renderer: areaRenderer, interactive: false, stroke: false, fillColor: '#101a3a', fillOpacity: 0.28,
+        }).addTo(areaLayer);
+      }
+      L.rectangle(box, {
+        renderer: areaRenderer, interactive: false, color: '#800026', weight: 1.5, dashArray: veil ? null : '6 4', fill: false,
+      }).addTo(areaLayer);
+      if (fit) map.fitBounds(box, { animate: false, padding: [20, 20] });
     },
 
     // Numerowane znaczniki top-5 (DOM, nie canvas): klik w znacznik wywołuje onClick(place, i).

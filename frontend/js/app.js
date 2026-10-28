@@ -18,9 +18,11 @@ const map = initMap('map');
 // mode: 'pl' | 'place'. result: ostatnia odpowiedź (/api/national, /api/surface); used: ustawienia, dla których ją policzono.
 // Tryb miejsca: place = wybrane miejsce {lat, lng, name}; pendingNote = dodatkowa notatka (np. po podniesieniu zasięgu).
 // Tryb Polski: view = 'national' | 'live' (co teraz widać).
-// selection = wybór w toku (jeszcze nie przeanalizowany): { kind: 'circle', lat, lng, name, radiusKm }, card = jego karta.
+// selection = wybór w toku (jeszcze nie przeanalizowany): { kind: 'circle', lat, lng, name, radiusKm }
+// albo { kind: 'rect', bounds }, card = jego karta.
+// area = { kind: 'rect', bounds } — analizujemy zaznaczony prostokąt zamiast okręgu wokół place (wtedy place == null).
 const state = {
-  mode: 'pl', loading: false, place: null, result: null, used: null, controller: null, requestId: 0,
+  mode: 'pl', loading: false, place: null, area: null, result: null, used: null, controller: null, requestId: 0,
   pendingNote: null, view: null, selection: null, card: null,
 };
 
@@ -33,6 +35,8 @@ const NO_CIRCLE = 1e9;                // „promień” maski mgły bez okręgu:
 const NATIONAL_DEBOUNCE_MS = 250;
 const LIVE_DEBOUNCE_MS = 400;
 const FORM_DEBOUNCE_MS = 300;
+const RECT_MIN_KM = 0.6;              // limity boku zaznaczonego prostokąta — jak w API (/api/surface?area=rect)
+const RECT_MAX_KM = 60;
 const DEFAULT_MONTHS = 24;            // okno pozwoleń gotowej mapy Polski (zgodne z catalog.DEFAULT_MONTHS)
 
 // Odległość po kuli w km (haversine).
@@ -53,11 +57,22 @@ function halfDiagonalKm(b) {
 
 const kmText = (km) => String(km).replace('.', ',');
 
+// Wymiary prostokąta w km (przybliżenie płaskie, jak w API).
+function rectSizeKm(b) {
+  const midLat = (b.south + b.north) / 2;
+  return { width: (b.east - b.west) * 111.32 * Math.cos(midLat * Math.PI / 180), height: (b.north - b.south) * 110.54 };
+}
+const rectCenter = (b) => ({ lat: (b.south + b.north) / 2, lng: (b.west + b.east) / 2 });
+const rectText = (b) => { const s = rectSizeKm(b); return ui.sizeText(s.width, s.height); };
+const inRect = (b, lat, lng) => lat >= b.south && lat <= b.north && lng >= b.west && lng <= b.east;
+
 // ---- Wybór miejsca (tryb „Wybrane miejsce”) ----
 
 // Ustawia miejsce analizy: pinezka + okrąg (z przygaszeniem poza okręgiem, gdy jest już wynik).
 function setPlace(lat, lng, name, { fit = false } = {}) {
   state.place = { lat, lng, name };
+  state.area = null;
+  ui.setRectInfo(null);
   ui.setPlaceName(name);
   map.setArea(lat, lng, ui.radiusKm(), { veil: !!state.result, fit });
 }
@@ -65,6 +80,22 @@ function setPlace(lat, lng, name, { fit = false } = {}) {
 // Wybór z wyszukiwarki działa tak samo jak kliknięcie w mapę: pinezka i karta z ✓ (mapa dopasowuje się do okręgu).
 function pickPlace(place) {
   beginSelection(place.lat, place.lng, place.name.split(',')[0], { fit: true });
+}
+
+// Ustawia zaznaczony prostokąt jako obszar analizy (zamiast okręgu): ramka na mapie i w lewym panelu napis z linkiem „zmień na okrąg”.
+function setRectPlace(bounds, { fit = false } = {}) {
+  state.area = { kind: 'rect', bounds };
+  state.place = null;
+  ui.setPlaceName('');
+  ui.setRectInfo(`Obszar: prostokąt ${rectText(bounds)}`, rectToCircle);
+  map.setRectArea(bounds, { veil: !!state.result, fit });
+}
+
+// „Zmień na okrąg”: środek prostokąta staje się miejscem, a promień wraca na suwak.
+function rectToCircle() {
+  const c = rectCenter(state.area.bounds);
+  setPlace(c.lat, c.lng, MAP_POINT);
+  run({ fit: true });
 }
 
 // ---- Wybór obszaru kliknięciem: pinezka + okrąg podglądu + karta (suwak promienia, ✓, ✕) ----
@@ -129,8 +160,41 @@ function confirmSelection() {
   const s = state.selection;
   if (!s) return;
   const p = ui.selectedParams();
-  if (!p.type && !p.demand) { state.card.setBody(NEED_SELECTION); map.refreshSelectionCard(); return; }
-  analyzeCircle(s.lat, s.lng, s.name, s.radiusKm);
+  if (!p.type && !p.demand) {
+    if (s.kind === 'circle') state.card.setBody(NEED_SELECTION);
+    else state.card.setSize(rectText(s.bounds), NEED_SELECTION);
+    map.refreshSelectionCard();
+    return;
+  }
+  if (s.kind === 'rect') analyzeRect(s.bounds); else analyzeCircle(s.lat, s.lng, s.name, s.radiusKm);
+}
+
+// Prostokąt narysowany przyciskiem „▭ Prostokąt”: karta z wymiarami i ✓, rogi można przeciągać.
+function beginRectSelection(bounds) {
+  state.selection = { kind: 'rect', bounds };
+  state.card = ui.rectCard({ onConfirm: confirmSelection, onCancel: clearSelection });
+  map.showRect(bounds, state.card.el, (b) => { state.selection.bounds = b; updateRectCard(); });
+  updateRectCard();
+  if (isMobile()) ui.collapseSheet();
+}
+
+// Napis z wymiarami; poza limitami (bok 0,6–60 km) ramka jest czerwona, a ✓ nieaktywny.
+function updateRectCard() {
+  const b = state.selection.bounds;
+  const s = rectSizeKm(b);
+  const problem = Math.max(s.width, s.height) > RECT_MAX_KM ? `Za duży obszar — maks. ${RECT_MAX_KM} km boku`
+    : Math.min(s.width, s.height) < RECT_MIN_KM ? `Za mały obszar — min. ${kmText(RECT_MIN_KM)} km boku` : '';
+  state.card.setSize(rectText(b), problem);
+  map.setRectInvalid(!!problem);
+  map.refreshSelectionCard();
+}
+
+function analyzeRect(bounds) {
+  clearSelection();
+  map.closeDetails();
+  switchMode('place');
+  setRectPlace(bounds);
+  run({ fit: true });
 }
 
 function analyzeCircle(lat, lng, name, radiusKm) {
@@ -212,7 +276,8 @@ function showResult(result, used) {
   ui.hideIntro();
   ui.showInsights();                                     // panel po prawej zmienia szerokość mapy
   map.invalidateSize();
-  map.setArea(used.lat, used.lng, used.radius_km, { veil: true });
+  if (used.area === 'rect') map.setRectArea(used.bounds, { veil: true });
+  else map.setArea(used.lat, used.lng, used.radius_km, { veil: true });
   drawLayer();
   ui.renderSummary(result.summary, { placeName: used.name, demandId: used.demand, permitsPeriod: result.permits_period });
   ui.renderWarnings(result.warnings);
@@ -249,7 +314,7 @@ function scheduleRun(fit) {
 function validate() {
   const p = ui.selectedParams();
   if (!p.type && !p.demand) { ui.showInfo(NEED_SELECTION); return null; }
-  if (!state.place) { ui.showInfo(NEED_PLACE); return null; }
+  if (!state.place && !state.area) { ui.showInfo(NEED_PLACE); return null; }
   return p;
 }
 
@@ -263,18 +328,22 @@ async function run({ fit }) {
   const controller = new AbortController();
   state.controller = controller;
   const mine = ++state.requestId;
-  const used = { ...p, lat: state.place.lat, lng: state.place.lng, name: state.place.name };
+  const area = state.area;
+  const used = area
+    ? { ...p, ...rectCenter(area.bounds), radius_km: NO_CIRCLE, area: 'rect', bounds: area.bounds, name: 'zaznaczony obszar' }
+    : { ...p, lat: state.place.lat, lng: state.place.lng, name: state.place.name };
   ui.setLoading(true);
   state.loading = true;
   try {
-    const result = await surface({
-      type: p.type, demand: p.demand, lat: used.lat, lng: used.lng,
-      radius_km: p.radius_km, reach_km: p.reach_km, months: p.months,
-    }, controller.signal);
+    const query = area
+      ? { type: p.type, demand: p.demand, reach_km: p.reach_km, months: p.months, area: 'rect', ...area.bounds }
+      : { type: p.type, demand: p.demand, lat: used.lat, lng: used.lng, radius_km: p.radius_km, reach_km: p.reach_km, months: p.months };
+    const result = await surface(query, controller.signal);
     if (mine !== state.requestId) return;
     discardPoint();
     showResult(result, used);
-    if (fit) map.setArea(used.lat, used.lng, used.radius_km, { veil: true, fit: true });
+    if (fit && area) map.setRectArea(area.bounds, { veil: true, fit: true });
+    else if (fit) map.setArea(used.lat, used.lng, used.radius_km, { veil: true, fit: true });
     writeHash();
   } catch (e) {
     if (e.name === 'AbortError') return;   // zastąpione nowszym zapytaniem
@@ -372,8 +441,9 @@ function switchMode(mode) {
     refreshView();
   } else {
     ui.showIntro();
-    ui.showInfo(state.place ? '' : NEED_PLACE);
-    if (state.place) setPlace(state.place.lat, state.place.lng, state.place.name);   // pinezka i okrąg wracają
+    ui.showInfo(state.place || state.area ? '' : NEED_PLACE);
+    if (state.area) setRectPlace(state.area.bounds);     // ramka wraca
+    else if (state.place) setPlace(state.place.lat, state.place.lng, state.place.name);   // pinezka i okrąg wracają
   }
   writeHash();
 }
@@ -435,16 +505,24 @@ function useAsCenter(lat, lng) {
 // Kliknięcie w mapę: wewnątrz bieżącej analizy (tryb „Wybrane miejsce”) — szczegóły punktu,
 // wszędzie indziej (Cała Polska, poza obszarem, brak wyniku) — nowy wybór z kartą i przyciskiem ✓.
 function onMapClick(lat, lng) {
-  if (state.mode === 'place' && state.result && !state.selection && distanceKm(lat, lng, state.used.lat, state.used.lng) <= state.used.radius_km) {
+  if (state.mode === 'place' && state.result && insideAnalysis(lat, lng)) {
+    clearSelection();
     showPointAt(lat, lng);
     return;
   }
   beginSelection(lat, lng, MAP_POINT);
 }
 
+// Czy punkt leży w obszarze bieżącej analizy (okręgu albo prostokącie)?
+function insideAnalysis(lat, lng) {
+  const u = state.used;
+  return u.area === 'rect' ? inRect(u.bounds, lat, lng) : distanceKm(lat, lng, u.lat, u.lng) <= u.radius_km;
+}
+
 // ---- Stan w adresie URL — link można komuś wysłać ----
 //   Cała Polska:      #mode=pl&type=…&demand=…&reach=…&m=…&layer=…&z=…&clat=…&clng=…
 //   Wybrane miejsce:  #mode=place&type=…&demand=…&reach=…&m=…&layer=…&lat=…&lng=…&r=…&n=…
+//   Prostokąt:        #mode=place&type=…&demand=…&reach=…&m=…&layer=…&bbox=zachód,południe,wschód,północ
 // Stare linki (bez mode, z lat/lng) to tryb „Wybrane miejsce”.
 
 function writeHash() {
@@ -455,6 +533,12 @@ function writeHash() {
     hash = new URLSearchParams({
       mode: 'pl', type: p.type, demand: p.demand, reach: p.reach_km, layer: ui.currentLayer(),
       z: map.leaflet.getZoom().toFixed(2), clat: c.lat.toFixed(5), clng: c.lng.toFixed(5),
+    });
+  } else if (state.area) {
+    const b = state.area.bounds;
+    hash = new URLSearchParams({
+      mode: 'place', type: p.type, demand: p.demand, reach: p.reach_km, layer: ui.currentLayer(),
+      bbox: [b.west, b.south, b.east, b.north].map((v) => v.toFixed(5)).join(','),
     });
   } else {
     if (!state.place) return;
@@ -473,7 +557,9 @@ function applyHash() {
   const lat = Number(h.get('lat'));
   const lng = Number(h.get('lng'));
   const hasPlace = h.get('lat') && h.get('lng') && Number.isFinite(lat) && Number.isFinite(lng);
-  const mode = h.get('mode') === 'pl' || (!h.get('mode') && !hasPlace) ? 'pl' : 'place';
+  const box = (h.get('bbox') || '').split(',').map(Number);   // prostokąt: zachód, południe, wschód, północ
+  const hasBbox = box.length === 4 && box.every(Number.isFinite) && box[0] < box[2] && box[1] < box[3];
+  const mode = h.get('mode') === 'pl' || (!h.get('mode') && !hasPlace && !hasBbox) ? 'pl' : 'place';
   const selection = {
     type: h.get('type'), demand: h.get('demand'), reach: Number(h.get('reach')) || null,
     months: h.get('m'), radius: Number(h.get('r')) || null,
@@ -498,7 +584,7 @@ function applyHash() {
     scheduleView(0);
     return true;
   }
-  if (!hasPlace || (!h.get('type') && !h.get('demand'))) return false;
+  if (!(hasPlace || hasBbox) || (!h.get('type') && !h.get('demand'))) return false;
   const clamped = ui.setSelection(selection);
   state.pendingNote = clamped ? ui.MIN_REACH_NOTE : null;   // stary link z zasięgiem < 0,3 km
   if (h.get('layer')) ui.selectLayer(h.get('layer'));
@@ -509,7 +595,8 @@ function applyHash() {
     ui.setMode('place');
     map.clearArea();
   }
-  setPlace(lat, lng, h.get('n') || MAP_POINT, { fit: true });
+  if (hasBbox) setRectPlace({ west: box[0], south: box[1], east: box[2], north: box[3] }, { fit: true });
+  else setPlace(lat, lng, h.get('n') || MAP_POINT, { fit: true });
   return true;
 }
 
@@ -545,6 +632,8 @@ ui.onShowClick(() => {
   if (state.selection) confirmSelection(); else run({ fit: true });   // wybór w toku: »Pokaż mapę« działa jak ✓
 });
 ui.onRadiusInput((km) => setSelectionRadius(km, false));
+map.onDrawStart(() => { discardPoint(); clearSelection(); });   // „▭ Prostokąt”: poprzedni wybór znika
+map.onRectDrawn(beginRectSelection);
 ui.onLayerChange(() => {
   discardPoint();
   if (state.result) drawLayer();
