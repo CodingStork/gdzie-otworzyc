@@ -210,7 +210,12 @@ def test_summary_type_only_gets_verdict_from_similar_places(make_client):
 
 
 def test_summary_names_the_place_of_a_circle(make_client):
-    """„Obszar: Brzeg, promień 3 km” zamiast „punkt na mapie” — nazwa najbliższej miejscowości (miasto ma pierwszeństwo)."""
-    places = [("Miasteczko", "town", LAT + 0.004, LNG), ("Wioska", "village", LAT - 0.003, LNG)]   # 0,45 km i 0,33 km
+    """„Obszar: Brzeg, promień 3 km” zamiast „punkt na mapie” — miasto w okręgu ma pierwszeństwo przed bliższym osiedlem."""
+    places = [("Miasteczko", "town", LAT + 0.012, LNG), ("Osiedle", "suburb", LAT - 0.003, LNG)]   # 1,3 km i 0,33 km
     s = surface(make_client(pop=POP, pois=[("beauty", LAT, LNG)], places=places)).json()["summary"]
     assert s["place_name"] == "Miasteczko"
+
+
+def test_summary_names_village_when_no_town_in_circle(make_client):
+    places = [("Wioska", "village", LAT + 0.003, LNG)]
+    assert surface(make_client(pop=POP, pois=[("beauty", LAT, LNG)], places=places)).json()["summary"]["place_name"] == "Wioska"

@@ -36,6 +36,9 @@ const NO_CIRCLE = 1e9;                // „promień” maski mgły bez okręgu:
 const NATIONAL_DEBOUNCE_MS = 250;
 const LIVE_DEBOUNCE_MS = 400;
 const FORM_DEBOUNCE_MS = 300;
+const SMALL_SPREAD = 0.2;             // najlepsze miejsca różniące się o mniej niż 20% traktujemy jak równie dobre (dokładność danych)
+const NATIONAL_TOP_HINT = 'Przybliż mapę do swojej okolicy (ok. 30 km), a pokażemy najlepsze miejsca policzone z Twoimi ustawieniami. ' +
+  'Na mapie całej Polski nie porównujemy miejscowości ze sobą: różnią się zamożnością i dojazdami do pracy, których w danych nie ma.';
 const RECT_MIN_KM = 0.6;              // limity boku zaznaczonego prostokąta — jak w API (/api/surface?area=rect)
 const RECT_MAX_KM = 60;
 const DEFAULT_MONTHS = 24;            // okno pozwoleń gotowej mapy Polski (zgodne z catalog.DEFAULT_MONTHS)
@@ -158,7 +161,7 @@ async function loadSelectionInfo() {
   try {
     const data = await point({ lat: s.lat, lng: s.lng, type: u.type, demand: u.demand, reach_km: u.reach_km, months: u.months });
     if (mine !== selectionInfoRequest) return;
-    card.setBody(ui.pointPopup(data, null));
+    card.setBody(ui.pointPopup(data, null, undefined, { compact: true }));   // bez listy firm: karta ma nie zasłaniać mapy
   } catch (e) {
     if (mine !== selectionInfoRequest) return;
     card.setBody(e.message);
@@ -243,6 +246,7 @@ function drawLayer() {
     ui.hideLegend();
     map.setTopMarkers([], () => {});
     ui.renderTop([], ui.currentLayer(), false, () => {}, state.mode === 'pl');
+    ui.setTopNote('');
     return;
   }
   const national = result.mode === 'national';
@@ -274,21 +278,50 @@ function drawLayer() {
       const gapCells = layer === 'open' && result.gap && result.gap.open;
       const gap = gapCells ? Float32Array.from(gapCells, (g) => (g === null ? NaN : g)) : null;
       map.setFog(result.grid, t, radius, undefined, gap);
-      // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom).
+      // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom, blok = jeden budynek).
       const notes = [];
-      if (period && layer !== 'competition') notes.push(`Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.`);
-      if (national) notes.push('Skala jest stała dla całego kraju: te same kolory znaczą te same liczby (na oddalonych poziomach pokazujemy najlepsze miejsce w rejonie).');
+      if (period && layer !== 'competition') {
+        const blocks = ['new_mf', 'new_all'].includes(used.demand) ? ' Blok liczy się jak jeden budynek (rejestr nie podaje liczby mieszkań).' : '';
+        notes.push(`Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.${blocks}`);
+      }
+      if (national) notes.push('Stała skala dla całej Polski; po oddaleniu kolor pokazuje najlepszy punkt w rejonie.');
       else if (state.mode === 'pl') notes.push('Kolory dopasowane do widoku.');
       ui.renderLegend(title, scale, notes.join(' '), !!gap && gap.includes(1));
     }
   }
-  // Gotowa mapa jest liczona dla kadru zaokrąglonego na zewnątrz, więc w „Najlepszych miejscach w widoku” zostawiamy tylko te na ekranie.
-  const top = (result.top[layer] || []).filter((p) => !national || map.contains(p.lat, p.lng));
+  if (national) {
+    // Audyt: top-5 mapy całej Polski wskazywał wsie i miasteczka (Rudki, Pruchnik…) — popyt liczymy tylko z miejsca zamieszkania,
+    // bez zamożności i dojazdów, a w małych miejscowościach luk w danych nie da się wykryć. Ranking między regionami wprowadzałby
+    // w błąd, więc najlepsze miejsca pokazujemy dopiero dla jednej okolicy (mapa na żywo albo wybrany obszar).
+    ui.renderTop([], layer, hasPermits(), () => {}, true, NATIONAL_TOP_HINT);
+    ui.setTopNote('');
+    map.setTopMarkers([], () => {});
+    return;
+  }
+  const top = result.top[layer] || [];
   // Pusta lista przy kreskowaniu to nie „brak danych”, tylko miejsca bez wiarygodnych klientów — mówimy to wprost.
-  const onlyGaps = layer === 'open' && result.gap && result.gap.open.includes(1) && !(result.top[layer] || []).length;   // pusta już z serwera, a nie przez filtr widoku
-  ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place), state.mode === 'pl',
-    onlyGaps ? 'Brak wiarygodnych miejsc: wyniki tutaj opierają się głównie na lukach w danych o firmach (kreskowanie).' : undefined);
+  const onlyGaps = layer === 'open' && result.gap && result.gap.open.includes(1) && !top.length;
+  const edge = !!(result.top_edge && result.top_edge[layer]);
+  const emptyText = onlyGaps ? 'Brak wiarygodnych miejsc: wyniki tutaj opierają się głównie na lukach w danych o firmach (kreskowanie).'
+    : edge ? 'Nie ma tu wyraźnie najlepszego miejsca — wartości rosną w stronę krawędzi obszaru, więc lepsze miejsce leży tuż obok. Przesuń obszar.'
+      : undefined;
+  ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place), state.mode === 'pl', emptyText);
+  ui.setTopNote(topNote(top, edge));
   map.setTopMarkers(top, (place) => openPlace(place));
+}
+
+// Jedno zdanie pod najlepszymi miejscami: gdy różnią się o mniej niż 20% (to mniej niż dokładność danych) albo gdy na krawędzi
+// obszaru jest więcej niż w najlepszym miejscu (szczyt leży poza obszarem).
+function topNote(top, edge) {
+  const notes = [];
+  if (top.length >= 2) {
+    const values = top.map((p) => p.value);
+    if ((Math.max(...values) - Math.min(...values)) / Math.max(...values) < SMALL_SPREAD) {
+      notes.push('Te miejsca różnią się o mniej niż 20% — to mniej niż dokładność danych. Wybieraj między nimi według lokalu, czynszu i ruchu na ulicy.');
+    }
+  }
+  if (edge && top.length) notes.push('Na skraju obszaru wartości są wyższe niż tutaj — warto przesunąć obszar w tę stronę.');
+  return notes.join(' ');
 }
 
 function showResult(result, used) {
@@ -300,11 +333,19 @@ function showResult(result, used) {
   if (used.area === 'rect') map.setRectArea(used.bounds, { veil: true });
   else map.setArea(used.lat, used.lng, used.radius_km, { veil: true });
   drawLayer();
-  ui.renderSummary(result.summary, { placeName: used.name, demandId: used.demand, permitsPeriod: result.permits_period });
-  ui.renderWarnings(result.warnings);
+  // Miejsce wskazane kliknięciem nazywamy jak najbliższą miejscowość z odpowiedzi serwera („Brzeg, promień 3 km”), a nie „punkt na mapie”.
+  const placeName = used.name === MAP_POINT && result.summary.place_name ? result.summary.place_name : used.name;
+  ui.renderSummary(result.summary, { placeName, demandId: used.demand, permitsPeriod: result.permits_period });
+  ui.renderWarnings(withoutTypeWarning(result.warnings, used.type));
   ui.renderNotes([...(state.pendingNote ? [state.pendingNote] : []), ...result.notes]);
   state.pendingNote = null;
   if (isMobile()) ui.setTab('insights');                 // na telefonie po „Pokaż mapę” od razu wnioski
+}
+
+// Ostrzeżenie o niepełnych danych dla branży jest już pod wyborem branży (lewy panel) — nie powtarzamy go pod mapą.
+function withoutTypeWarning(warnings, typeId) {
+  const type = ui.typeById(typeId);
+  return warnings.filter((w) => !type || w !== type.warning);
 }
 
 // Czyści wynik i wszystko, co z niego narysowano (zmiana trybu, brak wyboru).
@@ -318,6 +359,7 @@ function resetResult() {
   ui.hideLegend();
   ui.hideSummary();
   ui.renderTop([], 'open', false, () => {});
+  ui.setTopNote('');
   $('top-title').hidden = true;
   ui.renderWarnings([]);
   ui.renderNotes([]);
@@ -437,7 +479,7 @@ function showView(result, used, kind) {
   } else {
     ui.hideSummary();                                    // podsumowanie ze średnią krajową ma sens tylko dla konkretnego obszaru
   }
-  ui.renderWarnings(result.warnings);
+  ui.renderWarnings(withoutTypeWarning(result.warnings, used.type));
   ui.renderNotes(result.notes);
 }
 

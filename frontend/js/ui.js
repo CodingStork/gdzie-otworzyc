@@ -20,8 +20,9 @@ const HELP = {
     'a po przybliżeniu do miasta liczymy ją na żywo z Twoimi ustawieniami. Wybrane miejsce: analiza okręgu wokół jednego miejsca ' +
     'albo zaznaczonego prostokąta (kliknij mapę albo użyj przycisku »▭ Prostokąt«) z podsumowaniem i porównaniem ze średnią krajową.',
   open: 'Ilu klientów mogłaby przyciągnąć nowa firma w danym miejscu. Liczymy to modelem Huffa: każdy mieszkaniec wybiera między firmami, ' +
-    'a bliższa firma przyciąga go mocniej. Uwzględniamy wszystkich konkurentów z OpenStreetMap i Overture Maps oraz »inne możliwości« ' +
-    '(firmy, których nie ma w tych bazach, zakupy gdzie indziej). Najbardziej czerwone miejsca to najlepsze lokalizacje.',
+    'a bliższa firma przyciąga go mocniej. Uwzględniamy konkurentów z OpenStreetMap i Overture Maps oraz »inne możliwości« ' +
+    '(firmy, których nie ma w tych bazach, zakupy gdzie indziej). Liczba służy do porównywania miejsc między sobą — to nie prognoza sprzedaży: ' +
+    'model zna tylko miejsce zamieszkania klientów (nie pracy ani dojazdów), nie zna ich zamożności ani tego, że duży sklep przyciąga mocniej niż mały.',
   demand: 'Ilu potencjalnych klientów jest w pobliżu danego miejsca — bliżsi liczą się bardziej. ' +
     'Mieszkańcy to szacunek: spis 2021 rozłożony na budynki mieszkalne z OpenStreetMap. ' +
     'Dla nowych domów liczymy pozwolenia na budowę z wybranego okresu.',
@@ -33,16 +34,18 @@ const HELP = {
     'market budowlany, brukarz: 10–20 km. W tej odległości chęć dotarcia spada o ok. 2/3, a dwa razy dalej — o ok. 85%. ' +
     'Najmniejszy zasięg to 0,3 km, bo dane o mieszkańcach mają rozdzielczość ok. 300 m.',
   radius: 'Jak duży obszar wokół wybranego miejsca przeanalizować. Mniejszy obszar = szybciej i dokładniej.',
-  legend: 'Kolor w skali logarytmicznej: każdy krok koloru to mniej więcej podwojenie wartości. ' +
+  legend: 'Ciemniejszy kolor = więcej. Skala jest logarytmiczna: o jeden odcień ciemniej to ok. 30–80% więcej, ' +
+    'więc różnice o kilka–kilkanaście procent prawie nie zmieniają koloru (i dobrze — dane nie są aż tak dokładne). ' +
     'Przezroczyste miejsca mają bardzo małe wartości. Dokładne liczby zobaczysz po kliknięciu mapy. ' +
     'Na mapie całej Polski skala jest stała (te same kolory znaczą te same liczby w każdym mieście); po przybliżeniu kolory dopasowują się do widoku.',
   gaps: 'Szare kreskowanie: większość klientów tego miejsca mieszka tam, gdzie w danych jest podejrzanie mało firm ' +
     '(najwyżej ¼ tego, co wynika ze średniej krajowej przy takiej liczbie mieszkańców). Wynik może być wtedy skutkiem luki w danych ' +
     '(brak firm w OpenStreetMap i Overture Maps), a nie braku konkurencji. Takich miejsc nie pokazujemy w najlepszych miejscach. ' +
     'Małych miejscowości, w których średnio byłyby mniej niż 3 firmy, nie oceniamy.',
-  summary: 'Liczby dotyczą całego zaznaczonego okręgu. Średnia krajowa pokazuje, ilu klientów przypada na jedną firmę tego typu ' +
-    'w całej Polsce — jeśli tutaj jest ich wyraźnie więcej, konkurencja jest mniejsza niż zwykle. ' +
-    'Firmy: OpenStreetMap + Overture Maps (mogą nie obejmować wszystkich).',
+  summary: 'Liczby dotyczą całego zaznaczonego obszaru. Liczbę firm porównujemy z miejscami w Polsce o podobnej gęstości zaludnienia ' +
+    '(kraj dzielimy na 5 grup: od wsi po centra miast), a nie ze średnią krajową — w miastach firm na mieszkańca jest zawsze więcej niż na wsi, ' +
+    'bo mieszkańcy wsi korzystają z usług w mieście. »Mniej« albo »więcej« konkurencji mówimy tylko, gdy różnica jest wyraźna ' +
+    'i nie jest zwykłym przypadkiem; przy kilku firmach nie da się tego ocenić. Firmy: OpenStreetMap + Overture Maps (nie wszystkie są na mapach).',
 };
 
 // Pytajnik: przycisk .help[data-help]. Podpowiedź pokazuje się po najechaniu lub kliknięciu,
@@ -211,9 +214,20 @@ function markSuggested(type) {
   }
 }
 
+// Pod wyborem branży: bez branży — podpowiedź dla rzemieślników; z branżą — jedno zdanie o tym, czego mapa dla niej NIE widzi
+// (zastrzeżenie z katalogu) i ewentualne ostrzeżenie o niepełnych danych. Mówimy to raz, w miejscu decyzji, a nie pod mapą.
+function syncTypeHints() {
+  const type = currentType();
+  $('craft-hint').hidden = !!type;
+  const text = type ? [type.caveat, type.warning].filter(Boolean).join(' ') : '';
+  $('type-hint').textContent = text;
+  $('type-hint').hidden = !text;
+}
+
 // Po zmianie typu: czynniki sugerowane dla typu dostają dopisek, domyślny jest zaznaczony,
 // a suwak „zasięg klienta” wraca do wartości typowej dla branży. Brak typu niczego nie zmienia.
 function onTypeChange() {
+  syncTypeHints();
   const type = currentType();
   if (!type) return;
   markSuggested(type);
@@ -252,6 +266,7 @@ export function renderCatalog(data, onChange) {
   setRadius(10);
   syncMonthsRow();
   syncLayers();
+  syncTypeHints();
 }
 
 // Parametry formularza; puste = brak wyboru (backend wymaga co najmniej jednego z: type, demand).
@@ -272,6 +287,7 @@ const hasOption = (select, value) => [...select.options].some((o) => o.value ===
 // Ustawia formularz z wartości zapisanych w adresie; nieznane wartości (np. ze starego linku) pomijamy.
 // Zwraca true, gdy zasięg z linku był poniżej minimum 0,3 km (został podniesiony — trzeba o tym powiedzieć).
 export function setSelection({ type, demand, reach, months, radius }) {
+  if (type && catalog.aliases && catalog.aliases[type]) type = catalog.aliases[type];   // stary link: paznokcie → salon kosmetyczny
   $('type-select').value = type && hasOption($('type-select'), type) ? type : '';
   if ($('type-select').value) markSuggested(currentType());   // dopiski „sugerowane”, ale bez nadpisywania zapisanych wartości
   $('demand-select').value = demand && hasOption($('demand-select'), demand) ? demand : '';
@@ -280,6 +296,7 @@ export function setSelection({ type, demand, reach, months, radius }) {
   if (months) $('months-select').value = String(months);
   syncMonthsRow();
   syncLayers();
+  syncTypeHints();
   return clamped;
 }
 
@@ -456,15 +473,44 @@ export function setLoading(loading) {
 // Szacunek do setek (od 1000), do dziesiątek (od 100), inaczej do jedności — nie pokazujemy fałszywej precyzji.
 const roundEstimate = (n) => (n >= 1000 ? Math.round(n / 100) * 100 : n >= 100 ? Math.round(n / 10) * 10 : Math.round(n));
 
+// Werdykt o konkurencji (backend: service.verdict). Porównanie z „podobnymi miejscami” (gęstość zaludnienia) albo — w starszej
+// bazie — ze średnią krajową. „Mniej” to też typowy objaw braków w danych, więc prosimy o sprawdzenie na miejscu.
 const VERDICTS = {
-  less: 'Konkurencji jest tu mniej niż przeciętnie w Polsce.',
-  more: 'Konkurencji jest tu więcej niż przeciętnie w Polsce.',
-  similar: 'Konkurencja na poziomie średniej krajowej.',
+  similar_places: {
+    less: 'Mniej konkurencji niż zwykle w podobnych miejscach — sprawdź na miejscu, czy na mapach nie brakuje firm.',
+    more: 'Więcej konkurencji niż zwykle w podobnych miejscach.',
+    similar: 'Konkurencja typowa dla podobnych miejsc.',
+  },
+  national: {
+    less: 'Mniej konkurencji niż średnio w Polsce — sprawdź na miejscu, czy na mapach nie brakuje firm.',
+    more: 'Więcej konkurencji niż średnio w Polsce.',
+    similar: 'Konkurencja na poziomie średniej krajowej.',
+  },
   unknown: 'Nie da się ocenić konkurencji — za mało danych o firmach.',
 };
 
-// summary z /api/surface; ctx: { placeName, demandId, permitsPeriod }. Pokazujemy tylko wiersze, które mają sens
-// dla wybranych ustawień (sam popyt: bez firm i porównania; sama branża: bez klientów).
+// Oczekiwana liczba firm ze słowem w dobrej formie: „1,4 firmy”, „3 firmy”, „7 firm”, „22 firmy” (poniżej 10 — jedno miejsce po przecinku).
+function firmsPhrase(n) {
+  const value = n < 10 ? Math.round(n * 10) / 10 : roundEstimate(n);
+  const whole = Number.isInteger(value);
+  const word = !whole ? 'firmy' : value === 1 ? 'firma'
+    : [2, 3, 4].includes(value % 10) && ![12, 13, 14].includes(value % 100) ? 'firmy' : 'firm';
+  return `${fmt(value, n < 10 ? 1 : 0)} ${word}`;
+}
+
+function verdictText(summary) {
+  const v = summary.verdict;
+  if (v === 'unknown') return VERDICTS.unknown;
+  if (v === 'few') {
+    return `Za mały obszar, żeby ocenić konkurencję (${summary.benchmark === 'national' ? 'średnio w Polsce' : 'w podobnych miejscach'} ` +
+      `ok. ${firmsPhrase(summary.benchmark_firms)} tego typu na taki obszar — przy tak małych liczbach ` +
+      'jedna firma więcej albo mniej to przypadek).';
+  }
+  return (VERDICTS[summary.benchmark] || VERDICTS.national)[v] || null;
+}
+
+// summary z /api/surface; ctx: { placeName, demandId, permitsPeriod }. Najpierw odpowiedź (werdykt jednym zdaniem), potem liczby,
+// z których wynika. Pokazujemy tylko wiersze, które mają sens dla ustawień (sam popyt: bez firm; sama branża: bez klientów).
 export function renderSummary(summary, ctx) {
   const box = $('summary');
   box.replaceChildren();
@@ -476,6 +522,8 @@ export function renderSummary(summary, ctx) {
     return row;
   };
   const demand = demandById(ctx.demandId);
+  const verdict = summary.verdict ? verdictText(summary) : null;
+  if (verdict) add(verdict, `verdict ${summary.verdict}`);
   add(summary.shape === 'view' ? 'Widoczny obszar (to, co jest teraz na mapie)'
     : summary.shape === 'rect' ? `Zaznaczony obszar: ${sizeText(summary.width_km, summary.height_km)}`
       : `Obszar: ${ctx.placeName}, promień ${fmt(summary.radius_km, 1)} km`, 'where');
@@ -483,18 +531,21 @@ export function renderSummary(summary, ctx) {
     const permits = ctx.permitsPeriod;
     add(permits
       ? `${demand.name}: ${fmt(summary.demand_total)} (pozwolenia ${permits.from} – ${permits.to})`
-      : `${demand.name}: ok. ${fmt(roundEstimate(summary.demand_total))}`);
+      : `${demand.name}: ok. ${fmt(roundEstimate(summary.demand_total))} (spis 2021)`);
   }
   if (summary.competitors) {
     const c = summary.competitors;
-    add(`${capitalize(summary.type_plural)} w obszarze: ${fmt(c.total)} (OSM ${fmt(c.osm)}, Overture ${fmt(c.overture)})`);
+    add(`${capitalize(summary.type_plural)}: ${fmt(c.total)} (OpenStreetMap ${fmt(c.osm)}, Overture ${fmt(c.overture)})`);
   }
-  if (summary.competitors && summary.demand_total != null) {
-    add(summary.per_firm != null
-      ? `→ 1 firma na ok. ${fmt(roundEstimate(summary.per_firm))} ${summary.demand_genitive}`
-      : '→ brak firm tego typu w obszarze', 'strong');
-    if (summary.national_per_firm != null) add(`Średnio w Polsce: 1 na ok. ${fmt(roundEstimate(summary.national_per_firm))}`);
-    if (summary.verdict) add(VERDICTS[summary.verdict], `verdict ${summary.verdict}`);
+  const where = summary.benchmark === 'similar_places' ? 'w podobnych miejscach' : 'średnio w Polsce';
+  if (summary.competitors && summary.demand_total != null && summary.verdict && summary.verdict !== 'few') {
+    const here = summary.per_firm != null ? `1 firma na ok. ${fmt(roundEstimate(summary.per_firm))} ${summary.demand_genitive}`
+      : 'brak firm tego typu';
+    add(summary.benchmark_per_firm != null
+      ? `${capitalize(here)} — ${where} 1 na ok. ${fmt(roundEstimate(summary.benchmark_per_firm))}.`
+      : `${capitalize(here)}.`, 'strong');
+  } else if (summary.competitors && summary.benchmark_firms != null && summary.verdict && summary.verdict !== 'few') {
+    add(`${capitalize(where)}: ok. ${firmsPhrase(summary.benchmark_firms)} tego typu na taki obszar.`);
   }
   if (summary.data_gap) {
     add(`⚠ Mało danych o firmach: ${summary.type_plural} w obszarze mamy w danych ${fmt(summary.competitors.total)}, ` +
@@ -509,6 +560,12 @@ export const hideSummary = () => { $('summary-box').hidden = true; };
 // ---- Najlepsze miejsca ----
 
 const TOP_TITLES = { open: 'Najlepsze miejsca', demand: 'Najwięcej klientów', competition: 'Najwięcej firm', trend: 'Gdzie przybywa budów' };
+
+// Jedno zdanie pod listą najlepszych miejsc (np. „różnice są małe”); pusty tekst chowa notatkę.
+export function setTopNote(text) {
+  $('top-note').textContent = text || '';
+  $('top-note').hidden = !text;
+}
 
 export function renderTop(list, layer, permits, onClick, inView = false, emptyText = 'Brak danych w tym obszarze.') {
   $('top-title').textContent = inView && layer === 'open' ? 'Najlepsze miejsca w widoku' : (TOP_TITLES[layer] || TOP_TITLES.open);
@@ -631,7 +688,8 @@ const dist = (m) => (m >= 1000 ? `${fmt(m / 1000, 1)} km` : `${fmt(m)} m`);
 
 // Zwraca element DOM (tekst wstawiamy przez textContent — nazwy firm nie są HTML-em).
 // onSetCenter: wywoływane po kliknięciu przycisku pod dymkiem (podpis: actionLabel).
-export function pointPopup(d, onSetCenter, actionLabel = 'Ustaw tu środek obszaru') {
+// compact: wersja do karty wyboru — bez listy najbliższych firm (ta jest w szczegółach po analizie), żeby karta nie zasłaniała mapy.
+export function pointPopup(d, onSetCenter, actionLabel = 'Ustaw tu środek obszaru', { compact = false } = {}) {
   const box = document.createElement('div');
   const add = (text, bold = false) => {
     const p = document.createElement('div');
@@ -645,11 +703,13 @@ export function pointPopup(d, onSetCenter, actionLabel = 'Ustaw tu środek obsza
   if (d.demand != null) {
     add(permits
       ? `${d.demand_name}: ${fmt(d.demand)} (pozwolenia ${d.permits_period.from} – ${d.permits_period.to})`
-      : `${d.demand_name}: ok. ${fmt(roundEstimate(d.demand))} (szacunek)`);
+      : `${d.demand_name}: ok. ${fmt(roundEstimate(d.demand))} (spis 2021)`);
   }
-  if (d.competitors != null) add(`${d.type_name} w okolicy: ${fmt(d.competitors)}`);
+  if (d.competitors != null) add(`${capitalize(d.type_plural || d.type_name)}: ${fmt(d.competitors)}`);
   if (d.expected != null) {
-    add(`Otwierając tu, zdobyłbyś ok. ${fmt(roundEstimate(d.expected))} ${clientsNoun(permits)} (model Huffa).`, true);
+    // Liczba z modelu Huffa zależy od kompletności danych o firmach i od „innych możliwości” (A0) — służy do porównań, nie jest prognozą.
+    add(`Szacunek modelu: ok. ${fmt(roundEstimate(d.expected))} ${clientsNoun(permits)} dla nowej firmy w tym miejscu ` +
+      '(do porównywania miejsc, nie prognoza sprzedaży).', true);
   }
   if (d.data_gap && d.data_gap.warn) {
     const g = d.data_gap;
@@ -657,7 +717,7 @@ export function pointPopup(d, onSetCenter, actionLabel = 'Ustaw tu środek obsza
       `a przy tej liczbie mieszkańców średnio w Polsce byłoby ok. ${fmt(Math.round(g.expected))}. ` +
       'Prawdopodobnie część firm nie jest jeszcze na mapach — sprawdź na miejscu.').className = 'warn';
   }
-  if (d.nearest.length) {
+  if (d.nearest.length && !compact) {
     add('Najbliżsi:');
     const ul = document.createElement('ul');
     for (const n of d.nearest) {

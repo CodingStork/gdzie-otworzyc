@@ -94,7 +94,9 @@ def nearest_place_name(con: duckdb.DuckDBPyConnection, lat: float, lng: float, m
 PLACE_WEIGHT = {"city": 3.0, "town": 2.0, "suburb": 1.0, "village": 1.0, "neighbourhood": 1.0, "quarter": 1.0, "hamlet": 0.5}
 
 
-def place_name(con, lat: float, lng: float, max_km: float = 8.0, check_table: bool = True) -> str | None:
+def place_name(con, lat: float, lng: float, max_km: float = 8.0, check_table: bool = True,
+               kinds: tuple[str, ...] | None = None) -> str | None:
+    """`kinds` zawęża wybór do rodzajów miejsc (np. tylko miasta — nazwa całego okręgu w podsumowaniu)."""
     if check_table and not table_exists(con, "places"):
         return None
     d = max_km / 110.0
@@ -102,6 +104,8 @@ def place_name(con, lat: float, lng: float, max_km: float = 8.0, check_table: bo
                        [lat - d, lat + d, lng - d * 1.7, lng + d * 1.7]).fetchall()
     best = None
     for name, kind, plat, plng in rows:
+        if kinds and kind not in kinds:
+            continue
         dist = _haversine_km(lat, lng, plat, plng)
         if dist <= max_km and (best is None or dist / PLACE_WEIGHT.get(kind, 1.0) < best[0]):
             best = (dist / PLACE_WEIGHT.get(kind, 1.0), name)
@@ -370,6 +374,13 @@ def _inside(xy: np.ndarray, radius_m: float, rect) -> np.ndarray:
     return np.hypot(xy[:, 0], xy[:, 1]) <= radius_m
 
 
+def _area_name(con, p: SurfaceParams) -> str | None:
+    """Nazwa okręgu do podsumowania („Brzeg, promień 3 km”): najbliższe miasto w okręgu, a gdy go nie ma — najbliższa miejscowość."""
+    radius = max(3.0, p.radius_km)
+    return (place_name(con, p.lat, p.lng, max_km=radius, kinds=("city", "town"))
+            or place_name(con, p.lat, p.lng, max_km=radius))
+
+
 def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
     """Liczby dla całego obszaru analizy (okrąg albo widoczny prostokąt): popyt, firmy (OSM / Overture), ile klientów na firmę, porównanie z Polską.
 
@@ -382,7 +393,7 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
                "expected_firms": None, "data_gap": False,
                # punkt odniesienia werdyktu: „similar_places” (miejsca o podobnej gęstości zaludnienia) albo „national”
                "benchmark": None, "benchmark_firms": None, "benchmark_per_firm": None,
-               "place_name": None if rect is not None else place_name(con, p.lat, p.lng, max_km=max(3.0, p.radius_km)),
+               "place_name": None if rect is not None else _area_name(con, p),
                "shape": ("rect" if p.area == "rect" else "view") if rect is not None else "circle"}
     if rect is not None:                                 # wymiary prostokąta w km (do napisu „12,4 × 8,1 km”)
         summary["width_km"] = round((rect[2] - rect[0]) / 1000, 1)

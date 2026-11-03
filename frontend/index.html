@@ -37,7 +37,9 @@
 
     <label for="type-select">Typ działalności</label>
     <select id="type-select"></select>
-    <div id="craft-hint" class="hint">Pracujesz u klienta (brukarz, instalator, ogrodnik)? Nie wybieraj branży — w »Twoi klienci to« wybierz nowe domy i zobacz, gdzie się buduje. Firm tego typu prawie nie ma w otwartych danych, więc nie pokazujemy konkurencji.</div>
+    <!-- Pod wyborem branży: zastrzeżenie „czego mapa nie widzi” dla wybranej branży albo (bez branży) podpowiedź dla rzemieślników -->
+    <div id="type-hint" class="hint" hidden></div>
+    <div id="craft-hint" class="hint">Pracujesz u klienta (brukarz, instalator, ogrodnik)? Zostaw branżę pustą i wybierz klientów »Nowe domy« — zobaczysz, gdzie się buduje.</div>
 
     <label for="demand-select">Twoi klienci to</label>
     <select id="demand-select"></select>
@@ -57,7 +59,7 @@
     </div>
     <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,3–20 km (wzór w ui.js) -->
     <input id="reach-input" type="range" min="0" max="100" step="1" value="50">
-    <div id="reach-hint" class="hint" hidden>Pokazana jest gotowa mapa dla typowego zasięgu branży (i okresu pozwoleń 24 miesięcy) — przybliż mapę, aby użyć własnych ustawień.</div>
+    <div id="reach-hint" class="hint" hidden>Mapa całej Polski jest policzona dla typowego zasięgu (i 24 miesięcy pozwoleń). Przybliż mapę, żeby użyć swoich ustawień.</div>
 
     <!-- Tylko w trybie „Wybrane miejsce” -->
     <div id="place-controls" hidden>
@@ -113,6 +115,7 @@
 
     <h2 id="top-title" hidden>Najlepsze miejsca</h2>
     <ol id="top-list"></ol>
+    <p id="top-note" class="hint" hidden></p>
 
     <div id="warnings" hidden></div>
     <div id="notes" hidden></div>

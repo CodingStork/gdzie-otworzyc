@@ -2,7 +2,7 @@
 // Dlaczego YlOrRd, a nie tęcza: jedna barwa o rosnącym nasyceniu czyta się jako „więcej”, a tęcza (Borland & Taylor 2007)
 // wprowadza fałszywe granice i nie ma naturalnej kolejności.
 // Dlaczego logarytm: ludność i liczby firm mają rozkład prawostronnie skośny — skala liniowa zrobiłaby z całego
-// miasta jedną czerwoną plamę. Przy skali log każdy krok koloru to mniej więcej podwojenie wartości.
+// miasta jedną czerwoną plamę. Przy skali log ten sam krok koloru to zawsze ta sama krotność (np. +50%), a nie ta sama różnica.
 // Dlaczego przezroczystość: małe wartości znikają, więc zostaje efekt „mgły” zagęszczającej się tam, gdzie jest ważnie.
 
 export const YLORRD = ['#ffffcc', '#ffeda0', '#fed976', '#feb24c', '#fd8d3c', '#fc4e2a', '#e31a1c', '#bd0026', '#800026'];
@@ -35,12 +35,15 @@ function quantile(sorted, q) {
 
 // Skala z wartości > 0 (null = poza okręgiem): górna granica = percentyl 99, dolna = percentyl 5, ale nie niżej niż
 // hi/100 — skala obejmuje najwyżej 2 rzędy wielkości. Wcześniej rozciągała się na 4 rzędy (0,04–320) i prawie
-// wszystko było czerwone. Zwraca { lo, hi } albo null, gdy nie ma żadnej dodatniej wartości.
+// wszystko było czerwone. I NAJMNIEJ jeden rząd (MIN_RATIO, audyt przydatności): w Brzegu wartości 310–600 dostawały
+// całą paletę, więc różnica 20% wyglądała jak przepaść między bielą a czerwienią — a dane nie są aż tak dokładne.
+// Teraz o jeden odcień ciemniej to ok. 30–80% więcej. Zwraca { lo, hi } albo null, gdy nie ma żadnej dodatniej wartości.
+export const MIN_RATIO = 10;
 export function logScale(values) {
   const positive = values.filter((v) => v > 0).sort((a, b) => a - b);
   if (!positive.length) return null;
   const hi = quantile(positive, 0.99);
-  return { lo: Math.max(quantile(positive, 0.05), hi / 100), hi };
+  return { lo: Math.min(Math.max(quantile(positive, 0.05), hi / 100), hi / MIN_RATIO), hi };
 }
 
 // Pozycja wartości na skali, 0–1. Wartość ≤ 0 → 0 (przezroczysta); lo == hi → środek palety.
