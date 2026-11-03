@@ -1,10 +1,10 @@
-# Ściąga do obrony — „Gdzie otworzyć?” (wersja 3.6)
+# Ściąga do obrony — Lokalizator (wersja 3.7)
 
 Prostym językiem: co robi aplikacja, jakie pojęcia z analizy danych przestrzennych w niej występują i **gdzie dokładnie w kodzie** je znaleźć. Każde pojęcie ma 3–6 zdań i wskazanie `plik:funkcja`.
 
 ## Jak to działa w jednym akapicie
 
-**Od v3.6:** w lewym panelu wybierasz narzędzie (**okrąg** albo **prostokąt**), zaznaczasz obszar na mapie (okrąg po kliknięciu ma zawsze ok. 1/5 ekranu, kropki zmieniają promień i położenie), wybierasz typ działalności (np. salon) i/lub klientów (np. kobiety) oraz **zasięg klienta** (0,3–20 km) i klikasz **„Analizuj obszar”** — wcześniej nic się nie liczy. Dla obszaru do 30 km promienia serwer liczy **powierzchnię ciągłą** na regularnej siatce w metrach: **„Gdzie otworzyć”** = szacowana liczba klientów nowej firmy wg **modelu Huffa**, **„Gdzie są klienci”** = dostępny popyt; większy obszar (do całej Polski) bierze wartości z **gotowej mapy Polski** policzonej raz w ETL. Kolor to żółto-czerwona „mgła” w skali logarytmicznej, dopasowanej do tego, co widać na ekranie. Po prawej jest **podsumowanie**: werdykt jednym zdaniem (liczba firm na tle **miejsc o podobnej gęstości zaludnienia**, z testem Poissona — sekcje 25–26) i najlepsze miejsca z nazwami ulic (tylko lokalne szczyty — sekcja 27). Kliknięcie w zbadany obszar pokazuje szczegóły punktu. Dane (ludność ze spisu rozłożona na budynki OSM, firmy z OSM i Overture Maps, pozwolenia z GUNB) przetwarzamy **raz** do bazy DuckDB (ETL).
+**Od v3.7:** w lewym panelu wybierasz narzędzie (**okrąg** albo **prostokąt**) albo wpisujesz miejscowość (okrąg 5 km), zaznaczasz obszar na mapie — od kilku ulic po całą Polskę — wybierasz typ działalności (np. salon) i/lub klientów (np. kobiety) oraz **zasięg klienta** (0,3–20 km) i klikasz **„Analizuj obszar”** — wcześniej nic się nie liczy. Serwer liczy **powierzchnię ciągłą** na regularnej siatce w metrach (zawsze ok. 180 punktów w poprzek obszaru, więc cała Polska liczy się w kilka sekund — sekcja 30): **„Gdzie otworzyć”** = szacowana liczba klientów nowej firmy wg **modelu Huffa**, **„Gdzie są klienci”** = dostępny popyt. Kolor to „mgła” w skali logarytmicznej dopasowanej do tego, co widać na ekranie (YlOrRd w dzień, magma w trybie nocnym). Po prawej są tylko **dwie liczby** — ilu klientów i ile firm jest w obszarze — i ich źródła. Kliknięcie w zbadany obszar pokazuje liczby dla jednego miejsca. Dane (ludność ze spisu rozłożona na budynki OSM, firmy z OSM i Overture Maps, pozwolenia z GUNB) przetwarzamy **raz** do bazy DuckDB (ETL).
 
 Wzór: `E(g) = Σ_i d_i · f(d_ig) / (f(d_ig) + C_i + A0)`, `f(d) = exp(−d / zasięg)`, `C_i = Σ_k f(d_ik)`, `A0 = exp(−1)`.
 
@@ -88,7 +88,7 @@ OSM jest tworzony przez wolontariuszy (VGI — volunteered geographic informatio
 Pozwolenie to zamiar: budowa trwa 1–3 lata, a część pozwoleń nigdy nie jest zrealizowana. Wiemy też tylko, że dom ma powstać w danym obrębie — nie wiemy dokładnie gdzie. Dlatego „nowe domy” traktujemy jako **wskaźnik kierunku rozwoju** okolicy (przydatny np. dla brukarza), nie jako dokładną liczbę domów. W aplikacji pod legendą jest o tym przypomnienie, a okno czasowe (12/24/36 miesięcy) liczymy od najnowszych danych w rejestrze. Z rejestru wykluczamy „zmiany pozwoleń”, żeby nie liczyć tego samego domu dwa razy.
 - `etl/permits.py:parse_permits`, `backend/app/analysis/service.py:_permit_window`.
 
-## 14. Jak działa top-5 (non-maximum suppression)
+## 14. Jak działa top-5 (non-maximum suppression) — od v3.7 liczony w backendzie, niepokazywany w interfejsie
 
 Biorąc po prostu 5 punktów siatki o najwyższej wartości, dostalibyśmy 5 sąsiadów z tego samego skupiska. Dlatego wybieramy zachłannie od najlepszego i **odrzucamy punkty bliższe niż** `max(zasięg, promień/5)` od już wybranych (non-maximum suppression). Od v3.5 kandydatami są tylko **lokalne szczyty** (sekcja 27). Top-5 dotyczy tylko okręgu i aktywnej mapy; nazwa miejsca to najbliższe osiedle/wieś w promieniu 3 km (osiedle ma pierwszeństwo przed miastem).
 - `backend/app/analysis/surface.py:top_points`, `service.py:nearest_place_name`.
@@ -118,11 +118,13 @@ Ludność znam w komórkach H3 res 9 (środki oddalone o ok. 300 m). Zasięg kli
 
 ## 20. Gotowa mapa Polski, piramida i dlaczego **maksimum** przy agregacji
 
+*Od v3.7 interfejs nie korzysta z gotowej mapy — każdy obszar liczy się z ustawieniami użytkownika (sekcja 30). Krok ETL `national` i `/api/national` zostały; opis poniżej tłumaczy, jak działały v3.2–v3.6.*
+
 Policzenie Huffa dla całego kraju przy każdym ruchu mapy byłoby za wolne (w v2 męczyło), więc robię to **raz w ETL** (`etl/national.py`): dla ok. 420 tys. punktów (środki komórek H3 res 8, ~900 m od siebie) liczę te same funkcje co `/api/surface` (`surface.py: huff_multi`, `competition_density`, `demand_potentials`) dla **typowego zasięgu** branży. Wynik to tabela szeroka `national_r8` (kolumna = warstwa, 92 warstwy, w tym `rel__…` z sekcji 23). Do oddalonego widoku potrzebuję grubszych komórek, więc budowana jest **piramida** `national_r7 … r5`. Kluczowe pytanie: jak zagregować komórki-dzieci? **Biorę maksimum**, nie średnią ani sumę. Znaczenie dla użytkownika: oddalona komórka mówi „**najlepsze miejsce w tym rejonie**”. Średnia rozmyłaby małe, dobre ośrodki w otoczeniu pól i lasów (efekt MAUP: wynik zależy od wielkości komórek), a suma byłaby bez sensu (Huff nie jest addytywny po komórkach — to szacowana liczba klientów *jednej* nowej firmy w punkcie, nie ilość w komórce). Dla trendu (wartość ze znakiem) biorę wartość o **największym module**, żeby spadek nie zamieniał się w zero. Kod: `etl/national.py: build_pyramid`.
 
 **Stała skala kolorów:** `national_meta` trzyma percentyle p5 i p99 wartości dodatnich z całego kraju. Dzięki temu kolor znaczy to samo w Gdańsku i w Krakowie i nie zmienia się przy przesuwaniu mapy. Skala (p5–p99) jest liczona z komórek res 8, a oddalone poziomy to maksima z dzieci, więc na grubszych poziomach więcej komórek wpada w górną część skali (mapa całej Polski jest „cieplejsza”, a kontrast rośnie po przybliżeniu) — uczciwie mówię o tym w legendzie i w raporcie. Na mapie na żywo skala jest lokalna (dopasowana do widoku) — legenda wyraźnie to mówi. Pinezki „Najlepsze miejsca” w oddalonym widoku są doprecyzowane do najlepszej komórki res 8 w komórce-rodzicu (środek rodzica mógłby leżeć kilka km od faktycznego maksimum). API: `backend/app/analysis/national.py`, rozdzielczość dobiera się tak, by komórka miała ≤ 4 px na ekranie.
 
-## 21. Dlaczego „gotowa mapa + na żywo”, a nie jedno albo drugie
+## 21. Dlaczego „gotowa mapa + na żywo”, a nie jedno albo drugie (v3.2–v3.6)
 
 Sam widok na żywo dla całej Polski: za wolny (wiele sekund) i męczący (v2). Sama gotowa mapa: nie uwzględnia ustawień użytkownika (zasięg klienta, okres pozwoleń), a dane są policzone dla typowego zasięgu. Dlatego **oddalony widok jest natychmiastowy i gotowy**, a **po przybliżeniu do miasta** (widok o półprzekątnej ≤ 20 km) liczymy na żywo (`/api/surface` w trybie prostokąta widoku), bo wtedy to kilkaset ms. Przejście między nimi to krótkie przenikanie (~250 ms), a stare zapytania są anulowane (AbortController + numer zapytania), więc szybki zoom kółkiem nie robi wyścigów. To zastosowanie Shneidermana: **przegląd** (cała Polska) → **zawężenie** (przybliżenie) → **szczegóły** (klik).
 
@@ -140,7 +142,7 @@ Użytkownik nie musi rozumieć formularza „miejsce + promień + Pokaż mapę�
 
 Backend: `/api/surface` z `area=rect` używa istniejącej ścieżki „widoczny obszar” (prostokąt w metrach lokalnego układu, maska siatki przycięta do prostokąta; okrąg opisany na prostokącie służy tylko do pobrania danych), ale z gęstszą siatką (`divisions=90` zamiast 60 — liczymy raz, na życzenie, a nie przy każdym ruchu mapy) i z wymiarami w podsumowaniu. Limity: bok 0,6–60 km (dane o ludności mają ~300 m rozdzielczości; 60 km to limit wydajności).
 
-## 25. „Podobne miejsca” zamiast średniej krajowej (v3.5, audyt przydatności)
+## 25. „Podobne miejsca” zamiast średniej krajowej (v3.5; od v3.7 werdykt liczy backend, interfejs go nie pokazuje)
 
 Średnia krajowa salonów na mieszkańca (8,45 na 10 tys.) leży **niżej niż w każdej klasie miast** (13,6–18,1), bo zaniżają ją wsie (4,1) — mieszkańcy wsi korzystają z salonów w mieście. Porównanie ze średnią mówiło więc każdemu miastu „gęsto obsadzone”, a każdej wsi „wolne”. Teraz porównuję z **miejscami o podobnej gęstości zaludnienia**: dla każdej komórki res 9 liczę mieszkańców w promieniu 2 km (`etl/gaps.py: neighbourhood_population`), sortuję komórki i dzielę **ludność** Polski na 5 równych części (**kwintyle ważone ludnością**, `density_classes`) — bez arbitralnego progu „miasto/wieś”. Dla każdej klasy i typu liczę firm na mieszkańca (firma należy do klasy najbliższej komórki z ludnością, `firms_by_class`; tabela `density_rates`). Oczekiwana liczba firm w obszarze = Σ mieszkańcy komórki × stawka jej klasy (`service.area_summary`). To przykład **standaryzacji** (porównanie z oczekiwaną wartością przy tej samej strukturze, jak w epidemiologii) i zarazem ograniczenie MAUP: klasy wynikają z sąsiedztwa 2 km, a nie z granic gmin. Przykład (Brzeg, 3 km, liczby z v3.3): wg średniej krajowej 36 salonów = 117% oczekiwanych („na poziomie średniej”), wg miast tej wielkości = 73% („mniej konkurencji”).
 
@@ -148,7 +150,7 @@ Backend: `/api/surface` z `area=rect` używa istniejącej ścieżki „widoczny 
 
 Liczba firm w obszarze jest losowa jak liczba zdarzeń: przy 3 oczekiwanych salonach zero salonów zdarza się w 5% przypadków. Model: X ~ Poisson(oczekiwane). „Mniej konkurencji” mówię tylko, gdy firm ≤ 80% oczekiwanych **i** P(X ≤ firm) < 10%; „więcej” — gdy ≥ 125% **i** P(X ≥ firm) < 10%; przy < 3 oczekiwanych — „za mało firm, żeby ocenić”. Przykłady: 1 firma przy 4 oczekiwanych → „mniej” (p ≈ 9%), 2 przy 4 → „typowa” (p ≈ 24%), 36 przy 49 → „mniej” (p ≈ 3%). Ograniczenie: prawdziwe firmy skupiają się (nadmierna dyspersja), więc test jest raczej zbyt pobłażliwy. Kod: `backend/app/analysis/service.py: verdict` (`scipy.stats.poisson`).
 
-## 27. Najlepsze miejsca tylko ze szczytów — efekt krawędzi w top-5 (v3.5)
+## 27. Najlepsze miejsca tylko ze szczytów — efekt krawędzi w top-5 (v3.5; od v3.7 niepokazywane)
 
 Gdy osiedle leży tuż za okręgiem, największe wartości w okręgu są na jego **krawędzi** (stok rośnie na zewnątrz) — „najlepszym miejscem” byłby przypadkowy punkt granicy. To efekt krawędzi w wyborze maksimum (inny niż w sekcji 10, gdzie chodzi o dane spoza obszaru). Teraz kandydat musi być **lokalnym szczytem**: wszyscy 8 sąsiedzi w siatce leżą w obszarze i żaden nie jest wyższy (`surface.peaks_and_edge`). Gdy na krawędzi jest wyżej niż w najlepszym szczycie, odpowiedź ma `top_edge`, a interfejs radzi przesunąć obszar. Gdy szczyty różnią się o < 20%, interfejs mówi, że to mniej niż dokładność danych.
 
@@ -158,11 +160,23 @@ Skala p5–p99 w Brzegu to 310–600: różnica niecałe 2× dostawała całą p
 
 ## 29. Jedna droga: narzędzie → obszar → „Analizuj” (v3.6)
 
-Do v3.5 aplikacja miała dwa tryby: „Cała Polska” (mgła od razu po wybraniu branży, liczona na żywo po przybliżeniu) i „Wybrane miejsce”. Tester zaznaczył prostokąt, wybrał klientów — i mapa policzyła się sama dla całej Polski, zanim kliknął „Analizuj”. To łamało zasadę **jawnego działania**: użytkownik ma wiedzieć, co i dla jakiego obszaru liczymy. Teraz: (1) narzędzie (okrąg / prostokąt) wybiera się w lewym panelu, bez domyślnego; (2) karta przy obszarze ma przycisk „Analizuj” dopiero wtedy, gdy wybrano branżę lub klientów — inaczej mówi, co wybrać, a pola pulsują (`ui.settingsAttention`); (3) okrąg po kliknięciu ma **stały rozmiar na ekranie** (promień = 20% krótszego boku, `map.kmForScreenFraction`), więc przy widoku Polski obejmuje województwo, a w mieście — osiedla; mapa płynnie go centruje (`map.panTo`). Okrąg rysuję **na kuli** (`map.destination`: punkt w danej odległości i kierunku), bo przy promieniu 200 km przybliżenie płaskie dawałoby spłaszczony kształt. Duży obszar (> 30 km promienia, > 60 km boku) liczę z gotowej mapy Polski (`national.run_area`) — liczenie Huffa na żywo dla województwa trwałoby minuty.
+Do v3.5 aplikacja miała dwa tryby: „Cała Polska” (mgła od razu po wybraniu branży, liczona na żywo po przybliżeniu) i „Wybrane miejsce”. Tester zaznaczył prostokąt, wybrał klientów — i mapa policzyła się sama dla całej Polski, zanim kliknął „Analizuj”. To łamało zasadę **jawnego działania**: użytkownik ma wiedzieć, co i dla jakiego obszaru liczymy. Teraz: (1) narzędzie (okrąg / prostokąt) wybiera się w lewym panelu, bez domyślnego; (2) karta przy obszarze ma przycisk „Analizuj” dopiero wtedy, gdy wybrano branżę lub klientów — inaczej mówi, co wybrać, a pola pulsują (`ui.settingsAttention`); (3) okrąg po kliknięciu ma **stały rozmiar na ekranie** (promień = 20% krótszego boku, `map.kmForScreenFraction`), więc przy widoku Polski obejmuje województwo, a w mieście — osiedla; mapa płynnie go centruje (`map.panTo`). Okrąg rysuję **na kuli** (`map.destination`: punkt w danej odległości i kierunku), bo przy promieniu 200 km przybliżenie płaskie dawałoby spłaszczony kształt. W v3.6 duży obszar (> 30 km promienia) brał wartości z gotowej mapy Polski — od v3.7 liczy się normalnie (sekcja 30).
 
-**Skala kolorów z tego, co widać:** po przybliżeniu przeglądarka liczy percentyle tylko z komórek siatki widocznych na ekranie (`app.js: visibleValues`) i przemalowuje mgłę bez zapytań do serwera. To jak „dopasowanie kontrastu” w przeglądarce zdjęć: ten sam kolor po przybliżeniu znaczy co innego, dlatego legenda zawsze pokazuje aktualne liczby, a dymek podaje „Kolor mapy w tym miejscu” — wartość z siatki, z której wziął się kolor. Ta liczba różni się od „mężczyzn w promieniu 0,6 km”, bo mapa liczy klientów ważonych odległością (`P(g) = Σ d_i · exp(−d/zasięg)`, także spoza okręgu), a dymek — ludzi w twardym okręgu.
+**Skala kolorów z tego, co widać:** po przybliżeniu przeglądarka liczy percentyle tylko z komórek siatki widocznych na ekranie (`app.js: visibleValues`) i przemalowuje mgłę bez zapytań do serwera. To jak „dopasowanie kontrastu” w przeglądarce zdjęć: ten sam kolor po przybliżeniu znaczy co innego, dlatego legenda zawsze pokazuje aktualne liczby, a dymek podaje „Szacowani klienci nowej firmy” (wartość Huffa w tym punkcie). Ta liczba różni się od „mieszkańców w promieniu”, bo model liczy klientów ważonych odległością (także spoza okręgu), a część z nich wybierze konkurencję — wyjaśnia to pytajnik obok liczby.
 
 **Testy „jak użytkownik” (E2E):** `tests/e2e` uruchamia serwer na syntetycznej bazie i prawdziwą przeglądarkę (Playwright), która klika jak człowiek: wybór narzędzia, kliknięcie w mapę, przeciąganie kropek, wybór klientów (sprawdzamy, że **nie** poszło żadne zapytanie), „Analizuj”, przybliżanie (legenda się zmienia, zapytań brak), telefon. Testy jednostkowe sprawdzają wzory, ale kilka błędów było widać dopiero w przeglądarce — stąd ta warstwa.
+
+## 30. Prostota (v3.7): każdy obszar z ustawieniami użytkownika, dwie liczby, tryb nocny
+
+**Siatka rzednie z obszarem.** Do v3.6 krok siatki był ograniczony do 50–300 m, więc okrąg 150 km miałby ok. 800 tys. punktów — dlatego duże obszary brały wartości z gotowej mapy Polski, policzonej dla jednego, typowego zasięgu, a suwak zasięgu nic wtedy nie zmieniał (tester to zauważył). Pomiar pokazał, że koszt zależy od liczby punktów siatki, a nie od wielkości obszaru: przy kroku = promień/90 (zawsze ok. 180 punktów w poprzek) okrąg 34 km liczy się ok. 2 s, 150 km ok. 3 s, cała Polska 4–7 s, dla dowolnego zasięgu 0,3–20 km. Kompromis: przy dużym obszarze punkty leżą rzadziej (150 km → co 1,7 km), więc przy bardzo małym zasięgu pojedyncza wieś między punktami może wyjść bledsza — szczegóły widać po zaznaczeniu mniejszego obszaru. Kod: `backend/app/analysis/surface.py: make_grid`, `routes.py: TOP_RADIUS_KM`.
+
+**Dwie liczby zamiast werdyktu i rankingu.** Tester (pierwszy użytkownik) uznał werdykt „konkurencja typowa dla podobnych miejsc”, listę najlepszych miejsc i notatki pod mapą za szum. Na ekranie zostało to, co odpowiada na pytanie bez interpretacji: **ilu klientów i ile firm jest w obszarze**, a pod spodem źródła z liczbami („OpenStreetMap 253, Overture Maps 574”). Wyjaśnienia są pod pytajnikami. Backend dalej liczy werdykt (sekcje 25–26) i ranking (sekcja 27) — mogą wrócić, gdyby użytkownicy ich potrzebowali. Dymek po kliknięciu: mieszkańcy i firmy w zasięgu, „na 1 firmę” tylko przy ≥ 2 firmach (przy 0–1 ten iloraz nic nie mówi) i szacowani klienci nowej firmy.
+
+**Uczciwość mimo prostoty:** ostrzeżenie o luce w danych zostało, ale jednym zdaniem („W danych prawdopodobnie brakuje części firm”) — bez niego puste miejsce wyglądałoby jak okazja.
+
+**Tryb nocny.** Na ciemnym podkładzie (Esri Dark Gray) paleta YlOrRd by nie działała: „najwięcej” = ciemnoczerwony zlewałby się z tłem. Dlatego w nocy kierunek jasności się odwraca — paleta **magma** (matplotlib, równomierna percepcyjnie): od fioletu do jasnożółtego, „więcej” = jaśniej. Zasada ta sama: jedna skala sekwencyjna, kolejność czytelna bez legendy. Kolory interfejsu to zmienne CSS (`:root[data-theme="dark"]`), motyw na start jak w systemie (`prefers-color-scheme`), przycisk ☾/☀ przy mapie. Kod: `colors.js: MAGMA, setDarkPalette`, `app.js: applyTheme`, `map.js: setTheme`.
+
+**Drobniejsze:** odświeżenie strony zaczyna od zera (stan analizy nie jest zapisywany w adresie), drugie kliknięcie narzędzia je odznacza (przy prostokącie lewy przycisk rysuje, więc trzeba móc wrócić do przesuwania mapy), wpisana miejscowość dostaje okrąg 5 km, a zmiana narzędzia zamienia zaznaczenie w tym samym miejscu; prostokąt ma kropkę w środku do przesuwania.
 
 ## Pytania, które może zadać prowadzący
 
@@ -194,7 +208,7 @@ Nie działki (to miliony zapytań), tylko obręby ewidencyjne przez ULDK GUGiK: 
 Rozkłady są skośne, więc skala liniowa zalałaby mapę jednym kolorem; logarytm zachowuje proporcje (krok koloru ≈ podwojenie wartości). Paleta jednobarwna (YlOrRd) czyta się jako „więcej”, a tęcza (Borland & Taylor 2007) wprowadza fałszywe granice. Przezroczystość pozwala małym wartościom „zniknąć”, a etykiety miast zostają czytelne.
 
 **10. Jak zapewniłeś, że wyniki są szybkie?**
-Dane są przetwarzane raz (ETL → DuckDB). Zapytanie dotyczy tylko okręgu (≤ 30 km), siatka ma 25–31 tys. punktów w okręgu, pary (punkt, źródło) znajduje drzewo cKDTree porcjami po 2 000 punktów, a obie warstwy („Gdzie otworzyć” i „Gdzie są klienci”) liczone są w jednym przebiegu. Przy dużym zasięgu źródła popytu są grubsze (res 8/7). Czasy: 0,4–3,2 s (patrz `docs/raport-etl.md`, sekcja v3), a ostatnie wyniki są w pamięci podręcznej (LRU 32). W trybie „Wybrane miejsce” ruch mapy w ogóle nie wysyła zapytań, a w trybie „Cała Polska” zapytania idą dopiero po zakończeniu ruchu (debounce); oddalony widok to gotowa mapa (kilkadziesiąt–kilkaset ms), zbliżony — liczony na żywo.
+Dane są przetwarzane raz (ETL → DuckDB). Siatka ma zawsze ok. 25 tys. punktów w obszarze — niezależnie od tego, czy to osiedle, czy cała Polska (sekcja 30), pary (punkt, źródło) znajduje drzewo cKDTree porcjami po 2 000 punktów, a obie warstwy („Gdzie otworzyć” i „Gdzie są klienci”) liczone są w jednym przebiegu. Przy dużym zasięgu źródła popytu są grubsze (res 8/7). Czasy: ok. 2 s dla miasta, 3 s dla 150 km, 4–7 s dla całej Polski; ostatnie wyniki są w pamięci podręcznej (LRU 32). Ruch mapy po analizie nie wysyła zapytań — przeglądarka tylko przemalowuje mgłę.
 
 **11. Dlaczego przepływ „miejsce + promień → mapa → klik”?**
 Zasada Shneidermana (1996): przegląd → zawężenie → szczegóły na żądanie. Wcześniejszy dynamiczny widok całej mapy był męczący i trudny do odczytania; teraz użytkownik zawęża zadanie, widzi okolicę, a liczby poznaje dopiero po kliknięciu.
@@ -204,7 +218,7 @@ Zasada Shneidermana (1996): przegląd → zawężenie → szczegóły na żądan
 **12. Czemu przy oddalaniu bierzesz maksimum, a nie średnią?**
 Bo oddalona komórka ma odpowiadać na pytanie „czy w tym rejonie jest jakieś dobre miejsce?”, a nie „jakie jest średnie miejsce?”. Średnia z komórek-dzieci gasiłaby małe, dobre ośrodki (efekt MAUP — wynik zależy od wielkości komórek). Maksimum zachowuje sens tej samej liczby co w widoku z bliska (szacowana liczba klientów w *najlepszym* punkcie), więc kolor przy przybliżaniu nie „skacze”. Wada: oddalona mapa jest bardziej „czerwona” niż przeciętne miejsce — mówię to w legendzie i w pytajniku.
 
-**13. Skąd wiesz, że gotowa mapa Polski zgadza się z mapą na żywo?**
+**13. Skąd wiesz, że gotowa mapa Polski (v3.2–v3.6) zgadzała się z mapą na żywo?**
 To te same funkcje (`huff_multi` jest używana też przez `huff_and_potential` dla `/api/surface`) i te same źródła popytu (komórki res 9 dla zasięgu ≤ 2 km), a test sprawdza, że wartość w punkcie res 8 jest równa `huff_expected` policzonemu wprost (z dokładnością zaokrąglenia do 3 cyfr znaczących). Różnica: gotowa mapa jest próbkowana co ~900 m, a mapa na żywo co 50–300 m.
 
 **15. Skąd wiecie, że to luka w danych, a nie okazja?**
@@ -222,8 +236,8 @@ Bo średnia krajowa nie jest „typowym miejscem”: zaniżają ją wsie, w któ
 **18. Skąd wiesz, że różnica w liczbie firm nie jest przypadkiem?**
 Traktuję liczbę firm jak zmienną Poissona o średniej równej oczekiwanej liczbie firm i mówię „mniej/więcej konkurencji” tylko, gdy taka różnica zdarzałaby się przypadkiem rzadziej niż w 10% obszarów, i to przy różnicy co najmniej 20–25%. Przy < 3 oczekiwanych firmach nic nie oceniam. Firmy w rzeczywistości się skupiają, więc test jest raczej zbyt łagodny — to ostrożna dolna granica niepewności. Sekcja 26.
 
-**19. Dlaczego na mapie całej Polski nie ma listy najlepszych miejsc?**
-Bo wskazywała wsie i miasteczka (Rudki, Pruchnik, Bierówki). Powody: popyt znam tylko z miejsca zamieszkania (bez dojazdów i zamożności), ten sam zasięg klienta na wsi i w mieście zawyża wynik na wsi, a luk w danych nie da się wykryć w małych miejscowościach. Ranking między regionami wprowadzałby w błąd, więc pokazuję go dopiero dla jednej okolicy.
+**19. Dlaczego nie pokazujesz listy najlepszych miejsc?**
+Bo wskazywała wsie i miasteczka (Rudki, Pruchnik, Bierówki). Powody: popyt znam tylko z miejsca zamieszkania (bez dojazdów i zamożności), ten sam zasięg klienta na wsi i w mieście zawyża wynik na wsi, a luk w danych nie da się wykryć w małych miejscowościach. Ranking między regionami wprowadzałby w błąd. Od v3.7 interfejs nie pokazuje rankingu wcale — tester uznał go za szum, a mapa i tak pokazuje, gdzie jest najwięcej (backend nadal go liczy).
 
 **20. Czemu „Stylizacja paznokci” zniknęła?**
 Bo w danych każdy salon paznokci jest też salonem kosmetycznym (OSM `shop=beauty`, Overture `nail_salon` w obu typach), a osobny typ nie liczył salonów kosmetycznych robiących manicure jako konkurencji — wychodziło „mało konkurencji” z samej definicji. Stare linki prowadzą do salonu kosmetycznego (`TYPE_ALIASES`).
@@ -235,13 +249,22 @@ Nie. To wynik modelu Huffa zależny od opcji zewnętrznej A0 i od kompletności 
 Jednakowy zasięg klienta w mieście i na wsi: mieszkańcy wsi jeżdżą do usług w mieście dalej niż 4 × zasięg, więc model nie widzi tej konkurencji. Naprawiłbym to zasięgiem zależnym od klasy gęstości (sekcja 25), skalibrowanym tak, żeby w każdej klasie suma przewidywanych klientów zgadzała się z liczbą istniejących firm, a potem przeliczyłbym gotową mapę Polski. Drugi krok to dane o zamożności (BDL) i dojazdach do pracy (GUS) oraz CEIDG.
 
 **23. Dlaczego usunąłeś tryb „Cała Polska”?**
-Bo mapa liczyła się sama (po wybraniu branży, po ruchu mapy), więc użytkownik nie wiedział, dla jakiego obszaru patrzy na wynik — tester zaznaczył prostokąt, a dostał mgłę dla całego kraju. Teraz jedna droga: zaznaczasz obszar, wybierasz branżę, klikasz „Analizuj”. Gotowa mapa Polski z ETL nie zniknęła — liczy duże obszary (sekcja 29).
+Bo mapa liczyła się sama (po wybraniu branży, po ruchu mapy), więc użytkownik nie wiedział, dla jakiego obszaru patrzy na wynik — tester zaznaczył prostokąt, a dostał mgłę dla całego kraju. Teraz jedna droga: zaznaczasz obszar, wybierasz branżę, klikasz „Analizuj”. Od v3.7 duże obszary też liczą się z ustawieniami użytkownika (sekcja 30).
 
 **24. Czemu okrąg ma stały rozmiar na ekranie, a nie stały promień w km?**
 Bo użytkownik zaznacza to, co widzi: przy widoku całej Polski okrąg 2 km byłby niewidoczną kropką, a w mieście okrąg 100 km wychodziłby poza ekran. Promień w km pokazuję i można go wpisać albo zmienić kropką na krawędzi.
 
 **25. Skoro kolory dopasowują się do widoku, to czy kolor coś znaczy?**
-Kolor pokazuje, gdzie jest więcej, a gdzie mniej **w tym, co widzisz** — to porównanie miejsc między sobą. Liczby są w legendzie (aktualizowanej przy przybliżeniu) i w dymku („Kolor mapy w tym miejscu”). Wcześniej jedna skala dla całego obszaru robiła z centrum miasta jedną plamę, choć liczby różniły się o połowę.
+Kolor pokazuje, gdzie jest więcej, a gdzie mniej **w tym, co widzisz** — to porównanie miejsc między sobą. Liczby są w legendzie (aktualizowanej przy przybliżeniu) i w dymku po kliknięciu. Wcześniej jedna skala dla całego obszaru robiła z centrum miasta jedną plamę, choć liczby różniły się o połowę.
 
 **26. Po co testy E2E, skoro masz ponad 280 testów jednostkowych?**
 Testy jednostkowe sprawdzają obliczenia i API, ale nie to, co czuje użytkownik: czy coś liczy się bez pytania, czy okrąg jest widoczny, czy przycisk „Analizuj” nie obiecuje czegoś, czego nie da się zrobić. Testy E2E (`tests/e2e/test_uzytkownik.py`) klikają w prawdziwej przeglądarce i sprawdzają dokładnie te sytuacje, które zgłosił tester.
+
+**27. Dlaczego zrezygnowałeś z werdyktu o konkurencji, skoro tyle pracy kosztował?**
+Bo pierwszy użytkownik go nie czytał — wolał dwie liczby (klienci, firmy) i ich źródła. Werdykt wymagał zaufania do porównania z „podobnymi miejscami” i testu Poissona, których laik nie sprawdzi; liczby może sprawdzić sam. Backend nadal go liczy, więc można go przywrócić np. pod pytajnikiem.
+
+**28. Jak policzyłeś całą Polskę w kilka sekund, skoro wcześniej potrzebna była gotowa mapa z ETL?**
+Zmierzyłem, że czas zależy od liczby punktów siatki, a nie od wielkości obszaru. Siatka ma zawsze ok. 180 punktów w poprzek (krok = promień/90), więc dla Polski punkty leżą co ~4 km — na ekranie i tak nie widać gęstszych. Źródła popytu są grubsze przy dużym zasięgu, a pary punkt–źródło znajduje drzewo cKDTree. Sekcja 30.
+
+**29. Po co tryb nocny i czemu ma inną paletę?**
+Wygoda (praca wieczorem) — ale paleta nie może być ta sama: na ciemnym tle ciemnoczerwony „najwięcej” by zniknął. Magma odwraca kierunek jasności (więcej = jaśniej) i jest równomierna percepcyjnie, więc różnice wyglądają tak samo w każdej części skali.
