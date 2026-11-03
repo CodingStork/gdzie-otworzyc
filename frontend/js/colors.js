@@ -35,10 +35,11 @@ function quantile(sorted, q) {
 
 // Skala z wartości > 0 (null = poza okręgiem): górna granica = percentyl 99, dolna = percentyl 5, ale nie niżej niż
 // hi/100 — skala obejmuje najwyżej 2 rzędy wielkości. Wcześniej rozciągała się na 4 rzędy (0,04–320) i prawie
-// wszystko było czerwone. I NAJMNIEJ jeden rząd (MIN_RATIO, audyt przydatności): w Brzegu wartości 310–600 dostawały
-// całą paletę, więc różnica 20% wyglądała jak przepaść między bielą a czerwienią — a dane nie są aż tak dokładne.
-// Teraz o jeden odcień ciemniej to ok. 30–80% więcej. Zwraca { lo, hi } albo null, gdy nie ma żadnej dodatniej wartości.
-export const MIN_RATIO = 10;
+// wszystko było czerwone. I NAJMNIEJ 4-krotną różnicę (MIN_RATIO): w Brzegu wartości 310–600 dostawały całą paletę,
+// więc różnica 20% wyglądała jak przepaść między bielą a czerwienią (audyt v3.5), a przy minimum 10× (v3.5) w centrum miasta
+// różnica 4 700 vs 7 400 mieściła się w jednym odcieniu (uwaga Marcina, v3.6). Przy 4× o jeden odcień ciemniej to ok. 20–80% więcej:
+// 20% różnicy = ledwie inny odcień, 60% = wyraźnie inny. Zwraca { lo, hi } albo null, gdy nie ma żadnej dodatniej wartości.
+export const MIN_RATIO = 4;
 export function logScale(values) {
   const positive = values.filter((v) => v > 0).sort((a, b) => a - b);
   if (!positive.length) return null;

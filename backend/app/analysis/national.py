@@ -28,7 +28,7 @@ MAX_CELLS = 60_000            # tyle komórek H3 najwyżej czytamy z bazy na jed
 RESOLUTIONS = (5, 6, 7, 8)    # od najgrubszej
 LAT_LIMITS = (48.5, 55.5)
 LNG_LIMITS = (13.5, 24.5)
-MIN_SCALE_RATIO = 10          # skala kolorów obejmuje co najmniej 10-krotną różnicę (jak MIN_RATIO w colors.js)
+MIN_SCALE_RATIO = 4           # skala kolorów obejmuje co najmniej 4-krotną różnicę (jak MIN_RATIO w colors.js)
 TOP_NAME_MAX_KM = 8           # w dużym widoku nazwą miejsca jest najbliższa miejscowość nawet z kilku km
 NATIONAL_MISSING_MESSAGE = "Gotowa mapa Polski nie została jeszcze policzona. Uruchom: uv run python -m etl.run_all --only national"
 NO_LAYER_NOTE = "Dla tego wyboru nie ma gotowej mapy Polski — przybliż mapę, a policzymy ją na żywo."
@@ -66,8 +66,8 @@ def _scale_json(layer: str, p5, p99):
         return None
     if is_trend(layer):
         return {"max": float(p99)}
-    # Jak logScale we frontendzie: skala obejmuje najwyżej 2 rzędy wielkości (inaczej wszystko byłoby czerwone) i NAJMNIEJ jeden
-    # (audyt: przy wąskim zakresie, np. 310–600, różnica 20% wyglądała jak przepaść między bielą a czerwienią).
+    # Jak logScale we frontendzie: skala obejmuje najwyżej 2 rzędy wielkości (inaczej wszystko byłoby czerwone) i NAJMNIEJ 4-krotną
+    # różnicę (audyt: przy wąskim zakresie, np. 310–600, różnica 20% wyglądała jak przepaść między bielą a czerwienią).
     return {"lo": float(min(max(p5, p99 / 100), p99 / MIN_SCALE_RATIO)), "hi": float(p99)}
 
 
