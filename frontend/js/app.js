@@ -306,14 +306,19 @@ function drawLayer() {
     : edge ? 'Nie ma tu wyraźnie najlepszego miejsca — wartości rosną w stronę krawędzi obszaru, więc lepsze miejsce leży tuż obok. Przesuń obszar.'
       : undefined;
   ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place), state.mode === 'pl', emptyText);
-  ui.setTopNote(topNote(top, edge));
+  ui.setTopNote(topNote(top, edge, layer === 'open' && result.summary && result.summary.verdict === 'few'));
   map.setTopMarkers(top, (place) => openPlace(place));
 }
 
-// Jedno zdanie pod najlepszymi miejscami: gdy różnią się o mniej niż 20% (to mniej niż dokładność danych) albo gdy na krawędzi
-// obszaru jest więcej niż w najlepszym miejscu (szczyt leży poza obszarem).
-function topNote(top, edge) {
+// Zdania pod najlepszymi miejscami: gdy różnią się o mniej niż 20% (to mniej niż dokładność danych), gdy na krawędzi
+// obszaru jest więcej niż w najlepszym miejscu (szczyt leży poza obszarem) i gdy obszar jest słabo zaludniony (sparse).
+function topNote(top, edge, sparse) {
   const notes = [];
+  if (sparse && top.length) {
+    // Audyt: na wsi model daje setki „klientów”, bo przy zasięgu typowym dla miasta nie widzi firm w mieście kilka km dalej.
+    notes.push('Na słabo zaludnionym terenie model zawyża liczbę klientów: zakłada, że klienci nie dojeżdżają dalej niż kilka km, ' +
+      'więc nie widzi firm w najbliższym mieście, do których jeżdżą.');
+  }
   if (top.length >= 2) {
     const values = top.map((p) => p.value);
     if ((Math.max(...values) - Math.min(...values)) / Math.max(...values) < SMALL_SPREAD) {

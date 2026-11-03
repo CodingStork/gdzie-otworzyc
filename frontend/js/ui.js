@@ -489,22 +489,24 @@ const VERDICTS = {
   unknown: 'Nie da się ocenić konkurencji — za mało danych o firmach.',
 };
 
-// Oczekiwana liczba firm ze słowem w dobrej formie: „1,4 firmy”, „3 firmy”, „7 firm”, „22 firmy” (poniżej 10 — jedno miejsce po przecinku).
+// Oczekiwana liczba firm ze słowem w dobrej formie: „ok. 1,4 firmy”, „ok. 3 firmy”, „ok. 7 firm”, „ok. 22 firmy”
+// (poniżej 10 — jedno miejsce po przecinku); poniżej jednej — „mniej niż jedna firma”.
 function firmsPhrase(n) {
+  if (n < 0.95) return 'mniej niż jedna firma';
   const value = n < 10 ? Math.round(n * 10) / 10 : roundEstimate(n);
   const whole = Number.isInteger(value);
   const word = !whole ? 'firmy' : value === 1 ? 'firma'
     : [2, 3, 4].includes(value % 10) && ![12, 13, 14].includes(value % 100) ? 'firmy' : 'firm';
-  return `${fmt(value, n < 10 ? 1 : 0)} ${word}`;
+  return `ok. ${fmt(value, n < 10 ? 1 : 0)} ${word}`;
 }
 
 function verdictText(summary) {
   const v = summary.verdict;
   if (v === 'unknown') return VERDICTS.unknown;
   if (v === 'few') {
-    return `Za mały obszar, żeby ocenić konkurencję (${summary.benchmark === 'national' ? 'średnio w Polsce' : 'w podobnych miejscach'} ` +
-      `ok. ${firmsPhrase(summary.benchmark_firms)} tego typu na taki obszar — przy tak małych liczbach ` +
-      'jedna firma więcej albo mniej to przypadek).';
+    // Przy tak małych liczbach jedna firma więcej albo mniej to przypadek (wyjaśnia to pytajnik podsumowania).
+    return `Za mało firm, żeby ocenić konkurencję (${summary.benchmark === 'national' ? 'średnio w Polsce' : 'w podobnych miejscach'}: ` +
+      `${firmsPhrase(summary.benchmark_firms)} tego typu na taki obszar).`;
   }
   return (VERDICTS[summary.benchmark] || VERDICTS.national)[v] || null;
 }
@@ -545,7 +547,7 @@ export function renderSummary(summary, ctx) {
       ? `${capitalize(here)} — ${where} 1 na ok. ${fmt(roundEstimate(summary.benchmark_per_firm))}.`
       : `${capitalize(here)}.`, 'strong');
   } else if (summary.competitors && summary.benchmark_firms != null && summary.verdict && summary.verdict !== 'few') {
-    add(`${capitalize(where)}: ok. ${firmsPhrase(summary.benchmark_firms)} tego typu na taki obszar.`);
+    add(`${capitalize(where)}: ${firmsPhrase(summary.benchmark_firms)} tego typu na taki obszar.`);
   }
   if (summary.data_gap) {
     add(`⚠ Mało danych o firmach: ${summary.type_plural} w obszarze mamy w danych ${fmt(summary.competitors.total)}, ` +
