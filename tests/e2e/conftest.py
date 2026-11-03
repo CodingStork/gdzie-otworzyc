@@ -15,11 +15,9 @@ from pathlib import Path
 
 import pytest
 
-sync_api = pytest.importorskip("playwright.sync_api", reason="brak Playwrighta — uruchom: uv sync")
-
-from backend.app import config  # noqa: E402
-from backend.app.db import reset_connection  # noqa: E402
-from tests.e2e.synthetic import build  # noqa: E402
+from backend.app import config
+from backend.app.db import reset_connection
+from tests.e2e.synthetic import build
 
 
 def _free_port() -> int:
@@ -29,8 +27,9 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def app_url(tmp_path_factory):
-    """Adres aplikacji na syntetycznej bazie (serwer uvicorn w wątku, na czas modułu z testami)."""
+def app_url(tmp_path_factory, browser):
+    """Adres aplikacji na syntetycznej bazie (serwer uvicorn w wątku, na czas modułu z testami).
+    Zależy od `browser`, żeby bez przeglądarki nie budować bazy na próżno (test i tak zostanie pominięty)."""
     import uvicorn
 
     from backend.app.main import app
@@ -55,6 +54,8 @@ def app_url(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def browser():
+    # Import tutaj, a nie na górze pliku: brak Playwrighta ma pominąć tylko testy E2E (skip w conftest.py przerwałby cały pytest).
+    sync_api = pytest.importorskip("playwright.sync_api", reason="brak Playwrighta — uruchom: uv sync")
     with sync_api.sync_playwright() as p:
         try:
             b = p.chromium.launch()
