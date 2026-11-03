@@ -513,7 +513,7 @@ export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel
   const refresh = () => {
     ok.hidden = !ready;                                  // bez branży i klientów nie ma czego analizować — nie udajemy, że jest
     ok.disabled = !!problem;
-    body.textContent = ready ? '' : 'Najpierw wybierz w panelu po lewej typ działalności albo klientów — wtedy przeanalizujemy ten obszar.';
+    body.textContent = ready ? '' : 'Wybierz po lewej branżę lub klientów.';
     body.classList.toggle('need', !ready);
   };
   const card = {

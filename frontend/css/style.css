@@ -137,7 +137,7 @@ label.disabled { opacity: .4; }
 .selection-card .sel-size { font-size: 13.5px; }
 .selection-card .sel-size.bad { color: #c00000; font-weight: 700; }
 .selection-card .sel-body:empty { display: none; }
-.selection-card .sel-body.need { margin-top: 8px; padding: 7px 9px; border-radius: 6px; background: #fff6d6; border: 1px solid #e3c34a; color: #5a4300; }
+.selection-card .sel-body.need { margin-top: 6px; color: var(--muted); }
 .sel-ok[hidden] { display: none; }
 .sel-buttons { display: flex; gap: 8px; margin-top: 10px; }
 .sel-buttons button { border-radius: 8px; font: 600 14px system-ui, sans-serif; cursor: pointer; padding: 9px 12px; }

@@ -113,7 +113,7 @@ def test_card_has_no_analyze_until_settings_and_choosing_settings_computes_nothi
     page = make_page(app_url + view(*BRZEG, 11))
     draw_circle(page)
     assert page.locator(".sel-ok").is_hidden()
-    assert "Najpierw wybierz" in page.inner_text(".selection-card")
+    assert "Wybierz po lewej" in page.inner_text(".selection-card")
     assert page.locator("select.attention").count() == 2
     page.select_option("#demand-select", "pop_m")
     page.wait_for_timeout(800)
