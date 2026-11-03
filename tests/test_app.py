@@ -10,7 +10,7 @@ def test_health():
 
 def test_index_served():
     r = TestClient(app).get("/")
-    assert r.status_code == 200 and "Gdzie otworzyć?" in r.text
+    assert r.status_code == 200 and "Lokalizator" in r.text
 
 
 def test_locked_db_returns_503(make_client):

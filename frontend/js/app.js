@@ -11,7 +11,7 @@
 // Prostota (Marcin): po prawej tylko legenda i dwie liczby obszaru (klienci, firmy) ze źródłami — bez rankingu i notatek;
 // wyjaśnienia są pod pytajnikami. Odświeżenie strony zaczyna od zera (stanu analizy nie zapisujemy w adresie).
 import { getCatalog, getMeta, getPoi, point, surface } from './api.js';
-import { logPosition, logScale, trendColor, trendPosition, trendScale } from './colors.js';
+import { logPosition, logScale, setDarkPalette, trendColor, trendPosition, trendScale } from './colors.js';
 import { initIntro } from './intro.js';
 import { initMap } from './map.js';
 import * as ui from './ui.js';
@@ -398,6 +398,23 @@ function onMapClick(lat, lng) {
   }
 }
 
+// ---- Tryb nocny ----
+// Na start jak w systemie (index.html ustawia data-theme przed pierwszą klatką); przycisk ☾/☀ przy mapie zmienia go
+// do odświeżenia strony — nie zapamiętujemy wyboru, bo odświeżenie ma przywracać ustawienia fabryczne.
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+let themeChosen = false;
+
+function applyTheme(dark) {
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  setDarkPalette(dark);
+  map.setTheme(dark);
+  if (!state.result) return;
+  const u = state.used;                                  // obrys obszaru ma kolor motywu — rysujemy go jeszcze raz
+  if (u.area === 'rect') map.setRectArea(u.bounds, { veil: true });
+  else map.setArea(u.lat, u.lng, u.radius_km, { veil: true });
+  drawLayer();
+}
+
 // ---- Start: zawsze od zera ----
 // Marcin: odświeżenie strony ma przywracać ustawienia fabryczne, jakby zrestartował się serwer — dlatego NIE zapisujemy analizy
 // w adresie. Adres może tylko ustawić widok mapy (#z=…&clat=…&clng=…, np. w testach), a potem go czyścimy, żeby odświeżenie
@@ -444,6 +461,9 @@ ui.initTools((tool) => {
   chooseTool(tool);
 });
 map.onHelpClick(() => intro.show(state.tool));
+map.onThemeClick(() => { themeChosen = true; applyTheme(document.documentElement.dataset.theme !== 'dark'); });
+systemDark.addEventListener('change', (e) => { if (!themeChosen) applyTheme(e.matches); });
+applyTheme(systemDark.matches);
 ui.onLayerChange(() => {
   discardPoint();
   if (state.result) drawLayer();

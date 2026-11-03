@@ -7,7 +7,7 @@ from backend.app.api.routes import router
 from backend.app.config import FRONTEND_DIR
 from backend.app.db import DB_BUSY_MESSAGE, DatabaseBusy
 
-app = FastAPI(title="Gdzie otworzyć?")
+app = FastAPI(title="Lokalizator — gdzie otworzyć firmę")
 app.include_router(router)
 
 

@@ -97,7 +97,14 @@ function renderFog(grid, t, radiusKm, colorOf, gap = null, hatch = { period: 10,
 
 // Pierścień współrzędnych okręgu o promieniu w km (przybliżenie płaskie — wystarcza dla ≤ 30 km).
 const CARD_ROOM_PX = 200;           // miejsce nad okręgiem na kartę zaznaczenia (przy dopasowaniu widoku po wyszukaniu)
-const RECT_COLOR = '#253494';
+// Kolory obrysów z CSS (--area, --rect): w trybie nocnym jaśniejsze, żeby było je widać na ciemnym podkładzie.
+const cssColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const areaColor = () => cssColor('--area');
+const rectColor = () => cssColor('--rect');
+const isDarkTheme = () => document.documentElement.dataset.theme === 'dark';
+// Podkład Esri Canvas: jasnoszary albo ciemnoszary (tryb nocny); etykiety osobno, nad mgłą.
+const baseUrl = (dark) => `${ESRI}World_${dark ? 'Dark' : 'Light'}_Gray_Base/MapServer/tile/{z}/{y}/{x}`;
+const labelsUrl = (dark) => `${ESRI}World_${dark ? 'Dark' : 'Light'}_Gray_Reference/MapServer/tile/{z}/{y}/{x}`;
 const RECT_BAD_COLOR = '#e00000';   // prostokąt poza limitami (za duży / za mały)
 const boundsObject = (b) => ({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() });
 
@@ -124,7 +131,7 @@ export function initMap(elementId) {
   const map = L.map(elementId, { maxZoom: MAX_ZOOM, minZoom: MIN_ZOOM }).setView([52.07, 19.48], 6);
 
   // Podkład bez etykiet, żeby mgła leżała pod napisami miast.
-  L.tileLayer(ESRI + 'World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+  const baseLayer = L.tileLayer(baseUrl(isDarkTheme()), {
     attribution: ATTRIBUTION, maxZoom: MAX_ZOOM,
   }).addTo(map);
 
@@ -136,7 +143,7 @@ export function initMap(elementId) {
   const labels = map.createPane('labels');
   labels.style.zIndex = 450;
   labels.style.pointerEvents = 'none';
-  L.tileLayer(ESRI + 'World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+  const labelsLayer = L.tileLayer(labelsUrl(isDarkTheme()), {
     pane: 'labels', maxZoom: MAX_ZOOM,
   }).addTo(map);
 
@@ -184,13 +191,18 @@ export function initMap(elementId) {
   helpButton.textContent = '?';
   helpButton.title = 'Jak zaznaczyć obszar na mapie?';
   let helpCb = null;
+  const themeButton = L.DomUtil.create('a', 'theme-button');   // ☾ / ☀ — tryb nocny / dzienny
+  themeButton.href = '#';
+  themeButton.setAttribute('role', 'button');
+  let themeCb = null;
   const toolbar = L.Control.extend({
     options: { position: 'topleft' },
     onAdd() {
       const bar = L.DomUtil.create('div', 'leaflet-bar rect-bar');
-      bar.append(helpButton);
+      bar.append(helpButton, themeButton);
       L.DomEvent.disableClickPropagation(bar);
       L.DomEvent.on(helpButton, 'click', (e) => { L.DomEvent.preventDefault(e); if (helpCb) helpCb(); });
+      L.DomEvent.on(themeButton, 'click', (e) => { L.DomEvent.preventDefault(e); if (themeCb) themeCb(); });
       return bar;
     },
   });
@@ -215,7 +227,7 @@ export function initMap(elementId) {
     drawFrom = { latlng: map.mouseEventToLatLng(e), x: e.clientX, y: e.clientY };
     try { container.setPointerCapture(e.pointerId); } catch (err) { /* bez przechwycenia też działa, tylko ruch poza mapą nie jest widziany */ }   // ruch i puszczenie dochodzą do mapy także poza jej krawędzią
     drawPreview = L.rectangle([drawFrom.latlng, drawFrom.latlng], {
-      renderer: selectionRenderer, interactive: false, color: RECT_COLOR, weight: 2, dashArray: '6 4', fillColor: RECT_COLOR, fillOpacity: 0.08,
+      renderer: selectionRenderer, interactive: false, color: rectColor(), weight: 2, dashArray: '6 4', fillColor: rectColor(), fillOpacity: 0.08,
     }).addTo(selectionLayer);
     e.preventDefault();
   });
@@ -320,7 +332,7 @@ export function initMap(elementId) {
         }).addTo(areaLayer);
       }
       const circle = L.polygon(ring, {
-        renderer: areaRenderer, interactive: false, color: '#800026', weight: 1.5,
+        renderer: areaRenderer, interactive: false, color: areaColor(), weight: 1.5,
         dashArray: veil ? null : '6 4', fill: false,
       }).addTo(areaLayer);
       L.marker([lat, lng], {
@@ -337,11 +349,11 @@ export function initMap(elementId) {
     showDetails(lat, lng, reachKm, competitors, element) {
       map.closePopup();   // stary dymek (jego zamknięcie czyści stare szczegóły) — dopiero potem rysujemy nowe
       L.polygon(circleRing(lat, lng, reachKm), {
-        renderer: detailsRenderer, interactive: false, color: '#253494', weight: 1.5, fillOpacity: 0.03,
+        renderer: detailsRenderer, interactive: false, color: rectColor(), weight: 1.5, fillOpacity: 0.03,
       }).addTo(detailsLayer);
       for (const p of competitors) {
         L.circleMarker([p.lat, p.lng], {
-          renderer: detailsRenderer, radius: 4, color: '#fff', weight: 1, fillColor: '#253494', fillOpacity: 0.95,
+          renderer: detailsRenderer, radius: 4, color: '#fff', weight: 1, fillColor: rectColor(), fillOpacity: 0.95,
           bubblingMouseEvents: false,
         }).bindTooltip(plainText(`${p.name || 'bez nazwy'} (${SOURCE_NAMES[p.source] || 'OpenStreetMap'})`)).addTo(detailsLayer);
       }
@@ -390,8 +402,8 @@ export function initMap(elementId) {
       let center = [lat, lng];
       let radius = radiusKm;
       selectionCircle = L.polygon(circleRing(lat, lng, radius), {
-        renderer: selectionRenderer, interactive: false, color: '#800026', weight: 2, dashArray: '6 4',
-        fillColor: '#800026', fillOpacity: 0.06,
+        renderer: selectionRenderer, interactive: false, color: areaColor(), weight: 2, dashArray: '6 4',
+        fillColor: areaColor(), fillOpacity: 0.06,
       }).addTo(selectionLayer);
       const size = isTouchUi() ? 28 : 18;                // na dotyk kropka jest większa, żeby dało się ją złapać palcem
       const handleIcon = (cls) => L.divIcon({ className: `circle-handle ${cls}`, iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
@@ -444,6 +456,14 @@ export function initMap(elementId) {
     stopRectDraw() { if (drawing) stopDraw(); },
     isDrawing() { return drawing; },
     onHelpClick(cb) { helpCb = cb; },
+    onThemeClick(cb) { themeCb = cb; },
+    // Tryb nocny: ciemny podkład i etykiety, ikona przycisku pokazuje, na co się przełączy.
+    setTheme(dark) {
+      baseLayer.setUrl(baseUrl(dark));
+      labelsLayer.setUrl(labelsUrl(dark));
+      themeButton.textContent = dark ? '☀' : '☾';
+      themeButton.title = dark ? 'Tryb dzienny' : 'Tryb nocny';
+    },
     onRectDrawn(cb) { rectDrawnCb = cb; },
     onDrawCancel(cb) { drawCancelCb = cb; },
 
@@ -452,7 +472,7 @@ export function initMap(elementId) {
       this.clearSelection();
       let box = L.latLngBounds([bounds.south, bounds.west], [bounds.north, bounds.east]);
       rectShape = L.rectangle(box, {
-        renderer: selectionRenderer, interactive: false, color: RECT_COLOR, weight: 2, dashArray: '6 4', fillColor: RECT_COLOR, fillOpacity: 0.06,
+        renderer: selectionRenderer, interactive: false, color: rectColor(), weight: 2, dashArray: '6 4', fillColor: rectColor(), fillOpacity: 0.06,
       }).addTo(selectionLayer);
       const size = isTouchUi() ? 28 : 18;                // na dotyk uchwyt jest większy, żeby dało się go złapać palcem
       selectionPopup = L.popup({
@@ -514,7 +534,7 @@ export function initMap(elementId) {
     },
     // Czerwona ramka, gdy prostokąt jest poza limitami.
     setRectInvalid(bad) {
-      if (rectShape) rectShape.setStyle({ color: bad ? RECT_BAD_COLOR : RECT_COLOR, weight: bad ? 3 : 2 });
+      if (rectShape) rectShape.setStyle({ color: bad ? RECT_BAD_COLOR : rectColor(), weight: bad ? 3 : 2 });
     },
 
     // Wynik dla prostokąta: obramowanie i (z `veil`) przygaszenie wszystkiego poza nim; `fit` dopasowuje mapę (bez animacji).
@@ -528,7 +548,7 @@ export function initMap(elementId) {
         }).addTo(areaLayer);
       }
       L.rectangle(box, {
-        renderer: areaRenderer, interactive: false, color: '#800026', weight: 1.5, dashArray: veil ? null : '6 4', fill: false,
+        renderer: areaRenderer, interactive: false, color: areaColor(), weight: 1.5, dashArray: veil ? null : '6 4', fill: false,
       }).addTo(areaLayer);
       if (fit) map.fitBounds(box, { animate: false, padding: [20, 20] });
     },

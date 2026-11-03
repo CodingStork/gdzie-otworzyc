@@ -6,8 +6,13 @@
 // Dlaczego przezroczystość: małe wartości znikają, więc zostaje efekt „mgły” zagęszczającej się tam, gdzie jest ważnie.
 
 export const YLORRD = ['#ffffcc', '#ffeda0', '#fed976', '#feb24c', '#fd8d3c', '#fc4e2a', '#e31a1c', '#bd0026', '#800026'];
+// Tryb nocny: na ciemnym podkładzie ciemnoczerwony „najwięcej” by zniknął, więc kierunek jasności się odwraca —
+// paleta magma (matplotlib, równomierna percepcyjnie): od fioletu do jasnożółtego, „więcej” = jaśniej.
+export const MAGMA = ['#3b0f70', '#641a80', '#8c2981', '#b73779', '#de4968', '#f7705c', '#fe9f6d', '#fecf92', '#fcfdbf'];
 
-const RGB = YLORRD.map((hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)));
+const toRgb = (palette) => palette.map((hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)));
+let RGB = toRgb(YLORRD);
+export function setDarkPalette(dark) { RGB = toRgb(dark ? MAGMA : YLORRD); }
 
 // Przezroczystość w zależności od pozycji t na skali: 0 poniżej 0,05, potem liniowo do 0,85 przy t = 0,5 i 0,85 powyżej.
 export function fogAlpha(t) {

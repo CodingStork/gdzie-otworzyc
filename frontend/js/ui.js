@@ -159,7 +159,7 @@ export function settingsAttention(on) {
 
 // ---- Formularz ----
 
-const NONE = '— nie wybieraj —';
+// Pusta pozycja list: zaproszenie do wyboru, a nie zakaz („nie wybieraj” brzmiało jak polecenie — uwaga Marcina).
 
 function currentType() {
   if (!catalog) return null;   // katalog jeszcze się nie wczytał
@@ -217,7 +217,7 @@ export function renderCatalog(data, onChange) {
   catalog = data;
   const typeSelect = $('type-select');
   typeSelect.innerHTML = '';
-  typeSelect.append(new Option(NONE, ''));
+  typeSelect.append(new Option('Wybierz branżę…', ''));
   for (const group of catalog.groups) {
     const optgroup = document.createElement('optgroup');
     optgroup.label = group.name;
@@ -226,7 +226,7 @@ export function renderCatalog(data, onChange) {
   }
   const demandSelect = $('demand-select');
   demandSelect.innerHTML = '';
-  demandSelect.append(new Option(NONE, ''));
+  demandSelect.append(new Option('Wybierz klientów…', ''));
   for (const demand of catalog.demands) demandSelect.append(new Option(demand.name, demand.id));
   $('months-select').value = String(catalog.default_months);
 
