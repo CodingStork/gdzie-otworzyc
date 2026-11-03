@@ -79,7 +79,7 @@ def test_national_missing_layer_gives_note(client):
 
 
 def test_national_warning_for_medium_quality(client):
-    assert national(client, type="nails", demand="pop_f").json()["warnings"]
+    assert national(client, type="barber", demand="pop_m").json()["warnings"]
     assert national(client).json()["warnings"] == []
 
 

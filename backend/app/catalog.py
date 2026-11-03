@@ -38,6 +38,9 @@ class BusinessType:
     bandwidth_km: float                   # domyślny zasięg klienta h (szerokość pasma jądra)
     osm_quality: Literal["good", "medium", "poor"]  # na ile kompletne są dane OSM dla tej branży
     overture: tuple[str, ...] = ()        # kategorie Overture Maps (`taxonomy.primary`) liczone do tego typu
+    # Jedno zdanie o tym, czego mapa NIE widzi dla tej branży (audyt przydatności, docs/audyt-przydatnosci.md) — pokazywane
+    # pod wyborem branży, żeby przedsiębiorca wiedział, jak czytać wynik. None = brak szczególnych zastrzeżeń.
+    caveat: str | None = None
 
 
 # Grupa „Budowlanka / dom” zniknęła razem z rzemieślnikami (patrz HIDDEN_TYPES) — został w niej tylko market budowlany,
@@ -91,8 +94,8 @@ DEMANDS: dict[str, Demand] = {d.id: d for d in (
     _census("pop_1564", "Osoby 15–64 lata", "pop_1564", "osób w wieku 15–64 lata"),
     _census("pop_ge65", "Seniorzy (65+)", "pop_ge65", "seniorów"),
     _permits("new_sf", "Nowe domy jednorodzinne", ("sf",), "nowych domów jednorodzinnych"),
-    _permits("new_mf", "Nowe bloki (wielorodzinne)", ("mf",), "nowych budynków wielorodzinnych"),
-    _permits("new_all", "Wszystkie nowe budynki mieszkalne", ("sf", "mf"), "nowych budynków mieszkalnych"),
+    _permits("new_mf", "Nowe bloki (liczba budynków, nie mieszkań)", ("mf",), "nowych budynków wielorodzinnych"),
+    _permits("new_all", "Nowe budynki mieszkalne (dom i blok liczą się tak samo)", ("sf", "mf"), "nowych budynków mieszkalnych"),
 )}
 
 
@@ -100,8 +103,8 @@ def _rules(*tag_dicts: dict[str, str]) -> tuple[TagRule, ...]:
     return tuple(TagRule(t) for t in tag_dicts)
 
 
-def _type(id, group, name, rules, pkd, demands, bandwidth_km, quality, overture=()) -> BusinessType:
-    return BusinessType(id, group, name, rules, pkd, tuple(demands), bandwidth_km, quality, tuple(overture))
+def _type(id, group, name, rules, pkd, demands, bandwidth_km, quality, overture=(), caveat=None) -> BusinessType:
+    return BusinessType(id, group, name, rules, pkd, tuple(demands), bandwidth_km, quality, tuple(overture), caveat)
 
 
 # Restauracje i bary szybkiej obsługi w taksonomii Overture to dziesiątki osobnych kategorii kuchni.
@@ -125,40 +128,57 @@ TYPES: dict[str, BusinessType] = {t.id: t for t in (
           _rules({"shop": "hairdresser", "hairdresser": "barber"}, {"shop": "hairdresser", "male": "yes"},
                  {"shop": "barber"}),
           "96.02.Z", ("pop_m", "pop_total", "pop_1564"), 2, "medium",
-          overture=("barber",)),
-    _type("beauty", "personal", "Salon kosmetyczny", _rules({"shop": "beauty"}), "96.02.Z",
+          overture=("barber",),
+          caveat="Liczymy tylko barberów — zwykli fryzjerzy, u których też strzyże się wielu mężczyzn, nie wchodzą do "
+                 "konkurencji, więc konkurencji jest więcej, niż pokazuje mapa."),
+    # Stylizacja paznokci jest w salonie kosmetycznym (od audytu przydatności): w danych każdy „salon paznokci” jest też
+    # salonem kosmetycznym (OSM shop=beauty + beauty=nails, Overture nail_salon), a osobny typ pomijał salony kosmetyczne,
+    # które też robią manicure — „mało konkurencji” byłoby złudzeniem. Stary typ „nails” jest w HIDDEN_TYPES i TYPE_ALIASES.
+    _type("beauty", "personal", "Salon kosmetyczny / paznokcie", _rules({"shop": "beauty"}), "96.02.Z",
           ("pop_f", "pop_total", "pop_1564"), 1.5, "good",
-          overture=("beauty_salon", "skin_care_and_makeup", "nail_salon")),
-    _type("nails", "personal", "Stylizacja paznokci",
-          _rules({"shop": "beauty", "beauty": "nails"}, {"shop": "nails"}), "96.02.Z",
-          ("pop_f", "pop_total"), 1.5, "medium",
-          overture=("nail_salon",)),
+          overture=("beauty_salon", "skin_care_and_makeup", "nail_salon"),
+          caveat="Liczymy salony z lokalem; kosmetyczki i stylistki paznokci pracujące w domu albo u klientek "
+                 "rzadko są na mapach."),
     _type("tattoo", "personal", "Studio tatuażu", _rules({"shop": "tattoo"}), "96.09.Z",
           ("pop_1564", "pop_total"), 5, "medium",
-          overture=("tattoo_and_piercing",)),
+          overture=("tattoo_and_piercing",),
+          caveat="Do studia tatuażu klienci często jadą z daleka do konkretnego artysty — bliskość domu znaczy tu mniej "
+                 "niż w innych usługach."),
     # --- Handel / gastro / sport ---
+    # Market budowlany: domyślnie mieszkańcy (remonty), a nie „wszystkie nowe budynki” — rejestr pozwoleń liczy blok
+    # z setką mieszkań jak jeden dom, więc popyt z nowych osiedli bloków byłby zaniżony nawet stukrotnie.
     _type("diy", "retail", "Market / hurtownia budowlana",
           _rules({"shop": "doityourself"}, {"shop": "hardware"}, {"shop": "trade", "trade": "building_supplies"}),
-          "47.52.Z", ("new_all", "new_sf", "pop_total"), 15, "good",
-          overture=("building_supply_store", "hardware_store", "home_improvement_store", "hardware_home_and_garden_store")),
+          "47.52.Z", ("pop_total", "new_sf", "new_all"), 15, "good",
+          overture=("building_supply_store", "hardware_store", "home_improvement_store", "hardware_home_and_garden_store"),
+          caveat="Każdy sklep liczy się jako jeden konkurent — duży market sieciowy tak samo jak mały sklep z narzędziami."),
     _type("grocery", "retail", "Sklep spożywczy", _rules({"shop": "convenience"}, {"shop": "supermarket"}),
           "47.11.Z", ("pop_total", "pop_ge65"), 1, "good",
-          overture=("grocery_store", "convenience_store", "supermarket", "organic_grocery_store")),
+          overture=("grocery_store", "convenience_store", "supermarket", "organic_grocery_store"),
+          caveat="Każdy sklep liczy się jako jeden konkurent — dyskont sieciowy tak samo jak mały sklep osiedlowy, "
+                 "choć przyciąga dużo więcej klientów."),
     _type("cafe", "retail", "Kawiarnia", _rules({"amenity": "cafe"}), "56.30.Z",
           ("pop_1564", "pop_total"), 1.5, "good",
-          overture=("cafe", "coffee_shop")),
+          overture=("cafe", "coffee_shop"),
+          caveat="Kawiarnie żyją głównie z ruchu (praca, studia, turystyka), a mapa zna tylko mieszkańców — wynik "
+                 "pasuje do kawiarni osiedlowej, nie do lokalu w centrum."),
     _type("restaurant", "retail", "Restauracja / fast food",
           _rules({"amenity": "restaurant"}, {"amenity": "fast_food"}), "56.10.A",
           ("pop_total", "pop_1564"), 2, "good",
-          overture=_RESTAURANTS),
+          overture=_RESTAURANTS,
+          caveat="Restauracje żyją też z ruchu (praca, turystyka, przejezdni), a mapa zna tylko mieszkańców — wynik "
+                 "pasuje do lokalu osiedlowego (np. pizzerii z dowozem)."),
     _type("fitness", "retail", "Siłownia / fitness",
           _rules({"leisure": "fitness_centre"}, {"leisure": "sports_centre", "sport": "fitness"}), "93.13.Z",
           ("pop_1564", "pop_total"), 3, "medium",
-          overture=("gym", "yoga_studio", "pilates_studio")),
+          overture=("gym", "yoga_studio", "pilates_studio"),
+          caveat="Część klientów ćwiczy blisko pracy, a nie domu; siłownie, kluby fitness, joga i pilates liczą się razem."),
     _type("kindergarten", "retail", "Przedszkole / żłobek",
           _rules({"amenity": "kindergarten"}, {"amenity": "childcare"}), "85.10.Z",
           ("pop_lt15", "new_sf", "new_all"), 2, "good",
-          overture=("preschool", "day_care_preschool", "child_care_and_day_care", "kindergarten")),
+          overture=("preschool", "day_care_preschool", "child_care_and_day_care", "kindergarten"),
+          caveat="Dzieci znamy ze spisu 2021 (0–14 lat), a dzisiejsze przedszkolaki urodziły się głównie po spisie; "
+                 "oddziałów przedszkolnych w szkołach często nie ma na mapach. Liczymy razem przedszkola i żłobki."),
 )}
 
 
@@ -168,6 +188,11 @@ TYPES: dict[str, BusinessType] = {t.id: t for t in (
 # (match_types / match_overture sięgają po ALL_TYPES) — przydadzą się po dołączeniu CEIDG (M9). Popyt „nowe domy”
 # jest nadal dostępny w interfejsie jako samodzielny czynnik („Twoi klienci to”).
 HIDDEN_TYPES: dict[str, BusinessType] = {t.id: t for t in (
+    # Paznokcie: scalone z salonem kosmetycznym (komentarz przy „beauty”). ETL nadal je zbiera — tak jak rzemieślników.
+    _type("nails", "personal", "Stylizacja paznokci",
+          _rules({"shop": "beauty", "beauty": "nails"}, {"shop": "nails"}), "96.02.Z",
+          ("pop_f", "pop_total"), 1.5, "medium",
+          overture=("nail_salon",)),
     _type("paving", "construction", "Brukarstwo", _rules({"craft": "paver"}, {"craft": "stonemason"}), "43.99.Z",
           ("new_sf", "new_all", "pop_total"), 15, "poor",
           overture=("paving_contractor", "masonry_concrete")),
@@ -189,6 +214,9 @@ HIDDEN_TYPES: dict[str, BusinessType] = {t.id: t for t in (
 )}
 
 ALL_TYPES: dict[str, BusinessType] = {**TYPES, **HIDDEN_TYPES}
+
+# Stare linki z usuniętym typem, który ma sensowny odpowiednik (paznokcie → salon kosmetyczny). Rzemieślnicy go nie mają.
+TYPE_ALIASES: dict[str, str] = {"nails": "beauty"}
 
 
 # Nazwy typów w liczbie mnogiej, mianownik — do podpisów „Gdzie są {firmy}” (np. „Gdzie są fryzjerzy”).
@@ -238,6 +266,7 @@ def catalog_json() -> dict:
                 "bandwidth_km": t.bandwidth_km,
                 "osm_quality": t.osm_quality,
                 "warning": quality_warning(t.osm_quality),
+                "caveat": t.caveat,
             }
             for t in TYPES.values() if t.group == group_id
         ]
@@ -249,6 +278,7 @@ def catalog_json() -> dict:
     return {
         "groups": groups,
         "demands": demands,
+        "aliases": TYPE_ALIASES,
         "months_options": list(MONTHS_OPTIONS),
         "default_months": DEFAULT_MONTHS,
     }

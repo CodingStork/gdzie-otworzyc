@@ -9,7 +9,7 @@ from backend.app.analysis.service import SurfaceParams, cached_surface, point_de
 from backend.app.analysis.national import (
     NATIONAL_MISSING_MESSAGE, NationalMissing, cached_national,
 )
-from backend.app.catalog import DEFAULT_MONTHS, DEMANDS, MONTHS_OPTIONS, TYPES, catalog_json
+from backend.app.catalog import DEFAULT_MONTHS, DEMANDS, MONTHS_OPTIONS, TYPE_ALIASES, TYPES, catalog_json
 from backend.app.config import ATTRIBUTION, USER_AGENT
 from backend.app.db import DatabaseMissing, cursor
 from backend.app.services.geocode import Geocoder, GeocoderUnavailable
@@ -52,6 +52,11 @@ def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
 
 RADIUS_KM = (1, 30)
 REACH_KM = (0.1, 20)
+
+
+def _canonical(type_id: str) -> str:
+    """Stary identyfikator typu ze starego linku (np. „nails” — paznokcie są teraz w salonie kosmetycznym) → obecny."""
+    return TYPE_ALIASES.get(type_id, type_id)
 
 
 def _check_selection(type_id: str, demand: str, months: int) -> None:
@@ -110,6 +115,7 @@ def surface(
 ) -> dict:
     """Mapa okolicy: wartości na siatce w okręgu wokół miejsca (`lat`, `lng`, `radius_km`) albo w prostokącie widoku mapy
     (`west`, `south`, `east`, `north`, bok ≤ 60 km; `area=view` to widok mapy, `area=rect` — prostokąt zaznaczony przez użytkownika). Puste `type` / `demand` = brak wyboru."""
+    type_id = _canonical(type_id)
     _check_selection(type_id, demand, months)
     if not REACH_KM[0] <= reach_km <= REACH_KM[1]:
         raise _bad_request("Zasięg klienta (reach_km) musi mieścić się w zakresie 0,1–20 km (wartości poniżej 0,3 km są podnoszone do 0,3 km)")
@@ -147,6 +153,7 @@ def national(
 ) -> dict:
     """Gotowa mapa Polski (tryb „Cała Polska”): warstwy policzone w ETL dla typowego zasięgu, stała skala kolorów.
     `px` = szerokość mapy w pikselach (steruje rozdzielczością)."""
+    type_id = _canonical(type_id)
     _check_selection(type_id, demand, DEFAULT_MONTHS)
     if not all(math.isfinite(v) for v in (west, south, east, north)) or not (west < east and south < north):
         raise _bad_request("Nieprawidłowy prostokąt widoku")
@@ -170,6 +177,7 @@ def point(
     months: int = 24,
 ) -> dict:
     """Szczegóły klikniętego punktu: liczby w okręgu zasięgu, model Huffa, najbliższe firmy."""
+    type_id = _canonical(type_id)
     _check_selection(type_id, demand, months)
     if not REACH_KM[0] <= reach_km <= REACH_KM[1]:
         raise _bad_request("Zasięg klienta (reach_km) musi mieścić się w zakresie 0,1–20 km (wartości poniżej 0,3 km są podnoszone do 0,3 km)")
@@ -186,6 +194,7 @@ POI_LIMIT = 5000
 @router.get("/poi")
 def poi(type_id: str = Query(alias="type"), bbox: str = Query()) -> dict:
     """Punkty firm danego typu w widocznym fragmencie mapy (bbox = minLng,minLat,maxLng,maxLat)."""
+    type_id = _canonical(type_id)
     if type_id not in TYPES:
         raise _bad_request("Nieznany typ działalności")
     min_lng, min_lat, max_lng, max_lat = _parse_bbox(bbox)
