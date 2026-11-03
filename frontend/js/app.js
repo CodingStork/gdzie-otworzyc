@@ -16,6 +16,8 @@ import * as ui from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 const map = initMap('map');
+// Uchwyt dla testów, które klikają w aplikację jak użytkownik (tests/e2e): stan i mapa Leaflet. Kod aplikacji z niego nie korzysta.
+window.gdzieOtworzyc = { get state() { return state; }, get map() { return map.leaflet; } };
 
 // tool: 'circle' | 'rect' | null — wybrane narzędzie.
 // selection: zaznaczenie w toku (jeszcze nie przeanalizowane): { kind: 'circle', lat, lng, radiusKm, name } albo { kind: 'rect', bounds };
