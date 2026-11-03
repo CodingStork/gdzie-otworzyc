@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from backend.app.analysis.surface import (
-    A0, competition_density, decay, demand_potential, huff_expected, make_grid, top_points,
+    A0, competition_density, decay, demand_potential, huff_expected, make_grid, peaks_and_edge, top_points,
 )
 
 
@@ -55,3 +55,29 @@ def test_top_points_separation():
     mask = np.ones(4, bool)
     assert top_points(values, xy, mask, 500) == [0, 2]            # 1 odpada (100 m od 0), 3 ma wartość 0
     assert top_points(values, xy, np.array([False, True, True, True]), 500) == [1, 2]
+
+
+def test_peaks_only_inside_and_highest():
+    """Szczyt = wszyscy sąsiedzi w obszarze i żaden nie jest wyższy; punkt krawędzi nigdy nie jest szczytem."""
+    yy, xx = np.mgrid[0:5, 0:5]
+    hill = (10 - (yy - 2) ** 2 - (xx - 2) ** 2).astype(float).ravel()        # szczyt w środku siatki 5 × 5
+    mask = np.ones(25, bool)
+    peaks, edge = peaks_and_edge(hill, mask, 5, 5)
+    assert np.flatnonzero(peaks).tolist() == [12]
+    assert edge.sum() == 16 and not edge[12]
+
+
+def test_ramp_rising_towards_edge_has_no_peak():
+    """Wartości rosną w stronę krawędzi (najlepsze miejsce leży poza obszarem) — nie ma czego nazwać „najlepszym miejscem”."""
+    ramp = np.tile(np.arange(5, dtype=float), 5)                            # rośnie na wschód
+    peaks, edge = peaks_and_edge(ramp, np.ones(25, bool), 5, 5)
+    assert not peaks.any() and edge.any()
+
+
+def test_peaks_respect_mask_holes():
+    hill = np.zeros(25)
+    hill[12] = 5
+    mask = np.ones(25, bool)
+    mask[13] = False                                                        # sąsiad poza obszarem → nie wiemy, czy to szczyt
+    peaks, _ = peaks_and_edge(hill, mask, 5, 5)
+    assert not peaks[12]

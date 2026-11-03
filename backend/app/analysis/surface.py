@@ -154,6 +154,33 @@ def top_points(values: np.ndarray, xy: np.ndarray, mask: np.ndarray, min_sep_m: 
     return chosen
 
 
+def peaks_and_edge(values: np.ndarray, mask: np.ndarray, nx: int, ny: int) -> tuple[np.ndarray, np.ndarray]:
+    """Lokalne szczyty i krawędź obszaru na siatce `ny × nx` (wiersze od północy, jak w `make_grid`).
+
+    Szczyt = punkt w obszarze, którego wszyscy 8 sąsiedzi też są w obszarze i żaden nie ma większej wartości. Punkt przy
+    krawędzi okręgu/prostokąta, gdzie wartości rosną NA ZEWNĄTRZ, nie jest szczytem — najlepsze miejsce leży wtedy poza
+    obszarem, a „najlepsze miejsce na krawędzi” byłoby przypadkowym punktem stoku (artefakt granicy, nie wynik).
+    Zwraca (maska szczytów, maska krawędzi = punkty w obszarze z co najmniej jednym sąsiadem poza nim).
+    """
+    v = np.where(mask, np.nan_to_num(np.asarray(values, float)), np.nan).reshape(ny, nx)
+    inside = np.asarray(mask, bool).reshape(ny, nx)
+    padded_v = np.pad(v, 1, constant_values=np.nan)
+    padded_in = np.pad(inside, 1, constant_values=False)
+    all_neighbours_inside = inside.copy()
+    highest = inside.copy()
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            nb_in = padded_in[1 + dy:1 + dy + ny, 1 + dx:1 + dx + nx]
+            nb_v = padded_v[1 + dy:1 + dy + ny, 1 + dx:1 + dx + nx]
+            all_neighbours_inside &= nb_in
+            highest &= ~nb_in | (v >= nb_v)
+    peaks = all_neighbours_inside & highest
+    edge = inside & ~all_neighbours_inside
+    return peaks.ravel(), edge.ravel()
+
+
 def round_significant(values: np.ndarray, digits: int = 3) -> np.ndarray:
     """Zaokrąglenie do `digits` cyfr znaczących (mniejsza odpowiedź JSON).
 

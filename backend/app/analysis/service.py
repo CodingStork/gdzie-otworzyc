@@ -20,7 +20,7 @@ from scipy.stats import poisson
 
 from backend.app.analysis.kernel import LocalFrame
 from backend.app.analysis.surface import (
-    competition_availability, competition_density, demand_potential, huff_multi, make_grid,
+    competition_availability, competition_density, demand_potential, huff_multi, make_grid, peaks_and_edge,
     round_significant, top_points,
 )
 from backend.app.catalog import DEMANDS, GAP_RADIUS_KM, GAP_SHARE, PLURALS, TYPES, is_data_gap, quality_warning
@@ -508,7 +508,7 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         computed["trend"] = (demand_potential(g, frame.to_metric(trend[:, 0], trend[:, 1]), trend[:, 2], reach_m)
                              if len(trend) else np.zeros(len(g)))
     min_sep_m = max(reach_m, radius_m / 5)
-    values, top, gap = {}, {}, None
+    values, top, top_edge, gap = {}, {}, {}, None
     for layer in layers:
         full = np.full(len(grid_xy), np.nan)             # NaN = poza okręgiem
         full[mask] = round_significant(computed[layer])
@@ -522,7 +522,14 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
             is_gap = rel_full < (1 - GAP_SHARE) * full
             gap = {"open": [None if np.isnan(r) else int(x) for r, x in zip(rel_full, is_gap)]}
             score = np.where(is_gap, 0.0, rel_full)
-        picks = top_points(np.nan_to_num(score), grid_xy, mask, min_sep_m)
+        # Najlepsze miejsca tylko spośród lokalnych szczytów: punkt na krawędzi obszaru, gdzie wartości rosną na zewnątrz,
+        # to przypadkowe miejsce stoku, a nie „najlepsze miejsce”. Gdy na krawędzi jest więcej niż w najlepszym szczycie,
+        # mówimy to (`top_edge`) — lepsze miejsce może leżeć tuż za granicą obszaru.
+        score = np.nan_to_num(score)
+        peaks, edge = peaks_and_edge(score, mask, nx, ny)
+        picks = top_points(score, grid_xy, peaks, min_sep_m)
+        best = score[picks[0]] if picks else 0.0
+        top_edge[layer] = bool(edge.any() and score[edge].max() > max(best, 0.0) * 1.05)
         lat, lng = frame.to_latlng(grid_xy[picks])
         top[layer] = [{"lat": float(a), "lng": float(b), "value": float(full[i]),
                        "name": street_label(con, float(a), float(b))}
@@ -536,7 +543,7 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
                 "grid": {"west": float(edges[1][0]), "east": float(edges[1][1]),
                          "south": float(edges[0][2]), "north": float(edges[0][3]),
                          "nx": nx, "ny": ny, "cell_m": cell_m},
-                "values": values, "top": top, "notes": notes, "warnings": warnings,
+                "values": values, "top": top, "top_edge": top_edge, "notes": notes, "warnings": warnings,
                 "summary": area_summary(con, p, frame, rect)}
     if gap is not None:
         response["gap"] = gap

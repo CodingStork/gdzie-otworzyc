@@ -193,3 +193,15 @@ def test_surface_rect_limits(client):
 def test_surface_rect_and_view_cached_separately(client):
     assert rect_surface(client).json()["summary"]["shape"] == "rect"
     assert rect_surface(client, area=None).json()["summary"]["shape"] == "view"
+
+
+
+def test_top_skips_slope_at_edge_and_says_better_place_is_outside(make_client):
+    """Audyt: ludzie mieszkają tuż na północ od okręgu. Najwyższe wartości w okręgu leżą na jego krawędzi (stok rośnie na
+    zewnątrz) — to nie jest „najlepsze miejsce”, tylko artefakt granicy. Zamiast tego odpowiedź mówi, że lepiej jest za krawędzią."""
+    from tests.conftest import disk
+    pop = {c: 1000.0 for c in disk((LAT + 0.045, LNG), k=8)}                # osiedle ~5 km na północ, poza okręgiem 2 km
+    j = make_client(pop=pop).get("/api/surface", params=dict(demand="pop_total", lat=LAT, lng=LNG, radius_km=2,
+                                                              reach_km=1.5)).json()
+    assert j["top_edge"]["demand"] is True
+    assert all(t["lat"] < LAT + 0.015 for t in j["top"]["demand"])         # nic z samej północnej krawędzi (2 km = 0,018°)

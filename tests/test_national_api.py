@@ -33,7 +33,7 @@ def test_national_shape(client):
         top = j["top"][layer]
         assert 0 < len(top) <= 5 and [t["value"] for t in top] == sorted((t["value"] for t in top), reverse=True)
         assert all(t["name"] for t in top)
-    assert any("1,5 km" in n and "Przybliż" in n for n in j["notes"])
+    assert j["notes"] == []        # zasięg gotowej mapy mówi podpowiedź pod suwakiem (reach_km), a nie notatka (audyt: szum)
     assert j["top"]["open"][0]["name"] == "Śródmieście"
 
 
@@ -151,9 +151,9 @@ def test_view_place_name_prefers_larger_place_over_distant_village():
     assert place_name(con, 40.0, 10.0) is None                      # nic w pobliżu
 
 
-def test_national_notes_warn_about_data_gaps(client):
-    assert any("luk" in n for n in national(client).json()["notes"])           # „Gdzie otworzyć” zależy od firm
-    assert not any("luk" in n for n in national(client, type="").json()["notes"])   # sam popyt nie zależy od firm
+def test_national_marks_data_gaps_only_for_layers_depending_on_firms(client):
+    assert "gap" in national(client).json()                                    # „Gdzie otworzyć” zależy od firm
+    assert "gap" not in national(client, type="").json()                       # sam popyt nie zależy od firm
 
 
 def test_national_top_is_refined_to_best_child_cell(client):
@@ -228,8 +228,10 @@ def test_national_top_skips_cells_in_gap(gap_client):
     assert max(x for x in j["values"]["open"] if x is not None) > top[0]["value"]       # kolor mgły nadal pokazuje pełne E
 
 
-def test_national_gap_note_present_with_open_layer(gap_client):
-    assert any("kreskowanie" in n for n in national(gap_client, **BOTH).json()["notes"])
+def test_national_gap_mask_present_with_open_layer(gap_client):
+    """Kreskowanie objaśnia pytajnik w legendzie — notatka pod listą była dublem (audyt), więc jej nie ma."""
+    j = national(gap_client, **BOTH).json()
+    assert 1 in j["gap"]["open"] and not any("kreskowanie" in n for n in j["notes"])
     assert "gap" not in national(gap_client, type="", **BOTH).json()
 
 

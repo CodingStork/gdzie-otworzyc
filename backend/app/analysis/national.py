@@ -26,11 +26,9 @@ MAX_CELLS = 60_000            # tyle komórek H3 najwyżej czytamy z bazy na jed
 RESOLUTIONS = (5, 6, 7, 8)    # od najgrubszej
 LAT_LIMITS = (48.5, 55.5)
 LNG_LIMITS = (13.5, 24.5)
+MIN_SCALE_RATIO = 10          # skala kolorów obejmuje co najmniej 10-krotną różnicę (jak MIN_RATIO w colors.js)
 TOP_NAME_MAX_KM = 8           # w dużym widoku nazwą miejsca jest najbliższa miejscowość nawet z kilku km
 NATIONAL_MISSING_MESSAGE = "Gotowa mapa Polski nie została jeszcze policzona. Uruchom: uv run python -m etl.run_all --only national"
-GAPS_NOTE = ("Szare kreskowanie: większość klientów tego miejsca mieszka tam, gdzie w danych jest podejrzanie mało firm "
-             "(≤ ¼ średniej krajowej) — wynik może być skutkiem luki w danych, a nie braku konkurencji. "
-             "Takich miejsc nie ma w najlepszych miejscach.")
 NO_LAYER_NOTE = "Dla tego wyboru nie ma gotowej mapy Polski — przybliż mapę, a policzymy ją na żywo."
 
 
@@ -66,7 +64,9 @@ def _scale_json(layer: str, p5, p99):
         return None
     if is_trend(layer):
         return {"max": float(p99)}
-    return {"lo": float(max(p5, p99 / 100)), "hi": float(p99)}     # jak logScale w frontendzie: najwyżej 2 rzędy wielkości
+    # Jak logScale we frontendzie: skala obejmuje najwyżej 2 rzędy wielkości (inaczej wszystko byłoby czerwone) i NAJMNIEJ jeden
+    # (audyt: przy wąskim zakresie, np. 310–600, różnica 20% wyglądała jak przepaść między bielą a czerwienią).
+    return {"lo": float(min(max(p5, p99 / 100), p99 / MIN_SCALE_RATIO)), "hi": float(p99)}
 
 
 _available: list[set | None] = [None]    # warstwy obecne we WSZYSTKICH poziomach piramidy; liczone raz na otwarcie bazy
@@ -114,11 +114,8 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
     rel_column = rel_layer(*layers["open"].split("__")[1:]) if "open" in layers else None
     if rel_column is not None and rel_column not in meta:
         rel_column = None                       # stara baza bez warstw „wiarygodni klienci” — mapa jak w v3.2, bez kreskowania
-    if rel_column is not None:
-        notes.append(GAPS_NOTE)
-    if layers:
-        notes.append(f"Mapa Polski policzona dla typowego zasięgu: {str(f'{reach_km:g}').replace('.', ',')} km. "
-                     "Przybliż, by zobaczyć Twoje ustawienia.")
+    # Audyt (szum): notatki „szare kreskowanie…” i „mapa policzona dla typowego zasięgu…” dublowały pytajnik w legendzie
+    # i podpowiedź pod suwakiem zasięgu, więc ich tu nie ma. W `notes` zostaje tylko to, czego interfejs inaczej nie powie.
 
     # Siatka odpowiedzi: równa w Mercatorze, komórki ~4 px.
     mid_lat = (south + north) / 2
