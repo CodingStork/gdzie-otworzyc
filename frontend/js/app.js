@@ -359,6 +359,7 @@ function showResult(result, used, fit) {
   state.used = used;
   ui.showInsights();                                     // panel po prawej zmienia szerokość mapy
   map.invalidateSize();
+  ui.lockReach(result.area === 'big' ? result.reach_km : null);   // gotowa mapa Polski = stały zasięg
   if (used.area === 'rect') {
     map.setRectArea(used.bounds, { veil: true, fit });
   } else {
@@ -385,6 +386,7 @@ function withoutTypeWarning(warnings, typeId) {
 function resetResult() {
   state.result = null;
   state.used = null;
+  ui.lockReach(null);
   discardPoint();
   map.clearFog();
   map.clearArea();

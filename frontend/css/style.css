@@ -30,7 +30,8 @@ select, input[type=search] {
 input[type=range] { width: 100%; }
 .hint, .muted { color: var(--muted); font-size: 12.5px; margin: 6px 0; }
 
-#type-hint[hidden], #craft-hint[hidden], #top-note[hidden] { display: none; }
+#type-hint[hidden], #craft-hint[hidden], #top-note[hidden], #reach-fixed[hidden] { display: none; }
+#reach-input:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Kroki w lewym panelu (v3.6): 1. narzędzie do zaznaczenia obszaru, 2. branża i klienci */
 fieldset.step { margin: 0 0 12px; padding: 4px 10px 10px; border: 1px solid var(--line); border-radius: 8px; }

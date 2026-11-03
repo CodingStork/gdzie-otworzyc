@@ -58,6 +58,8 @@
       </div>
       <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,3–20 km (wzór w ui.js) -->
       <input id="reach-input" type="range" min="0" max="100" step="1" value="50">
+      <!-- Przy dużym obszarze (gotowa mapa Polski) suwak jest zablokowany — ui.js: lockReach -->
+      <div id="reach-fixed" class="hint" hidden></div>
     </fieldset>
 
     <!-- Warstwy do wyboru zależą od ustawień powyżej (ui.js: syncLayers) -->

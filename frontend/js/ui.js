@@ -105,8 +105,25 @@ export function roundKm(km) {
 
 export const reachKm = () => roundKm(sliderToKm(Number($('reach-input').value)));
 
+// Zasięg, dla którego policzono gotową mapę Polski (null = suwak działa normalnie).
+let fixedReach = null;
+
 function showReach() {
-  $('reach-value').textContent = fmt(reachKm(), 1);
+  $('reach-value').textContent = fmt(fixedReach ?? reachKm(), 1);
+}
+
+// Duży obszar (powyżej 30 km promienia / 60 km boku) liczy się z gotowej mapy Polski dla stałego, typowego zasięgu branży.
+// Suwak nic by wtedy nie zmieniał, więc go blokujemy i mówimy dlaczego — zamiast udawać, że działa. km = null odblokowuje.
+export function lockReach(km) {
+  fixedReach = km ?? null;
+  const locked = fixedReach !== null;
+  $('reach-input').disabled = locked;
+  $('reach-fixed').hidden = !locked;
+  $('reach-fixed').textContent = locked
+    ? 'Zasięg jest stały, bo obszar jest duży (ponad 30 km promienia lub 60 km boku): mapę policzyliśmy wcześniej dla typowego zasięgu tej branży. ' +
+      'Zaznacz mniejszy obszar, żeby ustawić własny zasięg.'
+    : '';
+  showReach();
 }
 
 // Ustawia zasięg; zwraca true, gdy żądana wartość była poniżej minimum (np. stary link z 0,1 km) i została podniesiona.
