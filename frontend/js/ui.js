@@ -18,8 +18,8 @@ const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 const HELP = {
   tools: 'Okrąg: kliknij mapę w miejscu, które chcesz zbadać — pojawi się okrąg (zawsze ok. 1/5 ekranu, więc po oddaleniu mapy ' +
     'obejmie nawet województwo). Kropką na krawędzi zmienisz promień, kropką w środku przesuniesz okrąg, a promień możesz też wpisać w km. ' +
-    'Prostokąt: przeciągnij po mapie; za rogi zmienisz jego rozmiar. Obszar do 30 km promienia (60 km boku) liczymy z Twoimi ustawieniami; ' +
-    'większy — z gotowej mapy Polski, policzonej wcześniej dla typowego zasięgu branży.',
+    'Prostokąt: przeciągnij po mapie; za rogi zmienisz jego rozmiar. Każdy obszar, nawet cała Polska, liczymy z Twoimi ustawieniami; ' +
+    'najlepsze miejsca pokazujemy dla obszaru do 30 km promienia (60 km boku).',
   open: 'Ilu klientów mogłaby przyciągnąć nowa firma w danym miejscu. Liczymy to modelem Huffa: każdy mieszkaniec wybiera między firmami, ' +
     'a bliższa firma przyciąga go mocniej. Uwzględniamy konkurentów z OpenStreetMap i Overture Maps oraz »inne możliwości« ' +
     '(firmy, których nie ma w tych bazach, zakupy gdzie indziej). Liczba służy do porównywania miejsc między sobą — to nie prognoza sprzedaży: ' +
@@ -105,25 +105,8 @@ export function roundKm(km) {
 
 export const reachKm = () => roundKm(sliderToKm(Number($('reach-input').value)));
 
-// Zasięg, dla którego policzono gotową mapę Polski (null = suwak działa normalnie).
-let fixedReach = null;
-
 function showReach() {
-  $('reach-value').textContent = fmt(fixedReach ?? reachKm(), 1);
-}
-
-// Duży obszar (powyżej 30 km promienia / 60 km boku) liczy się z gotowej mapy Polski dla stałego, typowego zasięgu branży.
-// Suwak nic by wtedy nie zmieniał, więc go blokujemy i mówimy dlaczego — zamiast udawać, że działa. km = null odblokowuje.
-export function lockReach(km) {
-  fixedReach = km ?? null;
-  const locked = fixedReach !== null;
-  $('reach-input').disabled = locked;
-  $('reach-fixed').hidden = !locked;
-  $('reach-fixed').textContent = locked
-    ? 'Zasięg jest stały, bo obszar jest duży (ponad 30 km promienia lub 60 km boku): mapę policzyliśmy wcześniej dla typowego zasięgu tej branży. ' +
-      'Zaznacz mniejszy obszar, żeby ustawić własny zasięg.'
-    : '';
-  showReach();
+  $('reach-value').textContent = fmt(reachKm(), 1);
 }
 
 // Ustawia zasięg; zwraca true, gdy żądana wartość była poniżej minimum (np. stary link z 0,1 km) i została podniesiona.
@@ -135,7 +118,7 @@ function setReach(km) {
 }
 
 // ---- Promień okręgu (pole w karcie przy okręgu): 1–350 km; zaokrąglenie zależne od wielkości ----
-// Do 30 km liczymy na żywo, większy okrąg (do całej Polski) — z gotowej mapy Polski (backend: national.run_area).
+// Każdy okrąg liczymy z ustawieniami użytkownika; powyżej 30 km — bez rankingu najlepszych miejsc (backend: routes.TOP_RADIUS_KM).
 export const RADIUS_MIN_KM = 1;
 export const RADIUS_MAX_KM = 350;
 export function snapRadius(km) {
@@ -145,6 +128,7 @@ export function snapRadius(km) {
   return Math.min(RADIUS_MAX_KM, Math.max(RADIUS_MIN_KM, Math.round(n / step) * step));
 }
 // „12,5” albo „12.5” z pola tekstowego → liczba (NaN, gdy to nie liczba).
+const BIG_AREA_NOTE = 'Duży obszar: mapę policzymy z Twoimi ustawieniami (ok. 5 s), ale bez listy najlepszych miejsc.';
 export const parseKm = (text) => Number(String(text).trim().replace(',', '.'));
 
 // ---- Krok 1: narzędzie do zaznaczania obszaru (okrąg / prostokąt), bez domyślnego wyboru ----
@@ -653,15 +637,15 @@ export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel
     setRadius(km) {
       radius = km;
       if (input && document.activeElement !== input) input.value = fmt(km, km < 10 ? 1 : 0);
-      // Powyżej 30 km nie liczymy na żywo — mówimy to od razu, zanim ktoś kliknie „Analizuj”.
-      note.textContent = km > 30 ? 'Duży obszar: użyjemy mapy policzonej wcześniej dla typowego zasięgu branży.' : '';
+      // Powyżej 30 km nie ma rankingu najlepszych miejsc — mówimy to od razu, zanim ktoś kliknie „Analizuj”.
+      note.textContent = km > 30 ? BIG_AREA_NOTE : '';
     },
-    // big: dłuższy bok > 60 km (wtedy nie liczymy na żywo — patrz setRadius)
+    // big: dłuższy bok > 60 km (wtedy bez rankingu — patrz setRadius)
     setSize(text, why = '', big = false) {
       problem = why;
       size.textContent = why || text;
       size.classList.toggle('bad', !!why);
-      note.textContent = !why && big ? 'Duży obszar: użyjemy mapy policzonej wcześniej dla typowego zasięgu branży.' : '';
+      note.textContent = !why && big ? BIG_AREA_NOTE : '';
       refresh();
     },
     setReady(value) { ready = value; refresh(); },

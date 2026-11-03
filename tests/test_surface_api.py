@@ -106,7 +106,7 @@ def test_surface_large_reach_fast(client):
 def test_surface_validation(client):
     assert surface(client, lat=10).status_code == 422                   # poza Polską
     assert surface(client, radius_km=0.5).status_code == 422
-    assert surface(client, radius_km=351).status_code == 422             # v3.6: do 30 km na żywo, większe z gotowej mapy Polski
+    assert surface(client, radius_km=351).status_code == 422             # do 350 km (cała Polska)
     assert "1–350" in surface(client, radius_km=351).json()["detail"]
     assert surface(client, reach_km=0.01).status_code == 422
     assert surface(client, type="xxx").status_code == 422

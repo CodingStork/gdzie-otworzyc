@@ -32,10 +32,12 @@ def decay(d_m: np.ndarray, reach_m: float) -> np.ndarray:
 def make_grid(center_xy: np.ndarray, radius_m: float, divisions: int = 90):
     """Regularna siatka punktów pokrywająca okrąg. Zwraca (xy, maska „w okręgu”, cell_m, nx, ny).
 
-    Krok = promień/`divisions` (domyślnie 90) ograniczony do 50–300 m (do ok. 25 tys. punktów w okręgu). Punkty leżą wierszami od północy (tak jak piksele
-    obrazu), więc tablicę wartości można od razu narysować.
+    Krok = promień/`divisions` (domyślnie 90), co najmniej 50 m — zawsze ok. 180 punktów w poprzek okręgu (ok. 25 tys. w okręgu),
+    niezależnie od jego wielkości. Przy dużym obszarze punkty leżą rzadziej (150 km → co ok. 1,7 km), ale czas liczenia zostaje
+    kilka sekund nawet dla całej Polski, a na ekranie okrąg i tak zajmuje kilkaset pikseli. Punkty leżą wierszami od północy
+    (tak jak piksele obrazu), więc tablicę wartości można od razu narysować.
     """
-    cell = min(max(radius_m / divisions, 50.0), 300.0)
+    cell = max(radius_m / divisions, 50.0)
     n = math.ceil(2 * radius_m / cell)
     half = n * cell / 2
     xs = center_xy[0] - half + cell / 2 + np.arange(n) * cell

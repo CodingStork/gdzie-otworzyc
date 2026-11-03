@@ -49,6 +49,12 @@ def test_grid_covers_circle():
     assert len(xy) == nx * ny == len(mask)
 
 
+def test_grid_thins_out_for_big_area():
+    """Duży obszar (150 km): siatka ma tyle samo punktów w poprzek, tylko rzadszych — dlatego liczy się w kilka sekund."""
+    xy, mask, cell, nx, ny = make_grid(np.array([0.0, 0.0]), 150_000)
+    assert cell == pytest.approx(150_000 / 90, rel=0.01) and nx == ny == 180
+
+
 def test_top_points_separation():
     xy = np.array([[0.0, 0.0], [100.0, 0.0], [5000.0, 0.0], [9000.0, 0.0]])
     values = np.array([100.0, 90.0, 50.0, 0.0])

@@ -4,7 +4,6 @@ Odpowiedź ma kształt zbliżony do `/api/surface` (`layers`, `grid`, `values`, 
 tym samym kodem mgły. Różnice: siatka jest prostokątna i równa w rzucie Mercatora (tak jak mapa na ekranie — obraz przylega do kafelków),
 a skala kolorów (`scale`) jest STAŁA dla całego kraju (percentyle z `national_meta`), niezależna od tego, co widać w kadrze.
 """
-import dataclasses
 import functools
 import math
 
@@ -13,8 +12,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from backend.app.analysis.layers import is_trend, layer_months, layers_for, rel_layer
-from backend.app.analysis.kernel import LocalFrame
-from backend.app.analysis.service import SurfaceParams, _box, _permit_window, _period, area_summary, place_name
+from backend.app.analysis.service import _permit_window, _period, place_name
 from backend.app.analysis.surface import top_points
 from backend.app.catalog import DEFAULT_MONTHS, GAP_SHARE, TYPES, quality_warning
 from backend.app.db import DatabaseMissing, cursor, on_reset
@@ -244,75 +242,3 @@ def cached_national(type_id, demand_id, west, south, east, north, px) -> dict:
 
 
 on_reset(_cached.cache_clear)
-
-
-# ---------------------------------------------------------------- duży obszar (v3.6) ----
-# Okrąg „20% ekranu” przy oddalonej mapie ma promień kilkudziesięciu–kilkuset km (np. całe województwo). Liczenie Huffa na żywo
-# dla takiego obszaru trwałoby minuty, więc wartości bierzemy z gotowej mapy Polski (ETL `national`, typowy zasięg branży)
-# i przycinamy do obszaru, a podsumowanie liczymy tak samo jak dla małego obszaru (z grubszych komórek H3).
-
-BIG_AREA_RES = 7              # komórki popytu do podsumowania dużego obszaru (~5 km² — przy setkach km błąd brzegu jest pomijalny)
-BIG_NO_LAYER_NOTE = ("Dla tego wyboru nie ma gotowej mapy dużych obszarów — zaznacz obszar do 30 km promienia "
-                     "(albo 60 km boku), a policzymy go z Twoimi ustawieniami.")
-
-
-def big_area_note(reach_km: float) -> str:
-    return (f"Duży obszar: mapa jest policzona wcześniej dla typowego zasięgu ({str(f'{reach_km:g}').replace('.', ',')} km) "
-            "i 24 miesięcy pozwoleń. Zaznacz obszar do 30 km promienia, żeby użyć swoich ustawień i zobaczyć najlepsze miejsca.")
-
-
-def _cell_centers(grid: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Środki komórek siatki odpowiedzi (wiersze od północy, siatka równa w rzucie Mercatora) — (lat, lng) każdej komórki."""
-    nx, ny = grid["nx"], grid["ny"]
-    y_north, y_south = float(_merc_y(grid["north"])), float(_merc_y(grid["south"]))
-    lats = _merc_lat(y_north - (np.arange(ny) + 0.5) * (y_north - y_south) / ny)
-    lngs = grid["west"] + (np.arange(nx) + 0.5) / nx * (grid["east"] - grid["west"])
-    lng_grid, lat_grid = np.meshgrid(lngs, lats)
-    return lat_grid.ravel(), lng_grid.ravel()
-
-
-def run_area(con, p: SurfaceParams, px: int) -> dict:
-    """Odpowiedź /api/surface dla DUŻEGO obszaru: gotowa mapa Polski w prostokącie obejmującym obszar, poza okręgiem pusto,
-    plus podsumowanie obszaru. Bez najlepszych miejsc (audyt: na dużym obszarze ranking mieszałby miasta ze wsiami,
-    dla których model zawyża wynik) — notatka mówi, jak je zobaczyć."""
-    frame = LocalFrame(p.lat, p.lng)
-    rect = None
-    if p.bbox:
-        west, south, east, north = p.bbox
-        corners = frame.to_metric(np.array([south, south, north, north]), np.array([west, east, west, east]))
-        rect = (*corners.min(axis=0), *corners.max(axis=0))
-        q = dataclasses.replace(p, radius_km=float(np.hypot(*np.abs(corners).max(axis=0))) / 1000)   # okrąg opisany
-    else:
-        south, north, west, east = _box(p.lat, p.lng, p.radius_km)
-        q = p
-    response = run_national(con, p.type_id, p.demand_id, west, south, east, north, px, with_top=False)
-    if rect is None and response["values"]:
-        # Poza okręgiem nie pokazujemy wartości (podsumowanie i tak liczy tylko okrąg).
-        lat, lng = _cell_centers(response["grid"])
-        outside = np.hypot(*frame.to_metric(lat, lng).T) > p.radius_km * 1000
-        for key in ("values", "gap"):
-            for layer, cells in response.get(key, {}).items():
-                response[key][layer] = [None if out else v for v, out in zip(cells, outside)]
-    notes = [n for n in response["notes"] if n != NO_LAYER_NOTE]
-    if len(notes) < len(response["notes"]):
-        notes.insert(0, BIG_NO_LAYER_NOTE)
-    if response["layers"]:
-        notes.append(big_area_note(response["reach_km"]))
-    response.update(notes=notes, top={}, area="big",
-                    summary=area_summary(con, q, frame, rect, res=BIG_AREA_RES))
-    return response
-
-
-@functools.lru_cache(maxsize=16)
-def _cached_area(key: SurfaceParams, px: int) -> dict:
-    return run_area(cursor(), key, px)
-
-
-def cached_area(p: SurfaceParams, px: int) -> dict:
-    """run_area z pamięcią podręczną (LRU 16); miejsce zaokrąglone do ~10 m, promień do 0,5 km, px do wielokrotności 250."""
-    key = dataclasses.replace(p, lat=round(p.lat, 4), lng=round(p.lng, 4), radius_km=round(p.radius_km * 2) / 2,
-                              reach_km=round(p.reach_km, 1), bbox=tuple(round(v, 4) for v in p.bbox) if p.bbox else None)
-    return _cached_area(key, clamp_px(px))
-
-
-on_reset(_cached_area.cache_clear)

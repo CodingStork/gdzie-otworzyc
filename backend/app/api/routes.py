@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.app.analysis.service import SurfaceParams, cached_surface, point_details
 from backend.app.analysis.national import (
-    NATIONAL_MISSING_MESSAGE, NationalMissing, cached_area, cached_national,
+    NATIONAL_MISSING_MESSAGE, NationalMissing, cached_national,
 )
 from backend.app.catalog import DEFAULT_MONTHS, DEMANDS, MONTHS_OPTIONS, TYPE_ALIASES, TYPES, catalog_json
 from backend.app.config import ATTRIBUTION, USER_AGENT
@@ -50,8 +50,8 @@ def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
     return min_lng, min_lat, max_lng, max_lat
 
 
-RADIUS_KM = (1, 350)      # okrąg: do 30 km liczony na żywo, większy (do całej Polski) — z gotowej mapy Polski
-LIVE_RADIUS_KM = 30
+RADIUS_KM = (1, 350)      # okrąg: od 1 km do całej Polski — zawsze liczony z ustawieniami użytkownika (siatka rzednie z obszarem)
+TOP_RADIUS_KM = 30        # najlepsze miejsca tylko do tego promienia (60 km boku): na dużym obszarze ranking mieszałby miasta ze wsiami
 REACH_KM = (0.1, 20)
 
 
@@ -78,8 +78,8 @@ def _check_in_poland(lat: float, lng: float, what: str) -> None:
         raise _bad_request(f"{what} poza Polską")
 
 
-VIEW_MAX_KM = 60       # największy bok „widocznego obszaru” i zaznaczonego prostokąta liczonego na żywo
-RECT_MAX_KM = 700      # największy bok zaznaczonego prostokąta (większy niż 60 km — z gotowej mapy Polski)
+VIEW_MAX_KM = 60       # największy bok „widocznego obszaru”; zaznaczony prostokąt o większym boku — bez najlepszych miejsc
+RECT_MAX_KM = 700      # największy bok zaznaczonego prostokąta
 RECT_MIN_KM = 0.6      # najmniejszy bok zaznaczonego prostokąta (dane o ludności mają ok. 300 m rozdzielczości)
 
 
@@ -141,10 +141,12 @@ def surface(
         _check_in_poland(lat, lng, "Miejsce")
         if not RADIUS_KM[0] <= radius_km <= RADIUS_KM[1]:
             raise _bad_request(f"Promień obszaru musi mieścić się w zakresie {RADIUS_KM[0]}–{RADIUS_KM[1]} km")
-        big = radius_km > LIVE_RADIUS_KM
+        big = radius_km > TOP_RADIUS_KM
     params = SurfaceParams(type_id or None, demand or None, lat, lng, radius_km, reach_km, months, bbox, area)
     try:
-        return cached_area(params, px) if big else cached_surface(params)
+        result = cached_surface(params)
+        # Duży obszar liczymy tak samo (z zasięgiem użytkownika), ale bez rankingu najlepszych miejsc (audyt v3.5, B4).
+        return {**result, "top": {}, "top_edge": {}, "area": "big"} if big else result
     except DatabaseMissing:
         raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
     except NationalMissing:

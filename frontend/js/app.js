@@ -30,7 +30,7 @@ const state = {
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 const CIRCLE_SCREEN_FRACTION = 0.2;   // promień okręgu po kliknięciu = 20% krótszego boku mapy (ten sam rozmiar na ekranie przy każdym przybliżeniu)
-const LIVE_RECT_KM = 60;              // prostokąt do 60 km boku liczymy na żywo, większy — z gotowej mapy Polski (backend: national.run_area)
+const TOP_RECT_KM = 60;               // prostokąt do 60 km boku ma ranking najlepszych miejsc, większy — bez (backend: routes.TOP_RADIUS_KM)
 const RECT_MIN_KM = 0.6;              // limity boku zaznaczonego prostokąta — jak w API (/api/surface?area=rect)
 const RECT_MAX_KM = 700;
 const NO_CIRCLE = 1e9;                // „promień” maski mgły bez okręgu (prostokąt jest przycięty już przez serwer)
@@ -146,7 +146,7 @@ function updateRectCard() {
   const b = state.selection.bounds;
   const problem = rectProblem(b);
   const s = rectSizeKm(b);
-  state.card.setSize(rectText(b), problem, Math.max(s.width, s.height) > LIVE_RECT_KM);
+  state.card.setSize(rectText(b), problem, Math.max(s.width, s.height) > TOP_RECT_KM);
   map.setRectInvalid(!!problem);
   map.refreshSelectionCard();
 }
@@ -196,13 +196,12 @@ async function run({ fit }) {
   const controller = new AbortController();
   state.controller = controller;
   const mine = ++state.requestId;
-  const px = map.viewBounds().px;                       // szerokość mapy: rozdzielczość gotowej mapy dla dużego obszaru
   const used = area.kind === 'rect'
     ? { ...p, ...rectCenter(area.bounds), area: 'rect', bounds: area.bounds, name: 'zaznaczony obszar' }
     : { ...p, lat: area.lat, lng: area.lng, radius_km: area.radiusKm, name: area.name };
   const query = area.kind === 'rect'
-    ? { type: p.type, demand: p.demand, reach_km: p.reach_km, months: p.months, area: 'rect', ...area.bounds, px }
-    : { type: p.type, demand: p.demand, lat: area.lat, lng: area.lng, radius_km: area.radiusKm, reach_km: p.reach_km, months: p.months, px };
+    ? { type: p.type, demand: p.demand, reach_km: p.reach_km, months: p.months, area: 'rect', ...area.bounds }
+    : { type: p.type, demand: p.demand, lat: area.lat, lng: area.lng, radius_km: area.radiusKm, reach_km: p.reach_km, months: p.months };
   ui.setLoading(true);
   state.loading = true;
   try {
@@ -269,7 +268,7 @@ function drawLayer({ withTop = true } = {}) {
   let layer = ui.currentLayer();
   if (!result.values[layer]) layer = result.layers[0];   // np. warstwa niedostępna w gotowej mapie: rysujemy pierwszą dostępną
   const values = layer && result.values[layer];
-  if (!values) {                                         // brak warstwy (np. duży obszar bez gotowej mapy dla tego wyboru)
+  if (!values) {                                         // brak warstwy (np. ten wybór jej nie ma)
     map.clearFog();
     ui.hideLegend();
     if (withTop) { map.setTopMarkers([], () => {}); ui.renderTop([], ui.currentLayer(), false, () => {}); ui.setTopNote(''); }
@@ -317,7 +316,7 @@ function drawLayer({ withTop = true } = {}) {
   }
   if (!withTop) return;
   if (result.area === 'big') {
-    // Duży obszar (z gotowej mapy Polski): bez rankingu — patrz BIG_TOP_HINT i docs/audyt-przydatnosci.md (B4, B7).
+    // Duży obszar (ponad 30 km promienia / 60 km boku): bez rankingu — patrz BIG_TOP_HINT i docs/audyt-przydatnosci.md (B4, B7).
     ui.renderTop([], layer, hasPermits(), () => {}, false, BIG_TOP_HINT);
     ui.setTopNote('');
     map.setTopMarkers([], () => {});
@@ -359,7 +358,6 @@ function showResult(result, used, fit) {
   state.used = used;
   ui.showInsights();                                     // panel po prawej zmienia szerokość mapy
   map.invalidateSize();
-  ui.lockReach(result.area === 'big' ? result.reach_km : null);   // gotowa mapa Polski = stały zasięg
   if (used.area === 'rect') {
     map.setRectArea(used.bounds, { veil: true, fit });
   } else {
@@ -386,7 +384,6 @@ function withoutTypeWarning(warnings, typeId) {
 function resetResult() {
   state.result = null;
   state.used = null;
-  ui.lockReach(null);
   discardPoint();
   map.clearFog();
   map.clearArea();

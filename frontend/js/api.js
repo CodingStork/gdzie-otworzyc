@@ -25,7 +25,7 @@ async function get(path, params = {}, signal) {
 }
 
 export const getCatalog = () => get('/api/catalog');
-// Mapa zaznaczonego obszaru (mgła + podsumowanie; duży obszar — z gotowej mapy Polski); `signal` pozwala przerwać zapytanie, gdy użytkownik zmienił ustawienia.
+// Mapa zaznaczonego obszaru (mgła + podsumowanie, zawsze z ustawieniami użytkownika); `signal` pozwala przerwać zapytanie, gdy użytkownik zmienił ustawienia.
 export const surface = (params, signal) => get('/api/surface', params, signal);
 // Szczegóły klikniętego punktu: liczby w okręgu zasięgu, model Huffa, komórki do narysowania.
 export const point = (params) => get('/api/point', params);

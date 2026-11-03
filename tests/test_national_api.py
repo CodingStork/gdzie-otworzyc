@@ -249,37 +249,33 @@ def test_national_without_rel_layer_has_no_gap(gap_client):
     assert "gap" not in j and not any("kreskowanie" in n for n in j["notes"]) and j["top"]["open"]
 
 
-# ---------------------------------------------------------------- v3.6: duży obszar w /api/surface ----
+# ---------------------------------------------------------------- duży obszar w /api/surface ----
+# Od poprawki po v3.6: każdy zaznaczony obszar (aż do całej Polski) liczymy z zasięgiem użytkownika — siatka rzednie z obszarem.
+# Gotowa mapa Polski (/api/national) nie jest już używana dla zaznaczonego obszaru.
 
 def big_surface(client, **kw):
-    params = dict(type="beauty", demand="pop_f", lat=LAT, lng=LNG, radius_km=60, reach_km=1.5, px=800)
+    params = dict(type="beauty", demand="pop_f", lat=LAT, lng=LNG, radius_km=60, reach_km=1.5)
     params.update(kw)
     return client.get("/api/surface", params={k: v for k, v in params.items() if v is not None})
 
 
-def test_big_circle_comes_from_ready_map_with_summary(client):
-    """Okrąg „20% ekranu” przy oddalonej mapie (np. 60 km) liczymy z gotowej mapy Polski, a nie na żywo."""
-    j = big_surface(client).json()
-    assert j["mode"] == "national" and j["area"] == "big" and j["layers"] == ["open", "demand"]
-    s = j["summary"]
+def test_big_circle_is_computed_with_users_reach(client):
+    """Okrąg 60 km: liczony z ustawieniami użytkownika (zmiana zasięgu zmienia mapę), z podsumowaniem, ale bez rankingu."""
+    near, far = big_surface(client, reach_km=0.5).json(), big_surface(client, reach_km=10).json()
+    assert near["area"] == "big" and near["layers"] == ["open", "demand"] and near.get("mode") != "national"
+    assert near["top"] == {} and near["top_edge"] == {}
+    assert near["values"]["open"] != far["values"]["open"]
+    s = near["summary"]
     assert s["shape"] == "circle" and s["radius_km"] == 60 and s["competitors"]["total"] == 2 and s["demand_total"] > 0
-    assert j["top"] == {} and any("typowego zasięgu" in n for n in j["notes"])
-    # komórki daleko od środka (narożniki prostokąta obejmującego okrąg) są puste
-    g, values = j["grid"], j["values"]["demand"]
-    assert values[0] is None and values[g["nx"] - 1] is None and values[-1] is None
+    assert near["grid"]["nx"] <= 200                                      # siatka rzednie z obszarem — nie 400 punktów w poprzek
 
 
-def test_big_rect_comes_from_ready_map(client):
+def test_big_rect_is_computed_without_ranking(client):
     j = big_surface(client, lat=None, lng=None, radius_km=None, area="rect",
                     west=LNG - 0.6, south=LAT - 0.4, east=LNG + 0.6, north=LAT + 0.4).json()
-    assert j["area"] == "big" and j["summary"]["shape"] == "rect" and j["summary"]["width_km"] > 60
+    assert j["area"] == "big" and j["top"] == {} and j["summary"]["shape"] == "rect" and j["summary"]["width_km"] > 60
 
 
-def test_small_circle_is_still_live(client):
+def test_small_circle_has_ranking(client):
     j = big_surface(client, radius_km=30).json()
     assert "area" not in j and j["top"]["open"]
-
-
-def test_big_area_without_ready_layer_says_how_to_get_it(client):
-    j = big_surface(client, type="diy", demand="pop_f").json()       # zasięg 15 km nie ma gotowej warstwy dla kobiet
-    assert j["layers"] == [] and any("30 km" in n for n in j["notes"])

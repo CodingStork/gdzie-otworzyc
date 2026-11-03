@@ -230,7 +230,7 @@ def test_rectangle_drawn_by_dragging_then_analysed(app_url, make_page):
     assert "area=rect" in surface_calls(page)[0]
 
 
-def test_big_circle_at_country_zoom_uses_ready_map_without_ranking(app_url, make_page):
+def test_big_circle_at_country_zoom_without_ranking(app_url, make_page):
     page = make_page(app_url + view(51.5, 18.2, 6))
     page.select_option("#type-select", "beauty")
     draw_circle(page, 0.5, 0.5)
