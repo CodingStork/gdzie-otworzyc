@@ -35,17 +35,17 @@
     <fieldset id="settings-box" class="step">
       <legend>2. Co otwierasz i kim są klienci</legend>
       <label for="type-select">Typ działalności</label>
-      <select id="type-select"></select>
+      <select id="type-select" autocomplete="off"></select>
       <!-- Pod wyborem branży: zastrzeżenie „czego mapa nie widzi” dla wybranej branży albo (bez branży) podpowiedź dla rzemieślników -->
       <div id="type-hint" class="hint" hidden></div>
       <div id="craft-hint" class="hint">Pracujesz u klienta (brukarz, instalator, ogrodnik)? Zostaw branżę pustą i wybierz klientów »Nowe domy« — zobaczysz, gdzie się buduje.</div>
 
       <label for="demand-select">Twoi klienci to</label>
-      <select id="demand-select"></select>
+      <select id="demand-select" autocomplete="off"></select>
 
       <div id="months-row" hidden>
         <label for="months-select">Okres pozwoleń</label>
-        <select id="months-select">
+        <select id="months-select" autocomplete="off">
           <option value="12">ostatnie 12 miesięcy</option>
           <option value="24" selected>ostatnie 24 miesiące</option>
           <option value="36">ostatnie 36 miesięcy</option>
@@ -57,7 +57,7 @@
         <button type="button" class="help" data-help="reach" aria-label="Co to jest zasięg klienta?">?</button>
       </div>
       <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,3–20 km (wzór w ui.js) -->
-      <input id="reach-input" type="range" min="0" max="100" step="1" value="50">
+      <input id="reach-input" type="range" min="0" max="100" step="1" value="50" autocomplete="off">
     </fieldset>
 
     <!-- Warstwy do wyboru zależą od ustawień powyżej (ui.js: syncLayers) -->
@@ -77,7 +77,7 @@
   <aside id="insights" hidden>
     <div id="legend" hidden></div>
     <label class="opacity">Przezroczystość mgły
-      <input id="opacity-input" type="range" min="0.2" max="1" step="0.05" value="0.85">
+      <input id="opacity-input" type="range" min="0.2" max="1" step="0.05" value="0.85" autocomplete="off">
     </label>
 
     <section id="summary-box" hidden>
@@ -88,12 +88,7 @@
       <div id="summary"></div>
     </section>
 
-    <h2 id="top-title" hidden>Najlepsze miejsca</h2>
-    <ol id="top-list"></ol>
-    <p id="top-note" class="hint" hidden></p>
-
     <div id="warnings" hidden></div>
-    <div id="notes" hidden></div>
     <footer id="meta-footer"></footer>
   </aside>
 

@@ -2,7 +2,6 @@
 // dymek ze szczegółami punktu, wyszukiwarka adresów i zakładki arkusza na telefonie.
 import { geocode } from './api.js';
 import { fogGradientCss, niceLogTicks, trendGradientCss } from './colors.js';
-import { SOURCE_NAMES } from './map.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -18,8 +17,7 @@ const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 const HELP = {
   tools: 'Okrąg: kliknij mapę w miejscu, które chcesz zbadać — pojawi się okrąg (zawsze ok. 1/5 ekranu, więc po oddaleniu mapy ' +
     'obejmie nawet województwo). Kropką na krawędzi zmienisz promień, kropką w środku przesuniesz okrąg, a promień możesz też wpisać w km. ' +
-    'Prostokąt: przeciągnij po mapie; za rogi zmienisz jego rozmiar. Każdy obszar, nawet cała Polska, liczymy z Twoimi ustawieniami; ' +
-    'najlepsze miejsca pokazujemy dla obszaru do 30 km promienia (60 km boku).',
+    'Prostokąt: przeciągnij po mapie; za rogi zmienisz jego rozmiar. Każdy obszar, nawet cała Polska, liczymy z Twoimi ustawieniami.',
   open: 'Ilu klientów mogłaby przyciągnąć nowa firma w danym miejscu. Liczymy to modelem Huffa: każdy mieszkaniec wybiera między firmami, ' +
     'a bliższa firma przyciąga go mocniej. Uwzględniamy konkurentów z OpenStreetMap i Overture Maps oraz »inne możliwości« ' +
     '(firmy, których nie ma w tych bazach, zakupy gdzie indziej). Liczba służy do porównywania miejsc między sobą — to nie prognoza sprzedaży: ' +
@@ -41,12 +39,14 @@ const HELP = {
     'więc widać różnice wewnątrz miasta (legenda pokazuje aktualne liczby).',
   gaps: 'Szare kreskowanie: większość klientów tego miejsca mieszka tam, gdzie w danych jest podejrzanie mało firm ' +
     '(najwyżej ¼ tego, co wynika ze średniej krajowej przy takiej liczbie mieszkańców). Wynik może być wtedy skutkiem luki w danych ' +
-    '(brak firm w OpenStreetMap i Overture Maps), a nie braku konkurencji. Takich miejsc nie pokazujemy w najlepszych miejscach. ' +
+    '(brak firm w OpenStreetMap i Overture Maps), a nie braku konkurencji. ' +
     'Małych miejscowości, w których średnio byłyby mniej niż 3 firmy, nie oceniamy.',
-  summary: 'Liczby dotyczą całego zaznaczonego obszaru. Liczbę firm porównujemy z miejscami w Polsce o podobnej gęstości zaludnienia ' +
-    '(kraj dzielimy na 5 grup: od wsi po centra miast), a nie ze średnią krajową — w miastach firm na mieszkańca jest zawsze więcej niż na wsi, ' +
-    'bo mieszkańcy wsi korzystają z usług w mieście. »Mniej« albo »więcej« konkurencji mówimy tylko, gdy różnica jest wyraźna ' +
-    'i nie jest zwykłym przypadkiem; przy kilku firmach nie da się tego ocenić. Firmy: OpenStreetMap + Overture Maps (nie wszystkie są na mapach).',
+  summary: 'Liczby dotyczą całego zaznaczonego obszaru. Mieszkańcy to szacunek: spis powszechny 2021 rozłożony na budynki mieszkalne. ' +
+    'Firmy pochodzą z OpenStreetMap i Overture Maps (powtórzenia usuwamy) — nie wszystkie firmy są na tych mapach, więc liczba bywa zaniżona. ' +
+    'Kliknij w zaznaczony obszar, żeby zobaczyć liczby dla jednego miejsca.',
+  estimate: 'Ilu klientów mogłaby przyciągnąć nowa firma w tym miejscu (model Huffa) — to ta liczba wyznacza kolor mapy »Gdzie otworzyć«. ' +
+    'Różni się od liczby mieszkańców wyżej, bo liczymy też klientów spoza okręgu (bliższych mocniej), a część z nich wybierze konkurencję ' +
+    'albo »inne możliwości«. Służy do porównywania miejsc między sobą — to nie prognoza sprzedaży.',
 };
 
 // Pytajnik: przycisk .help[data-help]. Podpowiedź pokazuje się po najechaniu lub kliknięciu,
@@ -93,7 +93,6 @@ export function renderHelp() {
 // Dolna granica 0,3 km: dane o mieszkańcach mają rozdzielczość ok. 300 m (komórka H3 res 9), mniejszy zasięg nic nie wnosi.
 const KM_MIN = 0.3;
 const KM_MAX = 20;
-export const MIN_REACH_NOTE = 'Dane o mieszkańcach mają rozdzielczość ok. 300 m — mniejszy zasięg nie dodaje informacji.';
 const sliderToKm = (x) => KM_MIN * Math.pow(KM_MAX / KM_MIN, x / 100);
 const kmToSlider = (km) => Math.round(100 * Math.log(km / KM_MIN) / Math.log(KM_MAX / KM_MIN));
 
@@ -109,12 +108,10 @@ function showReach() {
   $('reach-value').textContent = fmt(reachKm(), 1);
 }
 
-// Ustawia zasięg; zwraca true, gdy żądana wartość była poniżej minimum (np. stary link z 0,1 km) i została podniesiona.
+// Ustawia zasięg (np. typowy dla wybranej branży).
 function setReach(km) {
-  const wanted = Number(km);
-  $('reach-input').value = kmToSlider(Math.min(KM_MAX, Math.max(KM_MIN, wanted)));
+  $('reach-input').value = kmToSlider(Math.min(KM_MAX, Math.max(KM_MIN, Number(km))));
   showReach();
-  return wanted < KM_MIN;
 }
 
 // ---- Promień okręgu (pole w karcie przy okręgu): 1–350 km; zaokrąglenie zależne od wielkości ----
@@ -128,7 +125,6 @@ export function snapRadius(km) {
   return Math.min(RADIUS_MAX_KM, Math.max(RADIUS_MIN_KM, Math.round(n / step) * step));
 }
 // „12,5” albo „12.5” z pola tekstowego → liczba (NaN, gdy to nie liczba).
-const BIG_AREA_NOTE = 'Duży obszar: mapę policzymy z Twoimi ustawieniami (ok. 5 s), ale bez listy najlepszych miejsc.';
 export const parseKm = (text) => Number(String(text).trim().replace(',', '.'));
 
 // ---- Krok 1: narzędzie do zaznaczania obszaru (okrąg / prostokąt), bez domyślnego wyboru ----
@@ -265,23 +261,6 @@ export function selectedParams() {
   return params;
 }
 
-const hasOption = (select, value) => [...select.options].some((o) => o.value === value);
-
-// Ustawia formularz z wartości zapisanych w adresie; nieznane wartości (np. ze starego linku) pomijamy.
-// Zwraca true, gdy zasięg z linku był poniżej minimum 0,3 km (został podniesiony — trzeba o tym powiedzieć).
-export function setSelection({ type, demand, reach, months }) {
-  if (type && catalog.aliases && catalog.aliases[type]) type = catalog.aliases[type];   // stary link: paznokcie → salon kosmetyczny
-  $('type-select').value = type && hasOption($('type-select'), type) ? type : '';
-  if ($('type-select').value) markSuggested(currentType());   // dopiski „sugerowane”, ale bez nadpisywania zapisanych wartości
-  $('demand-select').value = demand && hasOption($('demand-select'), demand) ? demand : '';
-  const clamped = reach ? setReach(reach) : false;
-  if (months) $('months-select').value = String(months);
-  syncMonthsRow();
-  syncLayers();
-  syncTypeHints();
-  return clamped;
-}
-
 // Czy jest co liczyć (branża albo klienci)? Bez tego karta przy obszarze nie pokazuje przycisku „Analizuj”.
 export function hasSettings() {
   const p = selectedParams();
@@ -380,14 +359,12 @@ const legendDigits = (v) => (v < 1 ? 2 : v < 10 ? 1 : 0);
 // Końce skali to percentyle — podajemy je z dokładnością do 2 cyfr, żeby nie sugerować fałszywej precyzji.
 const twoDigits = (v) => Number(v.toPrecision(2));
 
-function legendHtml(title, bar, rows, note, gapHint = false) {
+function legendHtml(title, bar, rows, gapHint = false) {
   const el = $('legend');
   el.innerHTML = '<div class="legend-title"><b></b> <button type="button" class="help" data-help="legend" aria-label="Jak czytać kolory?">?</button></div>' +
     `<div class="legend-body"><div class="bar" style="background:${bar}"></div><div class="stops">${rows}</div></div>` +
-    (gapHint ? '<div class="legend-gap"><span class="hatch"></span> mało danych o firmach <button type="button" class="help" data-help="gaps" aria-label="Co oznacza kreskowanie?">?</button></div>' : '') +
-    (note ? '<div class="note"></div>' : '');
+    (gapHint ? '<div class="legend-gap"><span class="hatch"></span> mało danych o firmach <button type="button" class="help" data-help="gaps" aria-label="Co oznacza kreskowanie?">?</button></div>' : '');
   el.querySelector('b').textContent = title;   // tytuł zawiera nazwy z katalogu — wstawiamy jako tekst
-  if (note) el.querySelector('.note').textContent = note;
   el.hidden = false;
 }
 
@@ -395,7 +372,7 @@ const stopRow = (t, text) =>
   `<div class="stop" style="bottom:${(t * 100).toFixed(1)}%"><span class="tick"></span>${text}</div>`;
 
 // scale: { lo, hi } z logScale() — wartości, przy których kolor jest najjaśniejszy / najciemniejszy.
-export function renderLegend(title, scale, note = '', gapHint = false) {
+export function renderLegend(title, scale, gapHint = false) {
   if (!scale) { $('legend').hidden = true; return; }
   const label = (prefix, v) => `${prefix}${fmt(v, legendDigits(v))}`;
   const stops = [{ t: 1, text: label('≥ ', twoDigits(scale.hi)) }, { t: 0, text: label('≤ ', twoDigits(scale.lo)) }];
@@ -404,13 +381,13 @@ export function renderLegend(title, scale, note = '', gapHint = false) {
     const narrow = window.innerWidth < 768;
     for (const tick of niceLogTicks(scale, narrow ? 2 : 5, narrow ? 0.2 : 0.1)) stops.push({ t: tick.t, text: label('', tick.v) });
   }
-  legendHtml(title, fogGradientCss('to top'), stops.map((s) => stopRow(s.t, s.text)).join(''), note, gapHint);
+  legendHtml(title, fogGradientCss('to top'), stops.map((s) => stopRow(s.t, s.text)).join(''), gapHint);
 }
 
 // Legenda trendu: paleta rozbieżna, podpisy słowne zamiast liczb (wartości to ważone odległością przyrosty pozwoleń).
-export function renderTrendLegend(title, note = '') {
+export function renderTrendLegend(title) {
   const rows = [stopRow(1, 'więcej budów'), stopRow(0.5, 'bez zmian'), stopRow(0, 'mniej budów')].join('');
-  legendHtml(title, trendGradientCss('to top'), rows, note);
+  legendHtml(title, trendGradientCss('to top'), rows);
 }
 
 export function hideLegend() { $('legend').hidden = true; }
@@ -428,7 +405,6 @@ function renderParagraphs(id, list) {
 }
 
 export const renderWarnings = (list) => renderParagraphs('warnings', list);
-export const renderNotes = (list) => renderParagraphs('notes', list);
 
 export function showError(message) {
   const el = $('error');
@@ -448,50 +424,24 @@ export function setLoading(loading) {
 }
 
 // ---- Podsumowanie obszaru ----
+// Marcin: „prostota” — na ekranie tylko dwie liczby (klienci i firmy w obszarze), a pod nimi skąd są dane. Wyjaśnienia są pod pytajnikami.
 
 // Szacunek do setek (od 1000), do dziesiątek (od 100), inaczej do jedności — nie pokazujemy fałszywej precyzji.
 const roundEstimate = (n) => (n >= 1000 ? Math.round(n / 100) * 100 : n >= 100 ? Math.round(n / 10) * 10 : Math.round(n));
 
-// Werdykt o konkurencji (backend: service.verdict). Porównanie z „podobnymi miejscami” (gęstość zaludnienia) albo — w starszej
-// bazie — ze średnią krajową. „Mniej” to też typowy objaw braków w danych, więc prosimy o sprawdzenie na miejscu.
-const VERDICTS = {
-  similar_places: {
-    less: 'Mniej konkurencji niż zwykle w podobnych miejscach — sprawdź na miejscu, czy na mapach nie brakuje firm.',
-    more: 'Więcej konkurencji niż zwykle w podobnych miejscach.',
-    similar: 'Konkurencja typowa dla podobnych miejsc.',
-  },
-  national: {
-    less: 'Mniej konkurencji niż średnio w Polsce — sprawdź na miejscu, czy na mapach nie brakuje firm.',
-    more: 'Więcej konkurencji niż średnio w Polsce.',
-    similar: 'Konkurencja na poziomie średniej krajowej.',
-  },
-  unknown: 'Nie da się ocenić konkurencji — za mało danych o firmach.',
-};
+// Liczba klientów: mieszkańcy to szacunek (spis rozłożony na budynki) — „ok.”; pozwolenia to dokładna liczba z rejestru.
+const demandValue = (n, permits) => (permits ? fmt(n) : `ok. ${fmt(roundEstimate(n))}`);
 
-// Oczekiwana liczba firm ze słowem w dobrej formie: „ok. 1,4 firmy”, „ok. 3 firmy”, „ok. 7 firm”, „ok. 22 firmy”
-// (poniżej 10 — jedno miejsce po przecinku); poniżej jednej — „mniej niż jedna firma”.
-function firmsPhrase(n) {
-  if (n < 0.95) return 'mniej niż jedna firma';
-  const value = n < 10 ? Math.round(n * 10) / 10 : roundEstimate(n);
-  const whole = Number.isInteger(value);
-  const word = !whole ? 'firmy' : value === 1 ? 'firma'
-    : [2, 3, 4].includes(value % 10) && ![12, 13, 14].includes(value % 100) ? 'firmy' : 'firm';
-  return `ok. ${fmt(value, n < 10 ? 1 : 0)} ${word}`;
+// Źródła liczb jednym zdaniem: „Mieszkańcy: spis powszechny 2021. Fryzjerzy: OpenStreetMap 2 707, Overture Maps 2 259.”
+function sourcesText(demand, permits, typePlural, competitors) {
+  const parts = [];
+  if (demand) parts.push(permits ? `${demand.name}: pozwolenia na budowę z GUNB, ${permits.from} – ${permits.to}.`
+    : `${demand.name}: spis powszechny 2021 (Eurostat).`);
+  if (competitors) parts.push(`${capitalize(typePlural)}: OpenStreetMap ${fmt(competitors.osm)}, Overture Maps ${fmt(competitors.overture)}.`);
+  return parts.join(' ');
 }
 
-function verdictText(summary) {
-  const v = summary.verdict;
-  if (v === 'unknown') return VERDICTS.unknown;
-  if (v === 'few') {
-    // Przy tak małych liczbach jedna firma więcej albo mniej to przypadek (wyjaśnia to pytajnik podsumowania).
-    return `Za mało firm, żeby ocenić konkurencję (${summary.benchmark === 'national' ? 'średnio w Polsce' : 'w podobnych miejscach'}: ` +
-      `${firmsPhrase(summary.benchmark_firms)} tego typu na taki obszar).`;
-  }
-  return (VERDICTS[summary.benchmark] || VERDICTS.national)[v] || null;
-}
-
-// summary z /api/surface; ctx: { placeName, demandId, permitsPeriod }. Najpierw odpowiedź (werdykt jednym zdaniem), potem liczby,
-// z których wynika. Pokazujemy tylko wiersze, które mają sens dla ustawień (sam popyt: bez firm; sama branża: bez klientów).
+// summary z /api/surface; ctx: { demandId, permitsPeriod }. Wiersz klientów tylko przy wybranych klientach, wiersz firm — przy branży.
 export function renderSummary(summary, ctx) {
   const box = $('summary');
   box.replaceChildren();
@@ -502,73 +452,17 @@ export function renderSummary(summary, ctx) {
     box.append(row);
     return row;
   };
-  const demand = demandById(ctx.demandId);
-  const verdict = summary.verdict ? verdictText(summary) : null;
-  if (verdict) add(verdict, `verdict ${summary.verdict}`);
-  add(summary.shape === 'view' ? 'Widoczny obszar (to, co jest teraz na mapie)'
-    : summary.shape === 'rect' ? `Zaznaczony obszar: ${sizeText(summary.width_km, summary.height_km)}`
-      : `Obszar: ${ctx.placeName}, promień ${fmt(summary.radius_km, 1)} km`, 'where');
-  if (summary.demand_total != null && demand) {
-    const permits = ctx.permitsPeriod;
-    add(permits
-      ? `${demand.name}: ${fmt(summary.demand_total)} (pozwolenia ${permits.from} – ${permits.to})`
-      : `${demand.name}: ok. ${fmt(roundEstimate(summary.demand_total))} (spis 2021)`);
-  }
-  if (summary.competitors) {
-    const c = summary.competitors;
-    add(`${capitalize(summary.type_plural)}: ${fmt(c.total)} (OpenStreetMap ${fmt(c.osm)}, Overture ${fmt(c.overture)})`);
-  }
-  const where = summary.benchmark === 'similar_places' ? 'w podobnych miejscach' : 'średnio w Polsce';
-  if (summary.competitors && summary.demand_total != null && summary.verdict && summary.verdict !== 'few') {
-    const here = summary.per_firm != null ? `1 firma na ok. ${fmt(roundEstimate(summary.per_firm))} ${summary.demand_genitive}`
-      : 'brak firm tego typu';
-    add(summary.benchmark_per_firm != null
-      ? `${capitalize(here)} — ${where} 1 na ok. ${fmt(roundEstimate(summary.benchmark_per_firm))}.`
-      : `${capitalize(here)}.`, 'strong');
-  } else if (summary.competitors && summary.benchmark_firms != null && summary.verdict && summary.verdict !== 'few') {
-    add(`${capitalize(where)}: ${firmsPhrase(summary.benchmark_firms)} tego typu na taki obszar.`);
-  }
-  if (summary.data_gap) {
-    add(`⚠ Mało danych o firmach: ${summary.type_plural} w obszarze mamy w danych ${fmt(summary.competitors.total)}, ` +
-      `a przy tej liczbie mieszkańców średnio w Polsce byłoby ok. ${fmt(Math.round(summary.expected_firms))}. ` +
-      'Prawdopodobnie część firm nie jest jeszcze na mapach — sprawdź na miejscu.', 'warn');
-  }
+  const demand = summary.demand_total != null ? demandById(ctx.demandId) : null;
+  const permits = ctx.permitsPeriod;
+  if (demand) add(`${demand.name}: ${demandValue(summary.demand_total, permits)}`, 'strong');
+  if (summary.competitors) add(`${capitalize(summary.type_plural)}: ${fmt(summary.competitors.total)}`, 'strong');
+  // Luka w danych zostaje (mapa ma mówić prawdę), ale jednym zdaniem — liczby są pod pytajnikiem kreskowania.
+  if (summary.data_gap) add('⚠ W danych prawdopodobnie brakuje części firm w tym obszarze.', 'warn');
+  add(sourcesText(demand, permits, summary.type_plural, summary.competitors), 'source');
   $('summary-box').hidden = false;
 }
 
 export const hideSummary = () => { $('summary-box').hidden = true; };
-
-// ---- Najlepsze miejsca ----
-
-const TOP_TITLES = { open: 'Najlepsze miejsca', demand: 'Najwięcej klientów', competition: 'Najwięcej firm', trend: 'Gdzie przybywa budów' };
-
-// Jedno zdanie pod listą najlepszych miejsc (np. „różnice są małe”); pusty tekst chowa notatkę.
-export function setTopNote(text) {
-  $('top-note').textContent = text || '';
-  $('top-note').hidden = !text;
-}
-
-export function renderTop(list, layer, permits, onClick, inView = false, emptyText = 'Brak danych w tym obszarze.') {
-  $('top-title').textContent = inView && layer === 'open' ? 'Najlepsze miejsca w widoku' : (TOP_TITLES[layer] || TOP_TITLES.open);
-  $('top-title').hidden = false;
-  const ol = $('top-list');
-  ol.innerHTML = '';
-  if (!list.length) {
-    ol.innerHTML = '<li class="muted"></li>';
-    ol.firstChild.textContent = emptyText;
-    return;
-  }
-  list.forEach((place, i) => {
-    const li = document.createElement('li');
-    const label = layer === 'open' ? `ok. ${fmt(roundEstimate(place.value))} ${clientsNoun(permits)}`
-      : layer === 'demand' ? `${fmt(roundEstimate(place.value))} ${permits ? 'nowych budów' : 'dostępnych klientów'}`
-        : layer === 'trend' ? `przyrost ok. ${fmt(roundEstimate(place.value))} budów`
-          : `zagęszczenie ${fmt(place.value, 1)}`;
-    li.textContent = `${place.name} — ${label}`;
-    li.addEventListener('click', () => onClick(place, i));
-    ol.append(li);
-  });
-}
 
 // Wymiary prostokąta, np. „12,4 × 8,1 km”.
 export const sizeText = (widthKm, heightKm) => `${fmt(widthKm, 1)} × ${fmt(heightKm, 1)} km`;
@@ -604,8 +498,6 @@ export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); input.blur(); } });
     size.append(label);
   }
-  const note = document.createElement('div');
-  note.className = 'sel-note';
   const body = document.createElement('div');
   body.className = 'sel-body';
   const buttons = document.createElement('div');
@@ -623,7 +515,7 @@ export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel
   cancel.setAttribute('aria-label', 'Anuluj zaznaczenie');
   cancel.addEventListener('click', onCancel);
   buttons.append(ok, cancel);
-  el.append(head, size, note, body, buttons);
+  el.append(head, size, body, buttons);
   let problem = '';
   let ready = false;
   const refresh = () => {
@@ -637,15 +529,11 @@ export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel
     setRadius(km) {
       radius = km;
       if (input && document.activeElement !== input) input.value = fmt(km, km < 10 ? 1 : 0);
-      // Powyżej 30 km nie ma rankingu najlepszych miejsc — mówimy to od razu, zanim ktoś kliknie „Analizuj”.
-      note.textContent = km > 30 ? BIG_AREA_NOTE : '';
     },
-    // big: dłuższy bok > 60 km (wtedy bez rankingu — patrz setRadius)
-    setSize(text, why = '', big = false) {
+    setSize(text, why = '') {
       problem = why;
       size.textContent = why || text;
       size.classList.toggle('bad', !!why);
-      note.textContent = !why && big ? BIG_AREA_NOTE : '';
       refresh();
     },
     setReady(value) { ready = value; refresh(); },
@@ -658,12 +546,10 @@ export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel
 // ---- Dymek klikniętego punktu (dokładne liczby z /api/point, spec v3 §4) ----
 
 const km = (r) => fmt(r, 1);
-const dist = (m) => (m >= 1000 ? `${fmt(m / 1000, 1)} km` : `${fmt(m)} m`);
 
 // Zwraca element DOM (tekst wstawiamy przez textContent — nazwy firm nie są HTML-em).
 // onSetCenter: wywoływane po kliknięciu przycisku pod dymkiem (podpis: actionLabel).
-// compact: wersja do karty wyboru — bez listy najbliższych firm (ta jest w szczegółach po analizie), żeby karta nie zasłaniała mapy.
-export function pointPopup(d, onSetCenter, actionLabel = 'Zaznacz tu nowy okrąg', { compact = false } = {}) {
+export function pointPopup(d, onSetCenter, actionLabel = 'Zaznacz tu nowy okrąg') {
   const box = document.createElement('div');
   const add = (text, bold = false) => {
     const p = document.createElement('div');
@@ -674,40 +560,22 @@ export function pointPopup(d, onSetCenter, actionLabel = 'Zaznacz tu nowy okrąg
   };
   const permits = d.permits_period != null;
   add(`W promieniu ${km(d.radius_km)} km:`, true);
-  if (d.demand != null) {
-    add(permits
-      ? `${d.demand_name}: ${fmt(d.demand)} (pozwolenia ${d.permits_period.from} – ${d.permits_period.to})`
-      : `${d.demand_name}: ok. ${fmt(roundEstimate(d.demand))} (spis 2021)`);
-  }
+  if (d.demand != null) add(`${d.demand_name}: ${demandValue(d.demand, permits)}`);
   if (d.competitors != null) add(`${capitalize(d.type_plural || d.type_name)}: ${fmt(d.competitors)}`);
+  // Klientów na firmę dopiero przy co najmniej 2 firmach — przy 0 lub 1 ten iloraz nic nie mówi.
+  if (d.demand != null && d.competitors > 1) add(`Na 1 firmę: ${demandValue(d.demand / d.competitors, permits)} ${clientsNoun(permits)}`);
   if (d.expected != null) {
-    // Liczba z modelu Huffa zależy od kompletności danych o firmach i od „innych możliwości” (A0) — służy do porównań, nie jest prognozą.
-    add(`Szacunek modelu: ok. ${fmt(roundEstimate(d.expected))} ${clientsNoun(permits)} dla nowej firmy w tym miejscu ` +
-      '(do porównywania miejsc, nie prognoza sprzedaży).', true);
+    // Liczba z modelu Huffa (kolor mapy „Gdzie otworzyć”) — skąd się bierze i czemu różni się od liczby mieszkańców, mówi pytajnik.
+    const row = add(`Szacowani klienci nowej firmy: ok. ${fmt(roundEstimate(d.expected))} `, true);
+    const help = document.createElement('button');
+    help.type = 'button';
+    help.className = 'help';
+    help.dataset.help = 'estimate';
+    help.setAttribute('aria-label', 'Skąd ta liczba?');
+    help.textContent = '?';
+    row.append(help);
   }
-  if (d.data_gap && d.data_gap.warn) {
-    const g = d.data_gap;
-    add(`⚠ Mało danych o firmach: ${d.type_plural} w promieniu ${fmt(g.radius_km)} km mamy w danych ${fmt(g.observed)}, ` +
-      `a przy tej liczbie mieszkańców średnio w Polsce byłoby ok. ${fmt(Math.round(g.expected))}. ` +
-      'Prawdopodobnie część firm nie jest jeszcze na mapach — sprawdź na miejscu.').className = 'warn';
-  }
-  if (d.nearest.length && !compact) {
-    add('Najbliżsi:');
-    const ul = document.createElement('ul');
-    for (const n of d.nearest) {
-      const li = document.createElement('li');
-      li.textContent = `${n.name} — ${dist(n.distance_m)} (${SOURCE_NAMES[n.source] || 'OpenStreetMap'})`;
-      ul.append(li);
-    }
-    box.append(ul);
-  }
-  if (d.map_value) {
-    // Kolor mapy to inna wielkość niż liczba w okręgu powyżej: liczy klientów także spoza okręgu, a bliższych mocniej —
-    // podajemy ją, żeby było widać, skąd bierze się kolor (dwie liczby „mężczyzn” obok siebie nie mogą być zagadką).
-    add(`Kolor mapy w tym miejscu: ok. ${fmt(roundEstimate(d.map_value.value))} (${d.map_value.label}; ` +
-      'liczymy też klientów spoza okręgu, a bliższych mocniej — dlatego to inna liczba niż wyżej).').className = 'note';
-  }
-  for (const note of d.notes || []) add(note).className = 'note';
+  if (d.data_gap && d.data_gap.warn) add('⚠ W danych prawdopodobnie brakuje tu części firm.').className = 'warn';
   if (onSetCenter) {
     const link = document.createElement('button');
     link.type = 'button';

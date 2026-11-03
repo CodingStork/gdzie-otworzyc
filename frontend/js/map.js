@@ -135,12 +135,10 @@ export function initMap(elementId) {
   const labels = map.createPane('labels');
   labels.style.zIndex = 450;
   labels.style.pointerEvents = 'none';
-  map.createPane('top').style.zIndex = 470;
   L.tileLayer(ESRI + 'World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
     pane: 'labels', maxZoom: MAX_ZOOM,
   }).addTo(map);
 
-  const topLayer = L.layerGroup().addTo(map);
   const areaLayer = L.layerGroup().addTo(map);
   const detailsLayer = L.layerGroup().addTo(map);
   // Okrąg, welon i szczegóły: SVG (nie canvas) i nieinteraktywne, żeby nie przechwytywały kliknięć w mapę.
@@ -503,17 +501,6 @@ export function initMap(elementId) {
         renderer: areaRenderer, interactive: false, color: '#800026', weight: 1.5, dashArray: veil ? null : '6 4', fill: false,
       }).addTo(areaLayer);
       if (fit) map.fitBounds(box, { animate: false, padding: [20, 20] });
-    },
-
-    // Numerowane znaczniki top-5 (DOM, nie canvas): klik w znacznik wywołuje onClick(place, i).
-    setTopMarkers(list, onClick) {
-      topLayer.clearLayers();
-      list.forEach((place, i) => {
-        const icon = L.divIcon({ className: 'top-pin', html: String(i + 1), iconSize: [22, 22], iconAnchor: [11, 11] });
-        L.marker([place.lat, place.lng], { icon, pane: 'top', keyboard: false, bubblingMouseEvents: false })
-          .on('click', () => onClick(place, i))
-          .addTo(topLayer);
-      });
     },
   };
 }

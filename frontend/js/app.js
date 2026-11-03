@@ -8,6 +8,8 @@
 //      a te pola pulsują. NIC nie liczy się samo, zanim użytkownik kliknie „Analizuj”.
 // Po analizie: zmiana ustawień przelicza TEN SAM obszar, ruch mapy tylko przemalowuje mgłę (kolory dopasowane do tego, co widać —
 // bez zapytań do serwera), a kliknięcie w zbadany obszar pokazuje szczegóły punktu (Shneiderman: przegląd → zawężenie → szczegóły).
+// Prostota (Marcin): po prawej tylko legenda i dwie liczby obszaru (klienci, firmy) ze źródłami — bez rankingu i notatek;
+// wyjaśnienia są pod pytajnikami. Odświeżenie strony zaczyna od zera (stanu analizy nie zapisujemy w adresie).
 import { getCatalog, getMeta, getPoi, point, surface } from './api.js';
 import { logPosition, logScale, trendColor, trendPosition, trendScale } from './colors.js';
 import { initIntro } from './intro.js';
@@ -25,27 +27,23 @@ window.gdzieOtworzyc = { get state() { return state; }, get map() { return map.l
 // area: przeanalizowany obszar (ten sam kształt co selection); result: odpowiedź /api/surface; used: ustawienia, dla których ją policzono.
 const state = {
   tool: null, selection: null, card: null, area: null, result: null, used: null,
-  controller: null, requestId: 0, loading: false, pendingNote: null,
+  controller: null, requestId: 0, loading: false,
 };
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 const CIRCLE_SCREEN_FRACTION = 0.2;   // promień okręgu po kliknięciu = 20% krótszego boku mapy (ten sam rozmiar na ekranie przy każdym przybliżeniu)
-const TOP_RECT_KM = 60;               // prostokąt do 60 km boku ma ranking najlepszych miejsc, większy — bez (backend: routes.TOP_RADIUS_KM)
 const RECT_MIN_KM = 0.6;              // limity boku zaznaczonego prostokąta — jak w API (/api/surface?area=rect)
 const RECT_MAX_KM = 700;
 const NO_CIRCLE = 1e9;                // „promień” maski mgły bez okręgu (prostokąt jest przycięty już przez serwer)
 const FORM_DEBOUNCE_MS = 300;
 const VIEW_DEBOUNCE_MS = 150;
-const SMALL_SPREAD = 0.2;             // najlepsze miejsca różniące się o mniej niż 20% traktujemy jak równie dobre (dokładność danych)
-const MAP_POINT = 'punkt na mapie';   // nazwa miejsca wskazanego kliknięciem (w podsumowaniu zastępuje ją najbliższe miasto z serwera)
+const MAP_POINT = 'punkt na mapie';   // nazwa miejsca wskazanego kliknięciem
 const NEED_TOOL = 'Najpierw wybierz z lewej, jak zaznaczyć obszar: ◯ Okrąg albo ▭ Prostokąt.';
 const TOOL_HINTS = {
   circle: 'Kliknij mapę w miejscu, które chcesz zbadać. Kropką na krawędzi zmienisz promień, kropką w środku przesuniesz okrąg.',
   rect: 'Przeciągnij po mapie, żeby zaznaczyć prostokąt. Za rogi zmienisz jego rozmiar.',
 };
 const RECT_AGAIN_HINT = 'Za rogi zmienisz rozmiar prostokąta. Żeby narysować nowy, kliknij jeszcze raz »▭ Prostokąt« albo mapę poza nim.';
-const BIG_TOP_HINT = 'Najlepsze miejsca pokazujemy dla obszaru do 30 km promienia (60 km boku): na dużym obszarze ranking mieszałby ' +
-  'miasta ze wsiami, dla których model zawyża wynik. Zaznacz mniejszy obszar.';
 
 // Odległość po kuli w km (haversine).
 function distanceKm(lat1, lng1, lat2, lng2) {
@@ -145,8 +143,7 @@ function rectProblem(b) {
 function updateRectCard() {
   const b = state.selection.bounds;
   const problem = rectProblem(b);
-  const s = rectSizeKm(b);
-  state.card.setSize(rectText(b), problem, Math.max(s.width, s.height) > TOP_RECT_KM);
+  state.card.setSize(rectText(b), problem);
   map.setRectInvalid(!!problem);
   map.refreshSelectionCard();
 }
@@ -209,7 +206,6 @@ async function run({ fit }) {
     if (mine !== state.requestId) return;
     discardPoint();
     showResult(result, used, fit);
-    writeHash();
   } catch (e) {
     if (e.name === 'AbortError') return;                 // zastąpione nowszym zapytaniem
     if (mine !== state.requestId) return;
@@ -218,8 +214,6 @@ async function run({ fit }) {
     if (mine === state.requestId) { ui.setLoading(false); state.loading = false; }
   }
 }
-
-const hasPermits = () => !!(state.result && state.result.permits_period);
 
 // Wartości komórek siatki, których środek jest teraz widoczny na ekranie (siatka: wiersze od północy; gotowa mapa Polski jest równa
 // w Mercatorze, siatka na żywo — w metrach, czyli w przybliżeniu równa w stopniach). Z nich liczymy skalę kolorów.
@@ -243,27 +237,9 @@ function visibleValues(grid, values) {
   return out;
 }
 
-// Wartość mapy (koloru) w punkcie: komórka siatki, w której leży punkt — do dymku „Kolor mapy w tym miejscu: …”.
-function valueAt(lat, lng) {
-  const { result, used } = state;
-  let layer = ui.currentLayer();
-  if (!result.values[layer]) layer = result.layers[0];
-  const values = layer && result.values[layer];
-  if (!values) return null;
-  const g = result.grid;
-  const merc = g.projection === 'mercator';
-  const y = (v) => (merc ? mercY(v) : v);
-  const i = Math.floor((lng - g.west) / (g.east - g.west) * g.nx);
-  const j = Math.floor((y(g.north) - y(lat)) / (y(g.north) - y(g.south)) * g.ny);
-  if (i < 0 || j < 0 || i >= g.nx || j >= g.ny) return null;
-  const v = values[j * g.nx + i];
-  return v === null ? null : { value: v, label: ui.legendTitle(layer, used.type, used.demand) };
-}
-
 // Rysuje wybraną warstwę z ostatniego wyniku — bez zapytania do serwera. Skala kolorów jest liczona z wartości WIDOCZNYCH na ekranie
 // (v3.6: przy jednej skali dla całego obszaru centrum miasta miało jeden kolor, choć liczby w różnych punktach różniły się o połowę).
-// withTop = false: tylko przemalowanie po ruchu mapy (lista najlepszych miejsc się nie zmienia).
-function drawLayer({ withTop = true } = {}) {
+function drawLayer() {
   const { result, used } = state;
   let layer = ui.currentLayer();
   if (!result.values[layer]) layer = result.layers[0];   // np. warstwa niedostępna w gotowej mapie: rysujemy pierwszą dostępną
@@ -271,15 +247,12 @@ function drawLayer({ withTop = true } = {}) {
   if (!values) {                                         // brak warstwy (np. ten wybór jej nie ma)
     map.clearFog();
     ui.hideLegend();
-    if (withTop) { map.setTopMarkers([], () => {}); ui.renderTop([], ui.currentLayer(), false, () => {}); ui.setTopNote(''); }
     return;
   }
   const title = ui.legendTitle(layer, used.type, used.demand);
-  const period = result.permits_period;
   const radius = used.area === 'rect' ? NO_CIRCLE : used.radius_km;
   const center = used.area === 'rect' ? null : { lat: used.lat, lng: used.lng };
   const visible = visibleValues(result.grid, values);
-  const VIEW_NOTE = 'Kolory dopasowane do tego, co widać — przybliż mapę, żeby zobaczyć różnice w mieście.';
   if (layer === 'trend') {
     // Trend ma znak (spadek / wzrost): paleta rozbieżna, środek (bez zmian) przezroczysty.
     const scale = trendScale(visible) || trendScale(values);
@@ -290,7 +263,7 @@ function drawLayer({ withTop = true } = {}) {
       const t = new Float32Array(values.length);
       values.forEach((v, i) => { t[i] = v === null ? NaN : trendPosition(v, scale); });
       map.setFog(result.grid, t, radius, trendColor, null, center);
-      ui.renderTrendLegend(title, `mniej budów ← → więcej budów (ostatnie 12 mies. vs poprzednie 12) · ${VIEW_NOTE}`);
+      ui.renderTrendLegend(title);
     }
   } else {
     const scale = logScale(visible) || logScale(values);
@@ -304,53 +277,9 @@ function drawLayer({ withTop = true } = {}) {
       const gapCells = layer === 'open' && result.gap && result.gap.open;
       const gap = gapCells ? Float32Array.from(gapCells, (g) => (g === null ? NaN : g)) : null;
       map.setFog(result.grid, t, radius, undefined, gap, center);
-      // Dla czynników z pozwoleń podajemy okres danych i zastrzeżenie (pozwolenie ≠ wybudowany dom, blok = jeden budynek).
-      const notes = [];
-      if (period && layer !== 'competition') {
-        const blocks = ['new_mf', 'new_all'].includes(used.demand) ? ' Blok liczy się jak jeden budynek (rejestr nie podaje liczby mieszkań).' : '';
-        notes.push(`Pozwolenia: ${period.from} – ${period.to}. Pozwolenie nie oznacza wybudowanego domu.${blocks}`);
-      }
-      notes.push(VIEW_NOTE);
-      ui.renderLegend(title, scale, notes.join(' '), !!gap && gap.includes(1));
+      ui.renderLegend(title, scale, !!gap && gap.includes(1));
     }
   }
-  if (!withTop) return;
-  if (result.area === 'big') {
-    // Duży obszar (ponad 30 km promienia / 60 km boku): bez rankingu — patrz BIG_TOP_HINT i docs/audyt-przydatnosci.md (B4, B7).
-    ui.renderTop([], layer, hasPermits(), () => {}, false, BIG_TOP_HINT);
-    ui.setTopNote('');
-    map.setTopMarkers([], () => {});
-    return;
-  }
-  const top = result.top[layer] || [];
-  // Pusta lista przy kreskowaniu to nie „brak danych”, tylko miejsca bez wiarygodnych klientów — mówimy to wprost.
-  const onlyGaps = layer === 'open' && result.gap && result.gap.open.includes(1) && !top.length;
-  const edge = !!(result.top_edge && result.top_edge[layer]);
-  const emptyText = onlyGaps ? 'Brak wiarygodnych miejsc: wyniki tutaj opierają się głównie na lukach w danych o firmach (kreskowanie).'
-    : edge ? 'Nie ma tu wyraźnie najlepszego miejsca — wartości rosną w stronę krawędzi obszaru, więc lepsze miejsce leży tuż obok. Przesuń obszar.'
-      : undefined;
-  ui.renderTop(top, layer, hasPermits(), (place) => openPlace(place), false, emptyText);
-  ui.setTopNote(topNote(top, edge, layer === 'open' && result.summary && result.summary.verdict === 'few'));
-  map.setTopMarkers(top, (place) => openPlace(place));
-}
-
-// Zdania pod najlepszymi miejscami: gdy różnią się o mniej niż 20% (to mniej niż dokładność danych), gdy na krawędzi
-// obszaru jest więcej niż w najlepszym miejscu (szczyt leży poza obszarem) i gdy obszar jest słabo zaludniony (sparse).
-function topNote(top, edge, sparse) {
-  const notes = [];
-  if (sparse && top.length) {
-    // Audyt: na wsi model daje setki „klientów”, bo przy zasięgu typowym dla miasta nie widzi firm w mieście kilka km dalej.
-    notes.push('Na słabo zaludnionym terenie model zawyża liczbę klientów: zakłada, że klienci nie dojeżdżają dalej niż kilka km, ' +
-      'więc nie widzi firm w najbliższym mieście, do których jeżdżą.');
-  }
-  if (top.length >= 2) {
-    const values = top.map((p) => p.value);
-    if ((Math.max(...values) - Math.min(...values)) / Math.max(...values) < SMALL_SPREAD) {
-      notes.push('Te miejsca różnią się o mniej niż 20% — to mniej niż dokładność danych. Wybieraj między nimi według lokalu, czynszu i ruchu na ulicy.');
-    }
-  }
-  if (edge && top.length) notes.push('Na skraju obszaru wartości są wyższe niż tutaj — warto przesunąć obszar w tę stronę.');
-  return notes.join(' ');
 }
 
 function showResult(result, used, fit) {
@@ -365,12 +294,8 @@ function showResult(result, used, fit) {
     if (fit) map.fitCircle(used.lat, used.lng, used.radius_km);
   }
   drawLayer();
-  // Miejsce wskazane kliknięciem nazywamy jak najbliższe miasto z odpowiedzi serwera („Brzeg, promień 3 km”), a nie „punkt na mapie”.
-  const placeName = used.name === MAP_POINT && result.summary.place_name ? result.summary.place_name : used.name;
-  ui.renderSummary(result.summary, { placeName, demandId: used.demand, permitsPeriod: result.permits_period });
+  ui.renderSummary(result.summary, { demandId: used.demand, permitsPeriod: result.permits_period });
   ui.renderWarnings(withoutTypeWarning(result.warnings, used.type));
-  ui.renderNotes([...(state.pendingNote ? [state.pendingNote] : []), ...result.notes]);
-  state.pendingNote = null;
   if (isMobile()) ui.setTab('insights');                 // na telefonie po analizie od razu wnioski
 }
 
@@ -387,14 +312,9 @@ function resetResult() {
   discardPoint();
   map.clearFog();
   map.clearArea();
-  map.setTopMarkers([], () => {});
   ui.hideLegend();
   ui.hideSummary();
-  ui.renderTop([], 'open', false, () => {});
-  ui.setTopNote('');
-  $('top-title').hidden = true;
   ui.renderWarnings([]);
-  ui.renderNotes([]);
 }
 
 // ---- Szczegóły klikniętego punktu ----
@@ -422,7 +342,6 @@ async function showPointAt(lat, lng) {
     ]);   // brak konkurentów na mapie (poi == null) nie blokuje dymku
     if (mine !== pointRequest) return;
     const competitors = poi ? poi.items.filter((c) => distanceKm(lat, lng, c.lat, c.lng) <= data.radius_km) : [];
-    data.map_value = valueAt(lat, lng);                   // ta sama liczba, z której wziął się kolor mapy w tym miejscu
     map.showDetails(lat, lng, data.radius_km, competitors, ui.pointPopup(data, () => newCircleAt(lat, lng)));
   } catch (e) {
     if (mine === pointRequest) ui.showError(e.message);
@@ -433,13 +352,6 @@ async function showPointAt(lat, lng) {
 function newCircleAt(lat, lng) {
   if (state.tool !== 'circle') chooseTool('circle', { silent: true });
   beginCircle(lat, lng);
-}
-
-// Wskazane miejsce (z listy top-5 albo ze znacznika): przybliżamy mapę i pokazujemy szczegóły.
-function openPlace(place) {
-  if (isMobile()) ui.collapseSheet();                    // arkusz zasłaniałby mapę i dymek
-  map.safeFlyTo(place.lat, place.lng, Math.max(map.getView().zoom, 13));
-  showPointAt(place.lat, place.lng);
 }
 
 // Czy punkt leży w przeanalizowanym obszarze (okręgu albo prostokącie)?
@@ -466,63 +378,17 @@ function onMapClick(lat, lng) {
   }
 }
 
-// ---- Stan w adresie URL — link można komuś wysłać ----
-//   Okrąg:      #type=…&demand=…&reach=…&m=…&layer=…&lat=…&lng=…&r=…&n=…
-//   Prostokąt:  #type=…&demand=…&reach=…&m=…&layer=…&bbox=zachód,południe,wschód,północ
-// Stare linki z mode=pl (tryb „Cała Polska” do v3.5) ustawiają tylko widok mapy i wybór branży.
-
-function writeHash() {
-  const a = state.area;
-  if (!a) return;
-  const p = ui.selectedParams();
-  const hash = new URLSearchParams({ type: p.type, demand: p.demand, reach: p.reach_km, layer: ui.currentLayer() });
-  if (a.kind === 'rect') {
-    const b = a.bounds;
-    hash.set('bbox', [b.west, b.south, b.east, b.north].map((v) => v.toFixed(5)).join(','));
-  } else {
-    hash.set('lat', a.lat.toFixed(5));
-    hash.set('lng', a.lng.toFixed(5));
-    hash.set('r', a.radiusKm);
-    hash.set('n', a.name);
-  }
-  if (p.months) hash.set('m', p.months);                 // okres tylko dla czynników z pozwoleń
-  history.replaceState(null, '', '#' + hash);
-}
-
-// Odtwarza ustawienia z adresu; zwraca true, gdy adres zawierał obszar i ustawienia (wtedy od razu go analizujemy).
-function applyHash() {
+// ---- Start: zawsze od zera ----
+// Marcin: odświeżenie strony ma przywracać ustawienia fabryczne, jakby zrestartował się serwer — dlatego NIE zapisujemy analizy
+// w adresie. Adres może tylko ustawić widok mapy (#z=…&clat=…&clng=…, np. w testach), a potem go czyścimy, żeby odświeżenie
+// znów zaczynało od widoku całej Polski.
+function applyViewHash() {
   const h = new URLSearchParams(location.hash.slice(1));
-  const selection = { type: h.get('type'), demand: h.get('demand'), reach: Number(h.get('reach')) || null, months: h.get('m') };
-  const lat = Number(h.get('lat'));
-  const lng = Number(h.get('lng'));
-  const r = Number(h.get('r'));
-  const hasCircle = h.get('lat') && h.get('lng') && Number.isFinite(lat) && Number.isFinite(lng);
-  const box = (h.get('bbox') || '').split(',').map(Number);   // prostokąt: zachód, południe, wschód, północ
-  const hasBbox = box.length === 4 && box.every(Number.isFinite) && box[0] < box[2] && box[1] < box[3];
-  if (!hasCircle && !hasBbox) {
-    const z = Number(h.get('z'));
-    const clat = Number(h.get('clat'));
-    const clng = Number(h.get('clng'));
-    if (h.get('z') && [z, clat, clng].every(Number.isFinite)) {   // stary link „Cała Polska”: tylko widok i ustawienia, bez analizy
-      state.area = null;
-      clearSelection();
-      resetResult();
-      state.pendingNote = ui.setSelection(selection) ? ui.MIN_REACH_NOTE : null;
-      map.setView(clat, clng, z);
-    }
-    return false;
-  }
-  if (!h.get('type') && !h.get('demand')) return false;
-  state.pendingNote = ui.setSelection(selection) ? ui.MIN_REACH_NOTE : null;   // stary link z zasięgiem < 0,3 km
-  if (h.get('layer')) ui.selectLayer(h.get('layer'));
-  clearSelection();
-  if (hasBbox) {
-    state.area = { kind: 'rect', bounds: { west: box[0], south: box[1], east: box[2], north: box[3] } };
-  } else {
-    state.area = { kind: 'circle', lat, lng, radiusKm: ui.snapRadius(r || 10), name: h.get('n') || MAP_POINT };
-  }
-  chooseTool(state.area.kind, { silent: true });         // narzędzie zgodne z obszarem z linku (bez włączania rysowania)
-  return true;
+  const z = Number(h.get('z'));
+  const clat = Number(h.get('clat'));
+  const clng = Number(h.get('clng'));
+  if (h.get('z') && [z, clat, clng].every(Number.isFinite)) map.setView(clat, clng, z);
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
 }
 
 // ---- Podłączenie zdarzeń ----
@@ -535,7 +401,7 @@ let viewTimer = null;
 map.onViewChange(() => {
   if (!state.result) return;
   clearTimeout(viewTimer);
-  viewTimer = setTimeout(() => drawLayer({ withTop: false }), VIEW_DEBOUNCE_MS);
+  viewTimer = setTimeout(drawLayer, VIEW_DEBOUNCE_MS);
 });
 
 // Zmiana ustawień: karta zaznaczenia sprawdza, czy można już analizować; przeanalizowany obszar liczy się od nowa (po 300 ms).
@@ -545,7 +411,6 @@ function onFormChange() {
   updateCardReady();
   ui.showInfo('');
   if (state.area && (state.result || state.loading)) scheduleRun();
-  writeHash();
 }
 
 const intro = initIntro(map.leaflet.getContainer());
@@ -557,7 +422,6 @@ map.onHelpClick(() => intro.show(state.tool));
 ui.onLayerChange(() => {
   discardPoint();
   if (state.result) drawLayer();
-  writeHash();
 });
 $('opacity-input').addEventListener('input', () => map.setFogOpacity(Number($('opacity-input').value)));
 
@@ -570,14 +434,11 @@ ui.initSearch((place) => {
   map.safeFlyTo(place.lat, place.lng, 12);
 });
 
-// Wklejenie innego linku w tej samej karcie zmienia tylko hash (bez przeładowania) — odtwórz widok.
-window.addEventListener('hashchange', () => { if (applyHash()) run({ fit: true }); });
-
 getMeta().then(ui.renderFooter).catch(() => { /* stopka jest dodatkiem — brak metadanych nie przeszkadza */ });
 getCatalog()
   .then((catalog) => {
     ui.renderCatalog(catalog, onFormChange);
-    if (applyHash()) run({ fit: true });
-    else intro.showFirstTime();                          // pierwsza wizyta bez linku: pokaż, jak zacząć
+    applyViewHash();
+    intro.showFirstTime();                               // pierwsza wizyta: pokaż, jak zacząć
   })
   .catch((e) => ui.showError(e.message));

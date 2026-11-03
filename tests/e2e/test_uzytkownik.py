@@ -164,7 +164,10 @@ def test_analysis_runs_once_and_fog_only_inside_circle(app_url, make_page):
     draw_circle(page, 0.5, 0.5)
     analyze(page)
     assert len(surface_calls(page)) == 1
-    assert "Obszar: Brzeg" in page.inner_text("#summary")
+    # Prostota (Marcin): w podsumowaniu tylko klienci i firmy, pod nimi źródła — bez werdyktu, rankingu i notatek.
+    summary = page.inner_text("#summary")
+    assert "Kobiety:" in summary and "OpenStreetMap" in summary and "Konkurencja" not in summary
+    assert page.locator("#top-list, #notes").count() == 0
     # Piksel w rogu obrazu mgły (poza okręgiem) jest przezroczysty, środek — nie.
     alpha = page.evaluate("""() => {
       const img = document.querySelector('.leaflet-fog-pane img');
@@ -193,7 +196,7 @@ def test_changing_settings_after_analysis_recomputes_same_area(app_url, make_pag
 
 def test_zooming_in_rescales_colours_to_what_is_visible(app_url, make_page):
     """„Ten sam kolor, a liczby bardzo różne” (Bydgoszcz): po przybliżeniu skala liczy się z tego, co widać,
-    bez nowych zapytań do serwera, a dymek podaje wartość koloru w tym miejscu."""
+    bez nowych zapytań do serwera. Dymek: liczby w promieniu, bez wykładu — wyjaśnienie szacunku jest pod pytajnikiem."""
     page = make_page(app_url + view(*BRZEG, 10))
     page.select_option("#type-select", "beauty")
     draw_circle(page, 0.5, 0.5)
@@ -208,7 +211,9 @@ def test_zooming_in_rescales_colours_to_what_is_visible(app_url, make_page):
     assert len(page.api_calls) == calls                     # przemalowanie bez zapytań
     click_map(page, 0.52, 0.52)
     page.wait_for_selector(".point-popup")
-    assert "Kolor mapy w tym miejscu" in page.inner_text(".point-popup")
+    popup = page.inner_text(".point-popup")
+    assert "W promieniu" in popup and "Kolor mapy" not in popup and "Najbliżsi" not in popup
+    assert page.locator(".point-popup button.help[data-help=estimate]").count() == 1
 
 
 # ---------------------------------------------------------------- prostokąt i duży obszar ----
@@ -226,7 +231,7 @@ def test_rectangle_drawn_by_dragging_then_analysed(app_url, make_page):
     page.select_option("#type-select", "grocery")
     assert page.locator(".sel-ok").is_visible()
     analyze(page)
-    assert "Zaznaczony obszar" in page.inner_text("#summary")
+    assert "OpenStreetMap" in page.inner_text("#summary")
     assert "area=rect" in surface_calls(page)[0]
 
 
@@ -234,11 +239,24 @@ def test_big_circle_at_country_zoom_without_ranking(app_url, make_page):
     page = make_page(app_url + view(51.5, 18.2, 6))
     page.select_option("#type-select", "beauty")
     draw_circle(page, 0.5, 0.5)
-    assert "Duży obszar" in page.inner_text(".selection-card")
     analyze(page)
     assert "Kobiety" in page.inner_text("#summary")
-    assert "do 30 km promienia" in page.inner_text("#top-list")       # zamiast rankingu — wyjaśnienie
     assert page.errors == []
+
+
+def test_reload_starts_from_factory_settings(app_url, make_page):
+    """Odświeżenie strony = ustawienia fabryczne (Marcin): bez analizy, bez wybranej branży i narzędzia, adres bez stanu."""
+    page = make_page(app_url + view(*BRZEG, 11))
+    page.select_option("#type-select", "beauty")
+    draw_circle(page, 0.5, 0.5)
+    analyze(page)
+    assert page.evaluate("location.hash") == ""
+    page.reload()
+    page.wait_for_function("document.querySelectorAll('#type-select option').length > 1")
+    page.wait_for_timeout(500)
+    assert page.input_value("#type-select") == "" and page.input_value("#demand-select") == ""
+    assert page.locator("#summary-box").is_hidden() and page.locator(".tool-button[aria-pressed=true]").count() == 0
+    assert len(surface_calls(page)) == 1                 # po odświeżeniu nic nowego się nie liczy
 
 
 # ---------------------------------------------------------------- telefon ----
