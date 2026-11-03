@@ -106,8 +106,8 @@ def test_surface_large_reach_fast(client):
 def test_surface_validation(client):
     assert surface(client, lat=10).status_code == 422                   # poza Polską
     assert surface(client, radius_km=0.5).status_code == 422
-    assert surface(client, radius_km=31).status_code == 422
-    assert "1–30" in surface(client, radius_km=31).json()["detail"]
+    assert surface(client, radius_km=351).status_code == 422             # v3.6: do 30 km na żywo, większe z gotowej mapy Polski
+    assert "1–350" in surface(client, radius_km=351).json()["detail"]
     assert surface(client, reach_km=0.01).status_code == 422
     assert surface(client, type="xxx").status_code == 422
     assert surface(client, demand="xxx").status_code == 422
@@ -182,7 +182,8 @@ def test_surface_rect_summary_has_size_and_denser_grid(client):
 
 
 def test_surface_rect_limits(client):
-    assert rect_surface(client, east=LNG + 1).status_code == 422                 # bok > 60 km
+    assert rect_surface(client, west=LNG - 6, east=LNG + 6).status_code == 422    # bok > 700 km (v3.6: 60–700 km z gotowej mapy)
+    assert rect_surface(client, area=None, east=LNG + 1).status_code == 422      # widok mapy: bok > 60 km
     tiny = rect_surface(client, west=LNG - 0.002, east=LNG + 0.002, south=LAT - 0.002, north=LAT + 0.002)
     assert tiny.status_code == 422 and "najmniej" in tiny.json()["detail"]       # bok < 0,6 km
     assert rect_surface(client, area="x").status_code == 422

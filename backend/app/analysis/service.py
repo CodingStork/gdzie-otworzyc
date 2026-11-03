@@ -362,9 +362,10 @@ def load_density_cells(con, box: list[float]) -> np.ndarray | None:
     """Komórki res 9 z ludnością w prostokącie: N×4 (lat, lng, mieszkańcy, klasa gęstości); None bez tabeli `density_cells`."""
     if not table_exists(con, "density_cells"):
         return None
-    rows = con.execute("SELECT lat, lng, pop_total, cls FROM density_cells WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
-                       box).fetchall()
-    return np.array(rows, dtype=float).reshape(-1, 4)
+    # fetchnumpy zamiast fetchall: dla dużego obszaru (np. województwo) to setki tysięcy komórek — bez list krotek w Pythonie
+    cols = con.execute("SELECT lat, lng, pop_total, cls FROM density_cells WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                       box).fetchnumpy()
+    return np.column_stack([np.asarray(cols[c], dtype=float) for c in ("lat", "lng", "pop_total", "cls")]).reshape(-1, 4)
 
 
 def _inside(xy: np.ndarray, radius_m: float, rect) -> np.ndarray:
@@ -381,10 +382,11 @@ def _area_name(con, p: SurfaceParams) -> str | None:
             or place_name(con, p.lat, p.lng, max_km=radius))
 
 
-def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
-    """Liczby dla całego obszaru analizy (okrąg albo widoczny prostokąt): popyt, firmy (OSM / Overture), ile klientów na firmę, porównanie z Polską.
+def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None, res: int = 9) -> dict:
+    """Liczby dla całego obszaru analizy (okrąg albo prostokąt): popyt, firmy (OSM / Overture), ile klientów na firmę, porównanie.
 
-    Popyt liczymy z komórek res 9, których środek leży w obszarze; firmy — punkty `poi` w obszarze.
+    Popyt liczymy z komórek H3 (domyślnie res 9; dla dużych obszarów res 7 — błąd na brzegu ok. 1 km przy setkach km jest
+    pomijalny, a komórek jest 50 razy mniej), których środek leży w obszarze; firmy — punkty `poi` w obszarze.
     """
     radius_m = p.radius_km * 1000
     box = _box(p.lat, p.lng, p.radius_km)
@@ -399,7 +401,7 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
         summary["width_km"] = round((rect[2] - rect[0]) / 1000, 1)
         summary["height_km"] = round((rect[3] - rect[1]) / 1000, 1)
     if p.demand_id:
-        arr, _, _ = load_demand(con, p.demand_id, 9, box, p.months)
+        arr, _, _ = load_demand(con, p.demand_id, res, box, p.months)
         total = 0.0
         if len(arr):
             xy = frame.to_metric(arr[:, 0], arr[:, 1])
@@ -447,7 +449,7 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
         # Ile firm tego typu byłoby w obszarze przy średniej krajowej (mieszkańcy × firm na mieszkańca) — a ile mamy w danych.
         # Ten próg jest taki sam jak w kreskowaniu na mapie (etl/gaps.py), więc ostrzeżenie i mapa się zgadzają.
         if residents is None:
-            arr, _, _ = load_demand(con, "pop_total", 9, box, p.months)
+            arr, _, _ = load_demand(con, "pop_total", res, box, p.months)
             residents = float(arr[_inside(frame.to_metric(arr[:, 0], arr[:, 1]), radius_m, rect), 2].sum()) if len(arr) else 0.0
         summary["expected_firms"] = round(residents * rate, 1)
         if is_data_gap(residents * rate, summary["competitors"]["total"]):
