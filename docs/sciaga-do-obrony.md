@@ -1,10 +1,10 @@
-# Ściąga do obrony — „Gdzie otworzyć?” (wersja 3.3)
+# Ściąga do obrony — „Gdzie otworzyć?” (wersja 3.5)
 
 Prostym językiem: co robi aplikacja, jakie pojęcia z analizy danych przestrzennych w niej występują i **gdzie dokładnie w kodzie** je znaleźć. Każde pojęcie ma 3–6 zdań i wskazanie `plik:funkcja`.
 
 ## Jak to działa w jednym akapicie
 
-Wybierasz typ działalności (np. fryzjer) i/lub klientów (np. mieszkańcy), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (z jak daleka przychodzą klienci, 0,3–20 km), po czym klikasz „Pokaż mapę”. Dla okręgu wokół miejsca serwer liczy **powierzchnię ciągłą** na regularnej siatce (w metrach, EPSG:2180). Główna mapa **„Gdzie otworzyć”** pokazuje **szacowaną liczbę klientów nowej firmy** wg **modelu Huffa**; druga, **„Gdzie są klienci”**, pokazuje dostępny popyt. Kolor to żółto-czerwona „mgła” w skali logarytmicznej (małe wartości przezroczyste). W trybie **„Cała Polska”** (domyślnym) mgła jest od razu: po oddaleniu to **gotowa mapa Polski** policzona w ETL, po przybliżeniu do miasta — mapa **na żywo** z ustawieniami użytkownika (sekcje 20–21). W trybie „Wybrane miejsce” ruch mapy niczego nie przelicza; **kliknięcie w okręgu** pokazuje szczegóły (okrąg zasięgu, konkurenci, liczby), a **kliknięcie poza nim** wybiera nowe miejsce. Po prawej stronie jest **podsumowanie obszaru** (klienci na firmę na tle średniej krajowej) i top-5 z nazwami ulic. Dane (ludność ze spisu rozłożona na budynki OSM, firmy z OSM i Overture Maps, pozwolenia z GUNB) przetwarzamy **raz** do bazy DuckDB (ETL).
+Wybierasz typ działalności (np. fryzjer) i/lub klientów (np. mieszkańcy), **miejsce** (miejscowość albo klik na mapie), **promień obszaru** (1–30 km) i **zasięg klienta** (z jak daleka przychodzą klienci, 0,3–20 km), po czym klikasz „Pokaż mapę”. Dla okręgu wokół miejsca serwer liczy **powierzchnię ciągłą** na regularnej siatce (w metrach, EPSG:2180). Główna mapa **„Gdzie otworzyć”** pokazuje **szacowaną liczbę klientów nowej firmy** wg **modelu Huffa**; druga, **„Gdzie są klienci”**, pokazuje dostępny popyt. Kolor to żółto-czerwona „mgła” w skali logarytmicznej (małe wartości przezroczyste). W trybie **„Cała Polska”** (domyślnym) mgła jest od razu: po oddaleniu to **gotowa mapa Polski** policzona w ETL, po przybliżeniu do miasta — mapa **na żywo** z ustawieniami użytkownika (sekcje 20–21). W trybie „Wybrane miejsce” ruch mapy niczego nie przelicza; **kliknięcie w okręgu** pokazuje szczegóły (okrąg zasięgu, konkurenci, liczby), a **kliknięcie poza nim** wybiera nowe miejsce. Po prawej stronie jest **podsumowanie obszaru**, które zaczyna się od jednego zdania z werdyktem (liczba firm na tle **miejsc o podobnej gęstości zaludnienia**, z testem Poissona — sekcje 25–26), i top-5 z nazwami ulic (tylko lokalne szczyty — sekcja 27). Dane (ludność ze spisu rozłożona na budynki OSM, firmy z OSM i Overture Maps, pozwolenia z GUNB) przetwarzamy **raz** do bazy DuckDB (ETL).
 
 Wzór: `E(g) = Σ_i d_i · f(d_ig) / (f(d_ig) + C_i + A0)`, `f(d) = exp(−d / zasięg)`, `C_i = Σ_k f(d_ik)`, `A0 = exp(−1)`.
 
@@ -58,7 +58,7 @@ Zasada projektowania wizualizacji „overview first, zoom and filter, then detai
 ## 8. Kolor: dlaczego nie tęcza, dlaczego log, dlaczego przezroczystość
 
 - **Nie tęcza:** do wartości rosnących w jedną stronę używa się skali **sekwencyjnej jednobarwnej** (ColorBrewer **YlOrRd**: żółty → pomarańczowy → czerwony — Brewer; Borland & Taylor 2007: tęcza wprowadza fałszywe granice i nie ma naturalnej kolejności). Czerwony = „więcej / lepiej”.
-- **Skala logarytmiczna:** ludność i liczba firm mają rozkład prawostronnie skośny, więc skala liniowa zrobiłaby z miasta jedną czerwoną plamę. `t = (log10(v) − log10(lo)) / (log10(hi) − log10(lo))`, `hi` = 99. percentyl wartości dodatnich w okręgu, `lo` = max(5. percentyl, `hi`/100) — od v3.1 skala obejmuje najwyżej 2 rzędy wielkości (przy 4 rzędach prawie wszystko było czerwone). Każdy krok koloru to mniej więcej podwojenie wartości. Percentyl rankingowy odrzuciliśmy już w v2.1: ściska ogon rozkładu.
+- **Skala logarytmiczna:** ludność i liczba firm mają rozkład prawostronnie skośny, więc skala liniowa zrobiłaby z miasta jedną czerwoną plamę. `t = (log10(v) − log10(lo)) / (log10(hi) − log10(lo))`, `hi` = 99. percentyl wartości dodatnich w okręgu, `lo` = max(5. percentyl, `hi`/100) — od v3.1 skala obejmuje najwyżej 2 rzędy wielkości (przy 4 rzędach prawie wszystko było czerwone). Od v3.5 skala obejmuje też **co najmniej 1 rząd wielkości** (`lo ≤ hi/10`, sekcja 28), więc o jeden odcień ciemniej to ok. 30–80% więcej. Percentyl rankingowy odrzuciliśmy już w v2.1: ściska ogon rozkładu.
 - **Przezroczystość:** α = 0 dla `t < 0,05`, rośnie do 0,85 przy `t = 0,5`; małe wartości znikają, zostaje efekt „mgły” i widać podkład (etykiety miast leżą nad mgłą).
 - Kolory są względne dla okręgu — dokładne liczby pokazują legenda (okrągłe wartości) i dymek. Przykład problemu normalizacji w mapach: xkcd 1138 („to tylko mapa ludności”) — dlatego główna mapa pokazuje odpowiedź na pytanie użytkownika (ilu klientów), a nie surowy popyt.
 - `frontend/js/colors.js` (`fogColor`, `logScale`, `niceLogTicks`).
@@ -90,7 +90,7 @@ Pozwolenie to zamiar: budowa trwa 1–3 lata, a część pozwoleń nigdy nie jes
 
 ## 14. Jak działa top-5 (non-maximum suppression)
 
-Biorąc po prostu 5 punktów siatki o najwyższej wartości, dostalibyśmy 5 sąsiadów z tego samego skupiska. Dlatego wybieramy zachłannie od najlepszego i **odrzucamy punkty bliższe niż** `max(zasięg, promień/5)` od już wybranych (non-maximum suppression). Top-5 dotyczy tylko okręgu i aktywnej mapy; nazwa miejsca to najbliższe osiedle/wieś w promieniu 3 km (osiedle ma pierwszeństwo przed miastem).
+Biorąc po prostu 5 punktów siatki o najwyższej wartości, dostalibyśmy 5 sąsiadów z tego samego skupiska. Dlatego wybieramy zachłannie od najlepszego i **odrzucamy punkty bliższe niż** `max(zasięg, promień/5)` od już wybranych (non-maximum suppression). Od v3.5 kandydatami są tylko **lokalne szczyty** (sekcja 27). Top-5 dotyczy tylko okręgu i aktywnej mapy; nazwa miejsca to najbliższe osiedle/wieś w promieniu 3 km (osiedle ma pierwszeństwo przed miastem).
 - `backend/app/analysis/surface.py:top_points`, `service.py:nearest_place_name`.
 
 ## 15. Szczegóły punktu: dokładne liczby
@@ -104,7 +104,7 @@ Powierzchnia jest policzona na siatce i zaokrąglona, więc po kliknięciu backe
 
 OSM to dane wolontariuszy — dla salonów kosmetycznych we Wrocławiu ma ok. 340 punktów, a Overture Maps Places (otwarty zbiór firm z wielu źródeł, licencja CDLA Permissive 2.0) ok. 1 260. Dlatego tabela `poi` to **suma dwóch źródeł**. Problem: ten sam salon jest w obu bazach, więc bez czyszczenia liczylibyśmy go dwa razy. Stosuję **deduplikację przestrzenną**: obiekt Overture odrzucam, jeśli istnieje punkt OSM **tego samego typu** w ≤ 50 m albo w ≤ 150 m **z podobną nazwą** (znormalizowane nazwy, `difflib.SequenceMatcher` ≥ 0,6). Sąsiadów szukam drzewem k-d (cKDTree) w metrach (EPSG:2180). To heurystyka, nie dokładne dopasowanie: próg 50 m może zlać dwa różne salony w jednym budynku. Przed połączeniem filtruję Overture: adres w Polsce, miejsce działa, `confidence` ≥ 0,5. Wynik: 104 087 dodatkowych wierszy typ×firma po deduplikacji (z 173 987 przed; to ok. 97 tys. różnych firm — jedna firma może należeć do dwóch typów, np. barber to także fryzjer).
 
-## 17. Normalizacja per capita i porównanie ze średnią krajową
+## 17. Normalizacja per capita i porównanie ze średnią krajową (do v3.4 — od v3.5 patrz sekcja 25)
 
 „W okręgu jest 36 salonów” nic nie mówi — w Warszawie będzie ich więcej niż w Brzegu, bo mieszka tam więcej ludzi. Dlatego **normalizuję**: liczę, ilu klientów (np. kobiet) przypada na jedną firmę w okręgu i porównuję z tym samym wskaźnikiem dla całej Polski (suma popytu w kraju / liczba firm typu w kraju). To ta sama idea co w xkcd 1138 („Heatmap”): mapa surowych liczb pokazuje tylko, gdzie mieszka najwięcej ludzi. Werdykt: > 125% średniej = mniej konkurencji niż przeciętnie, < 80% = więcej, pomiędzy = poziom średniej (progi ±20–25% to moja decyzja, nie wynik statystyczny). Średnia krajowa jest liczona raz i trzymana w pamięci podręcznej.
 
@@ -139,6 +139,22 @@ Model Huffa wierzy danym: jeśli w okolicy nie ma wpisanej żadnej firmy, „now
 Użytkownik nie musi rozumieć formularza „miejsce + promień + Pokaż mapę” — wskazuje obszar na mapie. **Kliknięcie** → `beginSelection` (`app.js`): pinezka + okrąg podglądu + karta (`ui.selectionCard`) z liczbami z `/api/point`, suwakiem i ✓. Suwak zmienia okrąg **bez zapytań do serwera** (`map.updateSelectionRadius` tylko przelicza wielokąt okręgu). ✓ robi to samo co dawne „Pokaż mapę”. **Prostokąt** → przycisk „▭ Prostokąt” (`map.js`): włącza tryb rysowania (`dragging.disable()`, kursor krzyżyk), a przeciągnięcie obsługują **Pointer Events** (`pointerdown/move/up`) — jeden zestaw zdarzeń obejmuje mysz, palec i rysik, więc nie piszemy osobno kodu na telefon. `setPointerCapture` sprawia, że ruch i puszczenie dochodzą do mapy nawet poza jej krawędzią. Po puszczeniu tryb się wyłącza (`stopDraw`), a przesuwanie mapy wraca. Rogi to 4 przeciągalne markery Leaflet; przeciwległy róg stoi w miejscu, więc nowy prostokąt to po prostu `L.latLngBounds(stały róg, róg pod kursorem)`.
 
 Backend: `/api/surface` z `area=rect` używa istniejącej ścieżki „widoczny obszar” (prostokąt w metrach lokalnego układu, maska siatki przycięta do prostokąta; okrąg opisany na prostokącie służy tylko do pobrania danych), ale z gęstszą siatką (`divisions=90` zamiast 60 — liczymy raz, na życzenie, a nie przy każdym ruchu mapy) i z wymiarami w podsumowaniu. Limity: bok 0,6–60 km (dane o ludności mają ~300 m rozdzielczości; 60 km to limit wydajności).
+
+## 25. „Podobne miejsca” zamiast średniej krajowej (v3.5, audyt przydatności)
+
+Średnia krajowa salonów na mieszkańca (8,45 na 10 tys.) leży **niżej niż w każdej klasie miast** (13,6–18,1), bo zaniżają ją wsie (4,1) — mieszkańcy wsi korzystają z salonów w mieście. Porównanie ze średnią mówiło więc każdemu miastu „gęsto obsadzone”, a każdej wsi „wolne”. Teraz porównuję z **miejscami o podobnej gęstości zaludnienia**: dla każdej komórki res 9 liczę mieszkańców w promieniu 2 km (`etl/gaps.py: neighbourhood_population`), sortuję komórki i dzielę **ludność** Polski na 5 równych części (**kwintyle ważone ludnością**, `density_classes`) — bez arbitralnego progu „miasto/wieś”. Dla każdej klasy i typu liczę firm na mieszkańca (firma należy do klasy najbliższej komórki z ludnością, `firms_by_class`; tabela `density_rates`). Oczekiwana liczba firm w obszarze = Σ mieszkańcy komórki × stawka jej klasy (`service.area_summary`). To przykład **standaryzacji** (porównanie z oczekiwaną wartością przy tej samej strukturze, jak w epidemiologii) i zarazem ograniczenie MAUP: klasy wynikają z sąsiedztwa 2 km, a nie z granic gmin. Przykład (Brzeg, 3 km, liczby z v3.3): wg średniej krajowej 36 salonów = 117% oczekiwanych („na poziomie średniej”), wg miast tej wielkości = 73% („mniej konkurencji”).
+
+## 26. Małe liczby i test Poissona (v3.5)
+
+Liczba firm w obszarze jest losowa jak liczba zdarzeń: przy 3 oczekiwanych salonach zero salonów zdarza się w 5% przypadków. Model: X ~ Poisson(oczekiwane). „Mniej konkurencji” mówię tylko, gdy firm ≤ 80% oczekiwanych **i** P(X ≤ firm) < 10%; „więcej” — gdy ≥ 125% **i** P(X ≥ firm) < 10%; przy < 3 oczekiwanych — „za mało firm, żeby ocenić”. Przykłady: 1 firma przy 4 oczekiwanych → „mniej” (p ≈ 9%), 2 przy 4 → „typowa” (p ≈ 24%), 36 przy 49 → „mniej” (p ≈ 3%). Ograniczenie: prawdziwe firmy skupiają się (nadmierna dyspersja), więc test jest raczej zbyt pobłażliwy. Kod: `backend/app/analysis/service.py: verdict` (`scipy.stats.poisson`).
+
+## 27. Najlepsze miejsca tylko ze szczytów — efekt krawędzi w top-5 (v3.5)
+
+Gdy osiedle leży tuż za okręgiem, największe wartości w okręgu są na jego **krawędzi** (stok rośnie na zewnątrz) — „najlepszym miejscem” byłby przypadkowy punkt granicy. To efekt krawędzi w wyborze maksimum (inny niż w sekcji 10, gdzie chodzi o dane spoza obszaru). Teraz kandydat musi być **lokalnym szczytem**: wszyscy 8 sąsiedzi w siatce leżą w obszarze i żaden nie jest wyższy (`surface.peaks_and_edge`). Gdy na krawędzi jest wyżej niż w najlepszym szczycie, odpowiedź ma `top_edge`, a interfejs radzi przesunąć obszar. Gdy szczyty różnią się o < 20%, interfejs mówi, że to mniej niż dokładność danych.
+
+## 28. Minimalna rozpiętość skali kolorów (v3.5)
+
+Skala p5–p99 w Brzegu to 310–600: różnica niecałe 2× dostawała całą paletę, więc 20% różnicy wyglądało jak biel kontra czerwień — kolor sugerował precyzję, której dane nie mają. Teraz `lo = min(max(p5, hi/100), hi/10)`: skala obejmuje od 1 do 2 rzędów wielkości (`colors.js: logScale`, `MIN_RATIO`; tak samo stała skala mapy Polski w `national._scale_json`). Zasada kartograficzna: różnica w kolorze ma odpowiadać różnicy, którą warto zauważyć.
 
 ## Pytania, które może zadać prowadzący
 
@@ -191,3 +207,21 @@ Patrz sekcja 22: nie mamy dla nich danych o firmach, więc „konkurencja” by�
 
 **16. Dlaczego prostokąt rysuje się po kliknięciu przycisku, a nie zwykłym przeciągnięciem — i co to Pointer Events?**
 Zwykłe przeciągnięcie przesuwa mapę (tak jest wszędzie, a na telefonie to jedyny sposób na przesuwanie palcem). Gdyby przeciągnięcie rysowało prostokąt, nie dałoby się przesuwać mapy — stąd przycisk „▭ Prostokąt”, który na czas jednego zaznaczenia wyłącza przesuwanie mapy (`map.dragging.disable()`). **Pointer Events** to jeden zestaw zdarzeń przeglądarki (`pointerdown`, `pointermove`, `pointerup`) dla myszy, palca i rysika; dzięki temu ten sam kod działa na komputerze i telefonie, a nie trzeba osobno obsługiwać `mousedown` i `touchstart`. Limity prostokąta (0,6–60 km boku) są po obu stronach: frontend koloruje ramkę na czerwono i blokuje ✓, a backend i tak zwraca błąd 422.
+
+**17. Dlaczego nie porównujesz ze średnią krajową, skoro to najprostsze?**
+Bo średnia krajowa nie jest „typowym miejscem”: zaniżają ją wsie, w których usług jest mało, bo ich mieszkańcy jeżdżą do miasta (salony: wieś 4,1 na 10 tys., miasta 13,6–18,1, średnia 8,45). Każde miasto wychodziło więc „gęsto obsadzone”. Porównuję z miejscami o podobnej gęstości zaludnienia (kwintyle ludności wg mieszkańców w 2 km) — to standaryzacja: oczekiwana liczba firm przy tej samej strukturze osadnictwa. Sekcja 25.
+
+**18. Skąd wiesz, że różnica w liczbie firm nie jest przypadkiem?**
+Traktuję liczbę firm jak zmienną Poissona o średniej równej oczekiwanej liczbie firm i mówię „mniej/więcej konkurencji” tylko, gdy taka różnica zdarzałaby się przypadkiem rzadziej niż w 10% obszarów, i to przy różnicy co najmniej 20–25%. Przy < 3 oczekiwanych firmach nic nie oceniam. Firmy w rzeczywistości się skupiają, więc test jest raczej zbyt łagodny — to ostrożna dolna granica niepewności. Sekcja 26.
+
+**19. Dlaczego na mapie całej Polski nie ma listy najlepszych miejsc?**
+Bo wskazywała wsie i miasteczka (Rudki, Pruchnik, Bierówki). Powody: popyt znam tylko z miejsca zamieszkania (bez dojazdów i zamożności), ten sam zasięg klienta na wsi i w mieście zawyża wynik na wsi, a luk w danych nie da się wykryć w małych miejscowościach. Ranking między regionami wprowadzałby w błąd, więc pokazuję go dopiero dla jednej okolicy.
+
+**20. Czemu „Stylizacja paznokci” zniknęła?**
+Bo w danych każdy salon paznokci jest też salonem kosmetycznym (OSM `shop=beauty`, Overture `nail_salon` w obu typach), a osobny typ nie liczył salonów kosmetycznych robiących manicure jako konkurencji — wychodziło „mało konkurencji” z samej definicji. Stare linki prowadzą do salonu kosmetycznego (`TYPE_ALIASES`).
+
+**21. Czy „ok. 600 klientów” to prognoza?**
+Nie. To wynik modelu Huffa zależny od opcji zewnętrznej A0 i od kompletności danych o firmach; służy do porównywania miejsc między sobą. Model nie zna miejsc pracy, zamożności ani wielkości konkurentów, a na wsi zawyża wynik (ten sam zasięg co w mieście) — interfejs to mówi.
+
+**22. Co jest największą słabością modelu i jak byś ją naprawił?**
+Jednakowy zasięg klienta w mieście i na wsi: mieszkańcy wsi jeżdżą do usług w mieście dalej niż 4 × zasięg, więc model nie widzi tej konkurencji. Naprawiłbym to zasięgiem zależnym od klasy gęstości (sekcja 25), skalibrowanym tak, żeby w każdej klasie suma przewidywanych klientów zgadzała się z liczbą istniejących firm, a potem przeliczyłbym gotową mapę Polski. Drugi krok to dane o zamożności (BDL) i dojazdach do pracy (GUS) oraz CEIDG.
