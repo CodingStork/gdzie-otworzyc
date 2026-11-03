@@ -96,6 +96,7 @@ function renderFog(grid, t, radiusKm, colorOf, gap = null, hatch = { period: 10,
 }
 
 // Pierścień współrzędnych okręgu o promieniu w km (przybliżenie płaskie — wystarcza dla ≤ 30 km).
+const CARD_ROOM_PX = 200;           // miejsce nad okręgiem na kartę zaznaczenia (przy dopasowaniu widoku po wyszukaniu)
 const RECT_COLOR = '#253494';
 const RECT_BAD_COLOR = '#e00000';   // prostokąt poza limitami (za duży / za mały)
 const boundsObject = (b) => ({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() });
@@ -371,8 +372,10 @@ export function initMap(elementId) {
     // Płynny lot do okręgu (np. miejscowość z wyszukiwarki); w tle — bez animacji. Po dolocie Leaflet wysyła „moveend”.
     flyToCircle(lat, lng, radiusKm) {
       const bounds = L.latLngBounds(circleRing(lat, lng, radiusKm, 36));
-      if (document.hidden) map.fitBounds(bounds, { animate: false, padding: [40, 40] });
-      else map.flyToBounds(bounds, { padding: [40, 40], duration: 1 });
+      // U góry zostawiamy miejsce na kartę zaznaczenia, która wisi nad okręgiem — okrąg i karta mają się zmieścić razem.
+      const padding = { paddingTopLeft: [40, CARD_ROOM_PX], paddingBottomRight: [40, 40] };
+      if (document.hidden) map.fitBounds(bounds, { animate: false, ...padding });
+      else map.flyToBounds(bounds, { ...padding, duration: 1 });
     },
     // Dopasowanie widoku do okręgu o danym promieniu (bez animacji) — np. przy otwarciu linku.
     fitCircle(lat, lng, radiusKm) {
@@ -486,6 +489,27 @@ export function initMap(elementId) {
         });
         return handle;
       });
+      // Kropka w środku: przeciągnięcie przesuwa cały prostokąt (jak kropka w środku okręgu).
+      let start = null;
+      const middle = L.marker(box.getCenter(), {
+        draggable: true, keyboard: false, autoPan: false, title: 'Przeciągnij, żeby przesunąć prostokąt',
+        icon: L.divIcon({ className: 'rect-handle center', iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+      }).addTo(selectionLayer);
+      middle.on('dragstart', () => { start = { box, at: middle.getLatLng() }; selectionPopup.options.autoPan = false; });
+      middle.on('drag', (e) => {
+        const dLat = e.latlng.lat - start.at.lat;
+        const dLng = e.latlng.lng - start.at.lng;
+        const sw = start.box.getSouthWest();
+        const ne = start.box.getNorthEast();
+        box = L.latLngBounds([sw.lat + dLat, sw.lng + dLng], [ne.lat + dLat, ne.lng + dLng]);
+        rectShape.setBounds(box);
+        rectHandles.forEach((h, j) => h.setLatLng(cornerLatLngs(box)[j]));
+        selectionPopup.setLatLng(cardAnchor(box));
+        onChange(boundsObject(box));
+      });
+      middle.on('dragend', () => { selectionPopup.options.autoPan = true; selectionPopup.update(); });
+      // Rogi przesuwają też środek.
+      rectHandles.forEach((h) => h.on('drag', () => middle.setLatLng(box.getCenter())));
       map.addLayer(selectionPopup);
     },
     // Czerwona ramka, gdy prostokąt jest poza limitami.

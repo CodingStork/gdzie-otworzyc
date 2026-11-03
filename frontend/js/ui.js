@@ -506,8 +506,9 @@ export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel
   cancel.title = 'Anuluj';
   cancel.setAttribute('aria-label', 'Anuluj zaznaczenie');
   cancel.addEventListener('click', onCancel);
-  buttons.append(ok, cancel);
-  el.append(head, size, body, buttons);
+  buttons.append(ok);
+  // ✕ wisi poza kartą, po prawej, na wysokości tytułu (Marcin: pod treścią karty wyglądał źle).
+  el.append(cancel, head, size, body, buttons);
   let problem = '';
   let ready = false;
   const refresh = () => {

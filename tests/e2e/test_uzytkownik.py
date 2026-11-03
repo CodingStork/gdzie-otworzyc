@@ -191,6 +191,20 @@ def test_typed_town_gets_5km_circle_and_rect_button_turns_it_into_square(app_url
     assert page.locator(".selection-card").count() == 1                 # stara karta okręgu zniknęła
     card = page.inner_text(".selection-card")
     assert "5 × 5 km" in card, card
+    # Kropka w środku prostokąta przesuwa go w całości (rozmiar bez zmian), a ✕ wisi poza kartą, na wysokości tytułu.
+    before = page.evaluate("window.gdzieOtworzyc.state.selection.bounds")
+    x, y = center_of(page, ".rect-handle.center")
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 80, y + 40, steps=8)
+    page.mouse.up()
+    after = page.evaluate("window.gdzieOtworzyc.state.selection.bounds")
+    assert after["west"] > before["west"] and after["north"] < before["north"]
+    assert abs((after["east"] - after["west"]) - (before["east"] - before["west"])) < 1e-6
+    card_box = page.locator(".selection-popup .leaflet-popup-content-wrapper").bounding_box()
+    x_box = page.locator(".sel-cancel").bounding_box()
+    title_box = page.locator(".sel-title").bounding_box()
+    assert x_box["x"] >= card_box["x"] + card_box["width"] and abs(x_box["y"] - title_box["y"]) < 10
 
 
 # ---------------------------------------------------------------- analiza ----

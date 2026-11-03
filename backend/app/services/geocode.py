@@ -14,6 +14,7 @@ from backend.app.config import USER_AGENT
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 MIN_QUERY_LENGTH = 3
 MAX_RESULTS = 5
+FETCH_RESULTS = 10        # bierzemy więcej, bo po usunięciu powtórzeń (np. Brzeg jako granica i jako punkt) zostaje mniej
 MAX_CACHE_ENTRIES = 500
 
 
@@ -42,13 +43,20 @@ class Geocoder:
             self._wait_for_turn()
             try:
                 resp = self.client.get(self.base_url, headers={"User-Agent": USER_AGENT}, params={
-                    "q": q, "format": "jsonv2", "countrycodes": "pl", "limit": MAX_RESULTS, "accept-language": "pl"})
+                    "q": q, "format": "jsonv2", "countrycodes": "pl", "limit": FETCH_RESULTS, "accept-language": "pl"})
                 self._last_request = time.monotonic()
                 if resp.status_code >= 400:
                     raise GeocoderUnavailable(f"Nominatim: HTTP {resp.status_code}")
                 items = resp.json()
-                results = [{"name": it["display_name"], "lat": float(it["lat"]), "lng": float(it["lon"])}
-                           for it in items][:MAX_RESULTS]
+                # Nominatim zwraca to samo miejsce kilka razy (obszar miasta, punkt miasta) z identyczną nazwą —
+                # na liście zostawiamy tylko pierwsze (najważniejsze) wystąpienie każdej nazwy.
+                results, names = [], set()
+                for it in items:
+                    if it["display_name"] in names:
+                        continue
+                    names.add(it["display_name"])
+                    results.append({"name": it["display_name"], "lat": float(it["lat"]), "lng": float(it["lon"])})
+                results = results[:MAX_RESULTS]
             except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
                 raise GeocoderUnavailable(str(e)) from e
             if len(self._cache) >= MAX_CACHE_ENTRIES:

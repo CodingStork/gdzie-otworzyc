@@ -140,11 +140,18 @@ label.disabled { opacity: .4; }
 .selection-card .sel-body.need { margin-top: 6px; color: var(--muted); }
 .sel-ok[hidden] { display: none; }
 .sel-buttons { display: flex; gap: 8px; margin-top: 10px; }
+.sel-buttons:has(.sel-ok[hidden]) { display: none; }
 .sel-buttons button { border-radius: 8px; font: 600 14px system-ui, sans-serif; cursor: pointer; padding: 9px 12px; }
 .sel-ok { flex: 1; border: 0; background: var(--accent); color: #fff; }
 .sel-ok:hover:not(:disabled) { background: #1c2870; }
 .sel-ok:disabled { opacity: .45; cursor: not-allowed; }
-.sel-cancel { border: 1px solid #bbc; background: #fff; color: #445; }
+.selection-card { position: relative; }
+/* ✕ poza dymkiem: na prawo od karty (za jej marginesem 12 px i obramowaniem), na wysokości tytułu */
+.sel-cancel {
+  position: absolute; top: -4px; right: -50px; width: 28px; height: 28px; padding: 0; border-radius: 50%;
+  border: 1px solid #bbc; background: #fff; color: #445; font: 600 14px/1 system-ui, sans-serif; cursor: pointer; box-shadow: 0 1px 4px #0003;
+}
+.sel-cancel:hover { background: #f1f1f6; }
 
 
 /* Animacja wprowadzająca (frontend/js/intro.js, v3.6): nakładka nad całą stroną (kursor jedzie też do lewego panelu);
@@ -238,6 +245,7 @@ label.disabled { opacity: .4; }
 .rect-handle:active, .circle-handle:active { cursor: grabbing; }
 .circle-handle { background: #fff; border: 3px solid #800026; border-radius: 50%; box-shadow: 0 1px 4px #0006; }
 .circle-handle.center { cursor: move; }
+.rect-handle.center { border-radius: 50%; cursor: move; }
 .circle-handle.edge { cursor: ew-resize; background: #800026; border-color: #fff; }
 
 /* Telefon: mapa na górze, pod nią arkusz z jednym z paneli (zakładka) i pasek zakładek */
