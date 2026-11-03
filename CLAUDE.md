@@ -57,6 +57,7 @@ Poprzeczka: **„czy osoba, która naprawdę otwiera salon albo firmę brukarsk�
 | v3.4 | Wybór obszaru gestem: klik → okrąg + karta, prostokąt, animacja wprowadzająca | Formularz był niezrozumiały |
 | v3.5 | Audyt: werdykt wg **podobnych miejsc** + test Poissona, top-5 z lokalnych szczytów, paznokcie w salonie (`TYPE_ALIASES`) | Średnia krajowa zaniżana przez wsie; werdykt przy 1–2 firmach był szumem |
 | v3.6 | **Jedna droga**: narzędzie (bez domyślnego) → obszar → „Analizuj”; okrąg = 20% ekranu z kropkami; kolory z widocznej części; testy E2E | Mapa liczyła się sama po wyborze klientów; tryb „Cała Polska” usunięty |
+| v3.8 | **Mapa = dymek**: „Gdzie są klienci” / „Gdzie są firmy” / trend = **suma w ruchomym oknie** o promieniu zasięgu (`surface.window_sum`; Huff z rozpadem bez zmian); siatka **ułożona jak piksele mgły** (`service.map_grid`: kolumny równo w długości, wiersze w Merkatorze, `grid.projection = "mercator"`) i **gęstsza niż pół zasięgu** (`surface.grid_step`, limit `MAX_GRID_POINTS = 250_000`, inaczej serwer podnosi zasięg i zwraca go w `reach_km`); branża **„Pracuję przy budowie / wykończeniu”** (pseudo-typ `build` we frontendzie: `type=''` + klienci z pozwoleń), przy innych branżach tylko ludzie; zasięg pod klientami, minimum 1 km przy budowach (`ui.syncReachMin`); kropka na okręgu zasięgu w szczegółach (`map.showDetails(…, onReach)` → `app.changeReachFromMap`); dymek nad okręgiem z ✕ jak karta; krótsze nazwy „Nowe bloki”, „Nowe domy i bloki” | Kolor „2 nowe bloki”, dymek „w promieniu 1 km: 0”; suwak 0,3 km przy liczeniu 1 km; „barber + nowe bloki”; dymek zasłaniał okrąg; przy 240 km mgła była przesunięta i próbkowana co 2,7 km (zweryfikowane: mapa = dymek w losowych punktach 8/150/300 km, 2026-11-03) |
 | v3.7 | **Prostota + Lokalizator**: każdy obszar (do całej Polski) liczony z zasięgiem użytkownika (siatka rzednie: krok = promień/90); po prawej tylko klienci i firmy + źródła; bez werdyktu, rankingu, notatek i podpowiedzi; dymek z „na 1 firmę” przy ≥ 2 firmach; odświeżenie = ustawienia fabryczne; drugi klik narzędzia je odznacza; miejscowość → okrąg 5 km; zmiana narzędzia zamienia kształt; ✕ karty poza dymkiem; wyszukiwarka bez powtórzeń; **tryb nocny** (Esri Dark Gray, paleta magma) | Uwagi Marcina z testów v3.6 (zweryfikowane w przeglądarce 2026-11-03, czeka na jego testy) |
 
 Odrzucone świadomie: heksagony jako główna warstwa; ciągłe przeliczanie przy ruchu mapy; mapa bivariate; Leaflet.heat; tęczowe palety; zasięg < 0,3 km;
@@ -73,8 +74,9 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
   Frontend: czysty JS + Leaflet 1.9.4, bez Node i bez budowania. Testy E2E: Playwright (`uv run playwright install chromium` raz).
 - **Dane:** Eurostat Census GRID 2021 (1 km) rozłożony dasymetrycznie na H3 res 9; OSM (Geofabrik) → firmy, miejscowości, ulice, wagi budynków;
   Overture Places → firmy; GUNB RWDZ + ULDK → pozwolenia (dokładność do obrębu). Układy: lokalny metryczny / EPSG:2180 do odległości, 3035 spis, 4326 H3/mapa.
-- **Analiza (`/api/surface`):** siatka `surface.make_grid` — krok = promień/90 (min. 50 m), zawsze ok. 180 punktów w poprzek. Pomiar: 34 km ~2 s, 150 km ~3 s,
-  350 km (cała Polska) 4–7 s dla zasięgu 0,3–20 km. Okrąg 1–350 km, prostokąt 0,6–700 km. Obszar > 30 km promienia / 60 km boku dostaje `area: "big"` i puste `top`
+- **Analiza (`/api/surface`):** siatka `service.map_grid` (jak piksele mgły, Merkator), krok `surface.grid_step` = min(promień/90, zasięg/2), limit 250 tys. punktów.
+  P i K = suma w oknie o promieniu zasięgu (= liczba w dymku `/api/point`). Pomiar: miasto ~1 s, 150 km i zasięg 1,5 km ~8 s, budowy 240 km ~2 s.
+  Okrąg 1–350 km, prostokąt 0,6–700 km. Obszar > 30 km promienia / 60 km boku dostaje `area: "big"` i puste `top`
   (`routes.TOP_RADIUS_KM`). Backend dalej liczy werdykt (`service.verdict`, klasy gęstości z kroku `gaps`), top-5 i `top_edge` — **frontend ich nie pokazuje**.
 - **Frontend:** `app.js` (stan, narzędzia `chooseTool`/`dropTool`/`convertSelection`, `run`, `drawLayer`, `applyTheme`, `applyViewHash` — hash tylko ustawia widok `#z=&clat=&clng=` i jest czyszczony),
   `ui.js` (`renderSummary` = dwie liczby + `sourcesText`, `pointPopup`, `areaCard`, pytajniki `HELP`), `map.js` (`showCircle`, `showRect` z kropką w środku,
@@ -82,7 +84,8 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 - **Tryb nocny:** zmienne CSS w `:root` / `:root[data-theme="dark"]`; `index.html` ustawia motyw przed pierwszą klatką z `prefers-color-scheme`;
   przycisk ☾/☀ w pasku przy mapie, wybór niezapamiętywany (odświeżenie = ustawienia fabryczne). Obrysy mapy z `--area` / `--rect`.
 - **Nieużywane, do decyzji:** krok ETL `national` i `/api/national` (gotowa mapa Polski) — od v3.7 frontend ich nie woła; `sanity` nadal sprawdza tabele `national_*`.
-- **Testy:** 288 jednostkowych + 17 E2E (`uv run pytest -q`, ok. 5 min). E2E bez Chromium pomijają się same.
+- **Testy:** ok. 290 jednostkowych + 19 E2E (`uv run pytest -q`, ok. 5 min). E2E bez Chromium pomijają się same.
+- **Gotowa mapa Polski (`national`) liczy jeszcze P i K starą metodą (rozpad)** — nieużywana w UI; przy jej usuwaniu albo przywracaniu trzeba to wyrównać.
 - **Komendy:** `uv sync` · `uv run pytest -v` · `uv run python -m etl.run_all [--only kroki] [--force]` (kroki: …, `aggregate`, `gaps`, `national`) ·
   `uv run python -m etl.sanity` · `start.bat` (port 8000). Po zmianie danych o firmach/ludności: `--only aggregate,gaps,national --force`.
 
@@ -102,7 +105,7 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 
 ## 6. Co dalej (otwarte)
 
-1. **Testy Marcina po v3.7**, potem scalenie PR #2 do `main`.
+1. **Testy Marcina po v3.8**, potem scalenie PR #2 do `main`.
 2. **Zasięg klienta zależny od gęstości** (wieś > miasto) — na wsi model zawyża liczbę klientów, bo nie widzi firm w mieście dalej niż 4 × zasięg.
    Wymaga kalibracji na prawdziwej bazie (suma E nowych firm w klasie gęstości vs liczba firm). `docs/audyt-przydatnosci.md`, sekcja B4.
 3. **CEIDG** jako trzecie źródło firm (brukarze, ogrodnicy, kosmetyczki bez lokalu). PKD 2025: fryzjerstwo 96.21.Z, kosmetyka 96.22.Z (dawniej 96.02.Z — szukać w obu).

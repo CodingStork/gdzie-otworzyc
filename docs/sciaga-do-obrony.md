@@ -1,4 +1,4 @@
-# Ściąga do obrony — Lokalizator (wersja 3.7)
+# Ściąga do obrony — Lokalizator (wersja 3.8)
 
 Prostym językiem: co robi aplikacja, jakie pojęcia z analizy danych przestrzennych w niej występują i **gdzie dokładnie w kodzie** je znaleźć. Każde pojęcie ma 3–6 zdań i wskazanie `plik:funkcja`.
 
@@ -178,6 +178,16 @@ Do v3.5 aplikacja miała dwa tryby: „Cała Polska” (mgła od razu po wybrani
 
 **Drobniejsze:** odświeżenie strony zaczyna od zera (stan analizy nie jest zapisywany w adresie), drugie kliknięcie narzędzia je odznacza (przy prostokącie lewy przycisk rysuje, więc trzeba móc wrócić do przesuwania mapy), wpisana miejscowość dostaje okrąg 5 km, a zmiana narzędzia zamienia zaznaczenie w tym samym miejscu; prostokąt ma kropkę w środku do przesuwania.
 
+## 31. Mapa = dymek: suma w ruchomym oknie i siatka jak piksele (v3.8)
+
+**Suma w ruchomym oknie (focal sum).** Tester kliknął miejsce, które mapa malowała na „ok. 2 nowe bloki”, a dymek mówił „w promieniu 1 km: 0”. Przyczyna: mapa liczyła P(g) = Σ d_i · exp(−d/zasięg) do 4 × zasięg (ważona suma, także spoza okręgu), a dymek — twardy okrąg. Teraz mapy „Gdzie są klienci” i „Gdzie są firmy” to **suma w ruchomym oknie**: w każdym punkcie siatki liczymy klientów (firmy) w okręgu o promieniu zasięgu — tę samą liczbę co dymek. To klasyczna operacja ogniskowa w GIS (*focal statistics*, okno kołowe). Model Huffa („Gdzie otworzyć”) zostaje z rozpadem odległości, bo to jego istota. Kod: `surface.py: window_sum, demand_potential, competition_density`.
+
+**Twierdzenie o próbkowaniu w praktyce.** Okno o promieniu R przesuwane co krok s widzi wszystko tylko wtedy, gdy s ≤ R (u nas s ≤ R/2) — inaczej między punktami są dziury, a interpolacja koloru między nimi zgaduje. Przy okręgu 240 km i zasięgu 1 km punkty leżały co 2,7 km i w sąsiednich wychodziło 10, 3 i 1. Dlatego krok siatki = min(promień/90, zasięg/2), z limitem 250 tys. punktów (`surface.grid_step`); gdy limit nie pozwala, serwer podnosi zasięg i mówi to suwakiem.
+
+**Siatka jak piksele.** Obraz mgły Leaflet rozciąga między narożnikami w stopniach, w rzucie Merkatora (kolumny = długość, wiersze = Merkator). Siatka regularna w metrach (lokalne odwzorowanie poprzeczne Merkatora) przy obszarze 150–350 km nie pokrywa się z tymi pikselami — zbieżność południków przesuwała mgłę na brzegach o kilka–kilkanaście km. Teraz punkty siatki leżą dokładnie w środkach pikseli obrazu (`service.map_grid`), a odległości liczymy w metrach (zniekształcenie odległości w lokalnym odwzorowaniu na 300 km od środka to ok. 0,1%). Test: `test_map_value_equals_point_details`.
+
+**Interfejs:** budowy są osobną pozycją „Pracuję przy budowie / wykończeniu” (klienci = nowe domy i bloki, bez konkurencji), przy innych branżach klientami są tylko ludzie; zasięg jest pod klientami i nie schodzi poniżej tego, co liczy serwer (budowy: 1 km); po kliknięciu okrąg zasięgu ma kropkę (zmienia zasięg), a dymek wisi nad okręgiem z ✕ jak karta.
+
 ## Pytania, które może zadać prowadzący
 
 **1. Dlaczego heksagony, a nie kwadraty albo gminy — i czemu w v3 już ich nie widać na mapie?**
@@ -265,6 +275,12 @@ Bo pierwszy użytkownik go nie czytał — wolał dwie liczby (klienci, firmy) i
 
 **28. Jak policzyłeś całą Polskę w kilka sekund, skoro wcześniej potrzebna była gotowa mapa z ETL?**
 Zmierzyłem, że czas zależy od liczby punktów siatki, a nie od wielkości obszaru. Siatka ma zawsze ok. 180 punktów w poprzek (krok = promień/90), więc dla Polski punkty leżą co ~4 km — na ekranie i tak nie widać gęstszych. Źródła popytu są grubsze przy dużym zasięgu, a pary punkt–źródło znajduje drzewo cKDTree. Sekcja 30.
+
+**30. Czemu mapa klientów to suma w okręgu, a nie ważona odległością jak w Huffie?**
+Bo użytkownik porównuje kolor z liczbą w dymku — muszą być tą samą liczbą. „Ilu klientów mieszka w promieniu zasięgu” każdy rozumie i może sprawdzić; suma ważona exp(−d/R) z ogonem do 4R nie ma prostego znaczenia. W modelu Huffa ważenie zostaje, bo opisuje wybór klienta (bliższa firma przyciąga mocniej). Sekcja 31.
+
+**31. Skąd wiesz, że mgła leży tam, gdzie powinna, przy obszarze 300 km?**
+Siatka jest ułożona tak jak piksele obrazu na mapie (kolumny równo w długości, wiersze równo w Merkatorze), a test API sprawdza, że wartość w środku komórki równa się liczbie z `/api/point` w tym samym miejscu. Wcześniej siatka była regularna w metrach i na brzegach dużego obszaru mgła była przesunięta. Sekcja 31.
 
 **29. Po co tryb nocny i czemu ma inną paletę?**
 Wygoda (praca wieczorem) — ale paleta nie może być ta sama: na ciemnym tle ciemnoczerwony „najwięcej” by zniknął. Magma odwraca kierunek jasności (więcej = jaśniej) i jest równomierna percepcyjnie, więc różnice wyglądają tak samo w każdej części skali.
