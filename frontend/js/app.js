@@ -27,7 +27,7 @@ window.gdzieOtworzyc = { get state() { return state; }, get map() { return map.l
 // area: przeanalizowany obszar (ten sam kształt co selection); result: odpowiedź /api/surface; used: ustawienia, dla których ją policzono.
 const state = {
   tool: null, selection: null, card: null, area: null, result: null, used: null,
-  controller: null, requestId: 0, loading: false,
+  controller: null, requestId: 0, loading: false, reopenPoint: null,
 };
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
@@ -226,6 +226,11 @@ async function run({ fit }) {
     if (mine !== state.requestId) return;
     discardPoint();
     showResult(result, used, fit);
+    if (state.reopenPoint) {                             // zasięg zmieniony kropką w szczegółach punktu — pokaż je znowu
+      const pt = state.reopenPoint;
+      state.reopenPoint = null;
+      showPointAt(pt.lat, pt.lng);
+    }
   } catch (e) {
     if (e.name === 'AbortError') return;                 // zastąpione nowszym zapytaniem
     if (mine !== state.requestId) return;
@@ -303,6 +308,12 @@ function drawLayer() {
 }
 
 function showResult(result, used, fit) {
+  // Serwer mógł podnieść zasięg (ogromny obszar i bardzo mały zasięg — siatka nie może być gęstsza): suwak i dymki pokazują
+  // zasięg, z którym naprawdę liczyliśmy, a nie ten, który ktoś ustawił.
+  if (result.reach_km > used.reach_km) {
+    ui.setReachKm(result.reach_km);
+    used = { ...used, reach_km: result.reach_km };
+  }
   state.result = result;
   state.used = used;
   ui.showInsights();                                     // panel po prawej zmienia szerokość mapy
@@ -362,10 +373,19 @@ async function showPointAt(lat, lng) {
     ]);   // brak konkurentów na mapie (poi == null) nie blokuje dymku
     if (mine !== pointRequest) return;
     const competitors = poi ? poi.items.filter((c) => distanceKm(lat, lng, c.lat, c.lng) <= data.radius_km) : [];
-    map.showDetails(lat, lng, data.radius_km, competitors, ui.pointPopup(data, () => newCircleAt(lat, lng)));
+    const popup = ui.pointPopup(data, { onSetCenter: () => newCircleAt(lat, lng), onClose: () => map.closeDetails() });
+    map.showDetails(lat, lng, data.radius_km, competitors, popup, (km) => changeReachFromMap(km, lat, lng));
   } catch (e) {
     if (mine === pointRequest) ui.showError(e.message);
   }
+}
+
+// Kropka na okręgu zasięgu w szczegółach punktu: nowy zasięg trafia na suwak, obszar liczy się od nowa,
+// a po przeliczeniu szczegóły tego samego punktu otwierają się znowu (już z nowym zasięgiem).
+function changeReachFromMap(km, lat, lng) {
+  ui.setReachKm(km);
+  state.reopenPoint = { lat, lng };
+  onFormChange();
 }
 
 // „Zaznacz tu nowy okrąg” w dymku: nowe zaznaczenie z karty (analiza dopiero po ✓).

@@ -24,16 +24,19 @@ const HELP = {
     'a bliższa firma przyciąga go mocniej. Uwzględniamy konkurentów z OpenStreetMap i Overture Maps oraz »inne możliwości« ' +
     '(firmy, których nie ma w tych bazach, zakupy gdzie indziej). Liczba służy do porównywania miejsc między sobą — to nie prognoza sprzedaży: ' +
     'model zna tylko miejsce zamieszkania klientów (nie pracy ani dojazdów), nie zna ich zamożności ani tego, że duży sklep przyciąga mocniej niż mały.',
-  demand: 'Ilu potencjalnych klientów jest w pobliżu danego miejsca — bliżsi liczą się bardziej. ' +
-    'Mieszkańcy to szacunek: spis 2021 rozłożony na budynki mieszkalne z OpenStreetMap. ' +
-    'Dla nowych domów liczymy pozwolenia na budowę z wybranego okresu.',
+  demand: 'Ilu klientów mieszka w zasięgu klienta od danego miejsca (w okręgu o tym promieniu) — tę samą liczbę pokazuje dymek po kliknięciu. ' +
+    'Mieszkańcy to szacunek: spis 2021 rozłożony na budynki mieszkalne z OpenStreetMap.',
+  build: 'Ile nowych budynków mieszkalnych ma pozwolenie na budowę w zasięgu od danego miejsca (rejestr GUNB, wybrany okres). ' +
+    'Pozwolenie nie oznacza jeszcze wybudowanego domu, a blok liczy się jak jeden budynek (rejestr nie podaje liczby mieszkań). ' +
+    'Konkurencji tu nie liczymy — firm budowlanych i wykończeniowych prawie nie ma w OpenStreetMap ani Overture Maps.',
   competition: 'Gdzie jest najwięcej firm wybranego typu. Dane z OpenStreetMap i Overture Maps — mogą być niepełne.',
-  trend: 'Gdzie w ostatnich 12 miesiącach wydano więcej pozwoleń na nowe budynki niż w 12 miesiącach wcześniej. ' +
+  trend: 'Gdzie w ostatnich 12 miesiącach wydano w zasięgu więcej pozwoleń na nowe budynki niż w 12 miesiącach wcześniej. ' +
     'Czerwony = budów przybywa (rozwijająca się okolica), niebieski = ubywa, przezroczysty = bez zmian. ' +
     'Pozwolenie nie oznacza jeszcze wybudowanego domu.',
-  reach: 'Jak daleko typowy klient jest gotów dojść lub dojechać. Fryzjer, sklep spożywczy: kilkaset metrów do 2 km; ' +
-    'market budowlany, brukarz: 10–20 km. W tej odległości chęć dotarcia spada o ok. 2/3, a dwa razy dalej — o ok. 85%. ' +
-    'Najmniejszy zasięg to 0,3 km, bo dane o mieszkańcach mają rozdzielczość ok. 300 m.',
+  reach: 'Jak daleko typowy klient jest gotów dojść lub dojechać (przy budowach: jak daleko Ty dojeżdżasz do klienta). ' +
+    'Fryzjer, sklep spożywczy: kilkaset metrów do 2 km; market budowlany, brukarz: 10–20 km. ' +
+    'Po kliknięciu w zbadany obszar widać ten zasięg jako okrąg — kropką na jego krawędzi też go zmienisz. ' +
+    'Najmniej 0,3 km (dane o mieszkańcach mają rozdzielczość ok. 300 m), przy budowach 1 km (pozwolenie znamy z dokładnością do obrębu).',
   legend: 'Ciemniejszy kolor = więcej. Skala jest logarytmiczna: o jeden odcień ciemniej to ok. 20–80% więcej, ' +
     'więc różnice o kilka–kilkanaście procent prawie nie zmieniają koloru (i dobrze — dane nie są aż tak dokładne). ' +
     'Przezroczyste miejsca mają bardzo małe wartości. Dokładne liczby zobaczysz po kliknięciu mapy. ' +
@@ -110,10 +113,21 @@ function showReach() {
   $('reach-value').textContent = fmt(reachKm(), 1);
 }
 
-// Ustawia zasięg (np. typowy dla wybranej branży).
+// Najmniejszy zasięg dla wybranych klientów: przy pozwoleniach 1 km (lokalizacja z dokładnością do obrębu — tyle i tak liczy
+// serwer), inaczej 0,3 km. Suwak nie może pokazywać mniej, niż naprawdę liczymy (uwaga Marcina: „0,3 km”, a dymek „w promieniu 1 km”).
+const PERMITS_MIN_KM = 1;
+const minReachKm = () => (currentDemand() && currentDemand().source === 'permits' ? PERMITS_MIN_KM : KM_MIN);
+
+// Ustawia zasięg (np. typowy dla wybranej branży albo przeciągnięty kropką na mapie), nie mniej niż minimum dla klientów.
 function setReach(km) {
-  $('reach-input').value = kmToSlider(Math.min(KM_MAX, Math.max(KM_MIN, Number(km))));
+  $('reach-input').value = kmToSlider(Math.min(KM_MAX, Math.max(minReachKm(), Number(km))));
   showReach();
+}
+export const setReachKm = setReach;
+
+function syncReachMin() {
+  $('reach-input').min = kmToSlider(minReachKm());
+  if (reachKm() < minReachKm()) setReach(minReachKm());
 }
 
 // ---- Promień okręgu (pole w karcie przy okręgu): 1–350 km; zaokrąglenie zależne od wielkości ----
@@ -160,6 +174,12 @@ export function settingsAttention(on) {
 // ---- Formularz ----
 
 // Pusta pozycja list: zaproszenie do wyboru, a nie zakaz („nie wybieraj” brzmiało jak polecenie — uwaga Marcina).
+//
+// „Pracuję przy budowie / wykończeniu” (v3.7) to osobna pozycja na liście branż, a nie typ z katalogu: dla brukarza czy
+// instalatora klientami są nowe domy i bloki (pozwolenia na budowę), a konkurencji nie liczymy (takich firm prawie nie ma
+// w OSM i Overture). Przy pozostałych branżach klientami są tylko ludzie — „barber + nowe bloki” nie miało sensu.
+export const BUILD = 'build';
+export const isBuild = () => $('type-select').value === BUILD;
 
 function currentType() {
   if (!catalog) return null;   // katalog jeszcze się nie wczytał
@@ -189,26 +209,34 @@ function syncMonthsRow() {
   $('months-row').hidden = !(demand && demand.needs_months);
 }
 
-// Dopisek „(sugerowane)” przy czynnikach popytu zalecanych dla typu.
-function markSuggested(type) {
-  const suggested = new Set(type.suggested_demands);
-  for (const option of $('demand-select').options) {
-    if (!option.value) continue;
-    const demand = catalog.demands.find((d) => d.id === option.value);
-    option.textContent = demand.name + (suggested.has(demand.id) ? ' (sugerowane)' : '');
+// Lista klientów zależna od branży: przy budowie — nowe budowy (pozwolenia), poza tym — ludzie ze spisu.
+// Dopisek „(sugerowane)” przy czynnikach zalecanych dla typu; wybór zostaje, jeśli nadal jest na liście.
+function fillDemands() {
+  const select = $('demand-select');
+  const keep = select.value;
+  const type = currentType();
+  const suggested = new Set(type ? type.suggested_demands : []);
+  const source = isBuild() ? 'permits' : 'census';
+  select.replaceChildren(new Option('Wybierz klientów…', ''));
+  for (const demand of catalog.demands.filter((d) => d.source === source)) {
+    select.append(new Option(demand.name + (suggested.has(demand.id) ? ' (sugerowane)' : ''), demand.id));
   }
+  select.value = [...select.options].some((o) => o.value === keep) ? keep : '';
 }
 
-// Pod wyborem branży: bez branży — podpowiedź dla rzemieślników; z branżą — jedno zdanie o tym, czego mapa dla niej NIE widzi
-// (zastrzeżenie z katalogu) i ewentualne ostrzeżenie o niepełnych danych. Mówimy to raz, w miejscu decyzji, a nie pod mapą.
-// Po zmianie typu: czynniki sugerowane dla typu dostają dopisek, domyślny jest zaznaczony,
-// a suwak „zasięg klienta” wraca do wartości typowej dla branży. Brak typu niczego nie zmienia.
+// Po zmianie typu: lista klientów pasuje do branży, domyślni klienci są zaznaczeni, a suwak zasięgu wraca do wartości typowej
+// dla branży (przy budowie — dla pozwoleń, 10 km).
 function onTypeChange() {
+  fillDemands();
   const type = currentType();
-  if (!type) return;
-  markSuggested(type);
-  $('demand-select').value = type.default_demand;
-  setReach(type.bandwidth_km);
+  if (isBuild()) {
+    $('demand-select').value = 'new_all';
+    setReach(demandById('new_all').default_reach_km);
+  } else if (type) {
+    $('demand-select').value = type.default_demand;
+    setReach(type.bandwidth_km);
+  }
+  syncReachMin();
   syncMonthsRow();
 }
 
@@ -224,19 +252,22 @@ export function renderCatalog(data, onChange) {
     for (const type of group.types) optgroup.append(new Option(type.name, type.id));
     typeSelect.append(optgroup);
   }
+  const build = document.createElement('optgroup');
+  build.label = 'Praca u klienta';
+  build.append(new Option('Pracuję przy budowie / wykończeniu (brukarz, instalator, okna…)', BUILD));
+  typeSelect.append(build);
   const demandSelect = $('demand-select');
-  demandSelect.innerHTML = '';
-  demandSelect.append(new Option('Wybierz klientów…', ''));
-  for (const demand of catalog.demands) demandSelect.append(new Option(demand.name, demand.id));
+  fillDemands();
   $('months-select').value = String(catalog.default_months);
 
   typeSelect.addEventListener('change', () => { onTypeChange(); syncLayers(); onChange(); });
-  demandSelect.addEventListener('change', () => { syncMonthsRow(); syncLayers(); onChange(); });
+  demandSelect.addEventListener('change', () => { syncReachMin(); syncMonthsRow(); syncLayers(); onChange(); });
   $('months-select').addEventListener('change', onChange);
   // Przy przeciąganiu suwaków tylko aktualizujemy podpis; zapytanie idzie po puszczeniu (zdarzenie change).
   $('reach-input').addEventListener('input', showReach);
   $('reach-input').addEventListener('change', onChange);
   setReach(1.5);
+  syncReachMin();
   syncMonthsRow();
   syncLayers();
 }
@@ -245,7 +276,7 @@ export function renderCatalog(data, onChange) {
 export function selectedParams() {
   const demand = currentDemand();
   const params = {
-    type: $('type-select').value,
+    type: isBuild() ? '' : $('type-select').value,             // przy budowie nie ma typu firmy — liczymy tylko budowy
     demand: demand ? demand.id : '',
     reach_km: reachKm(),
   };
@@ -261,7 +292,7 @@ export function hasSettings() {
 
 // ---- Warstwy mapy: wybór w lewym panelu (radio), tylko dostępne dla bieżących ustawień ----
 // typ + klienci → „Gdzie otworzyć”, „Gdzie są klienci”; sam popyt → „Gdzie są klienci”; sama branża → „Gdzie są {firmy}”;
-// popyt z pozwoleń dodatkowo → „Gdzie budowy przybywa” (trend).
+// praca przy budowie → „Gdzie się buduje” i „Gdzie buduje się więcej niż rok temu” (trend).
 
 export function availableLayers() {
   const type = currentType();
@@ -273,8 +304,8 @@ export function availableLayers() {
 
 function layerText(layer) {
   const type = currentType();
-  return { open: 'Gdzie otworzyć', demand: 'Gdzie są klienci', trend: 'Gdzie budowy przybywa',
-    competition: `Gdzie są ${type ? type.plural : 'firmy'}` }[layer];
+  return { open: 'Gdzie otworzyć', demand: isBuild() ? 'Gdzie się buduje' : 'Gdzie są klienci',
+    trend: 'Gdzie buduje się więcej niż rok temu', competition: `Gdzie są ${type ? type.plural : 'firmy'}` }[layer];
 }
 
 let onLayerChangeCb = null;
@@ -308,7 +339,7 @@ export function syncLayers() {
     const help = document.createElement('button');
     help.type = 'button';
     help.className = 'help';
-    help.dataset.help = layer;
+    help.dataset.help = layer === 'demand' && isBuild() ? 'build' : layer;
     help.setAttribute('aria-label', `Co to znaczy: ${layerText(layer)}?`);
     help.textContent = '?';
     row.append(label, help);
@@ -332,9 +363,9 @@ export function legendTitle(layer, typeId, demandId) {
   const demand = demandById(demandId);
   const type = typeById(typeId);
   if (layer === 'open') return 'Szacowana liczba Twoich klientów';
-  if (layer === 'demand') return `Dostępni klienci: ${demand ? demand.name.toLowerCase() : ''}`;
+  if (layer === 'demand') return `${demand ? demand.name : 'Klienci'} w zasięgu`;
   if (layer === 'trend') return 'Zmiana liczby nowych budów';
-  return `Zagęszczenie: ${type ? type.name : ''}`;
+  return `${type ? capitalize(type.plural) : 'Firmy'} w zasięgu`;
 }
 
 // ---- Prawy panel ----
@@ -541,9 +572,18 @@ export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel
 const km = (r) => fmt(r, 1);
 
 // Zwraca element DOM (tekst wstawiamy przez textContent — nazwy firm nie są HTML-em).
-// onSetCenter: wywoływane po kliknięciu przycisku pod dymkiem (podpis: actionLabel).
-export function pointPopup(d, onSetCenter, actionLabel = 'Zaznacz tu nowy okrąg') {
+// onSetCenter: „Zaznacz tu nowy okrąg”; onClose: ✕ — taki sam jak na karcie zaznaczenia (poza dymkiem, na wysokości pierwszej linii).
+export function pointPopup(d, { onSetCenter, onClose }) {
   const box = document.createElement('div');
+  box.className = 'point-card';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'sel-cancel';
+  close.textContent = '✕';
+  close.title = 'Zamknij';
+  close.setAttribute('aria-label', 'Zamknij szczegóły');
+  close.addEventListener('click', onClose);
+  box.append(close);
   const add = (text, bold = false) => {
     const p = document.createElement('div');
     if (bold) p.className = 'strong';
@@ -573,7 +613,7 @@ export function pointPopup(d, onSetCenter, actionLabel = 'Zaznacz tu nowy okrąg
     const link = document.createElement('button');
     link.type = 'button';
     link.className = 'link-button';
-    link.textContent = actionLabel;
+    link.textContent = 'Zaznacz tu nowy okrąg';
     link.addEventListener('click', onSetCenter);
     box.append(link);
   }

@@ -86,7 +86,7 @@ fieldset.step legend { padding: 0 4px; font-weight: 700; font-size: 13.5px; disp
 #layer-choice { margin: 2px 0 0; padding: 4px 10px 8px; border: 1px solid var(--line); border-radius: 8px; }
 #layer-choice legend { padding: 0 4px; font-weight: 600; font-size: 13px; }
 #layer-choice label { margin: 3px 0; font-weight: 400; }
-.place-pin { background: #800026; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 1px 4px #0006; }
+.place-pin { background: var(--area); border: 2px solid #fff; border-radius: 50%; box-shadow: 0 1px 4px #0006; }
 
 #search-results li.muted { color: var(--muted); cursor: default; }
 #error { margin-top: 8px; padding: 8px; border-radius: 6px; background: var(--error-bg); color: var(--error-text); }
@@ -182,7 +182,8 @@ label.disabled { opacity: .4; }
 .sel-ok { flex: 1; border: 0; background: var(--accent); color: var(--on-accent); }
 .sel-ok:hover:not(:disabled) { filter: brightness(.88); }
 .sel-ok:disabled { opacity: .45; cursor: not-allowed; }
-.selection-card { position: relative; }
+.selection-card, .point-card { position: relative; }
+.point-popup .leaflet-popup-content { margin: 10px 12px; }
 /* ✕ poza dymkiem: na prawo od karty (za jej marginesem 12 px i obramowaniem), na wysokości tytułu */
 .sel-cancel {
   position: absolute; top: -4px; right: -50px; width: 28px; height: 28px; padding: 0; border-radius: 50%;
@@ -293,6 +294,7 @@ label.disabled { opacity: .4; }
 .circle-handle.center { cursor: move; }
 .rect-handle.center { border-radius: 50%; cursor: move; }
 .circle-handle.edge { cursor: ew-resize; background: var(--area); border-color: #fff; }
+.circle-handle.edge.reach { background: var(--rect); }   /* kropka zasięgu klienta w szczegółach punktu */
 
 /* Telefon: mapa na górze, pod nią arkusz z jednym z paneli (zakładka) i pasek zakładek */
 @media (max-width: 767px) {

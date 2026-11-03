@@ -35,10 +35,12 @@ def test_huff_blocks_give_same_result():
     assert E.shape == (4500,) and np.allclose(E[:5], huff_expected(g[:5], dem, w, comp, 800))
 
 
-def test_potential_and_density():
+def test_potential_and_density_count_inside_reach():
+    """P i K to sumy w okręgu o promieniu zasięgu — ta sama liczba co w dymku („W promieniu 1 km: …”), bez rozpadu."""
     g = np.array([[0.0, 0.0]])
-    assert demand_potential(g, np.array([[1000.0, 0.0]]), np.array([10.0]), 1000)[0] == pytest.approx(10 * math.exp(-1))
-    assert competition_density(g, np.array([[0.0, 0.0], [9000.0, 0.0]]), 1000)[0] == pytest.approx(1.0)
+    dem = np.array([[1000.0, 0.0], [1001.0, 0.0]])
+    assert demand_potential(g, dem, np.array([10.0, 7.0]), 1000)[0] == pytest.approx(10)       # 1000 m jest w zasięgu, 1001 m już nie
+    assert competition_density(g, np.array([[0.0, 0.0], [500.0, 0.0], [9000.0, 0.0]]), 1000)[0] == pytest.approx(2.0)
     assert competition_density(g, np.empty((0, 2)), 1000)[0] == 0
 
 
@@ -53,6 +55,15 @@ def test_grid_thins_out_for_big_area():
     """Duży obszar (150 km): siatka ma tyle samo punktów w poprzek, tylko rzadszych — dlatego liczy się w kilka sekund."""
     xy, mask, cell, nx, ny = make_grid(np.array([0.0, 0.0]), 150_000)
     assert cell == pytest.approx(150_000 / 90, rel=0.01) and nx == ny == 180
+
+
+def test_grid_is_denser_than_reach_up_to_point_limit():
+    """Mapa „ilu klientów w zasięgu” wymaga punktów co najwyżej co pół zasięgu — inaczej kolor nie zgadza się z dymkiem."""
+    _, mask, cell, _, _ = make_grid(np.array([0.0, 0.0]), 100_000, reach_m=1000)
+    assert cell == pytest.approx(500) and mask.sum() <= 250_000 * 1.01
+    _, mask, cell, _, _ = make_grid(np.array([0.0, 0.0]), 350_000, reach_m=300)     # cała Polska i 0,3 km: limit punktów wygrywa
+    assert cell > 300 and mask.sum() <= 250_000 * 1.01
+    assert make_grid(np.array([0.0, 0.0]), 10_000, reach_m=20_000)[2] == pytest.approx(10_000 / 90)   # duży zasięg niczego nie zmienia
 
 
 def test_top_points_separation():

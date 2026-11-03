@@ -40,6 +40,12 @@
 
       <label for="demand-select">Twoi klienci to</label>
       <select id="demand-select" autocomplete="off"></select>
+      <div class="label-row">
+        <label for="reach-input">Zasięg klienta: <b id="reach-value">1,5</b> km</label>
+        <button type="button" class="help" data-help="reach" aria-label="Co to jest zasięg klienta?">?</button>
+      </div>
+      <!-- Zasięg pod klientami (v3.7): suwak logarytmiczny 0,3–20 km, przy budowach od 1 km (ui.js: syncReachMin) -->
+      <input id="reach-input" type="range" min="0" max="100" step="1" value="50" autocomplete="off">
 
       <div id="months-row" hidden>
         <label for="months-select">Okres pozwoleń</label>
@@ -50,12 +56,6 @@
         </select>
       </div>
 
-      <div class="label-row">
-        <label for="reach-input">Zasięg klienta: <b id="reach-value">1,5</b> km</label>
-        <button type="button" class="help" data-help="reach" aria-label="Co to jest zasięg klienta?">?</button>
-      </div>
-      <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,3–20 km (wzór w ui.js) -->
-      <input id="reach-input" type="range" min="0" max="100" step="1" value="50" autocomplete="off">
     </fieldset>
 
     <!-- Warstwy do wyboru zależą od ustawień powyżej (ui.js: syncLayers) -->

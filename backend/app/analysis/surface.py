@@ -3,11 +3,14 @@
 Trzy wielkości dla każdego punktu siatki g (każde źródło popytu i = środek komórki z ludnością,
 każdy konkurent k = firma z OpenStreetMap):
 
-* P(g) „Gdzie są klienci”   = Σ_i d_i · f(d_ig)                       — dostępny popyt,
-* K(g) „Gdzie są firmy”     = Σ_k f(d_kg)                              — zagęszczenie konkurencji,
+* P(g) „Gdzie są klienci”   = Σ_i d_i · [d_ig ≤ zasięg]               — ilu klientów mieszka w zasięgu od punktu,
+* K(g) „Gdzie są firmy”     = Σ_k [d_kg ≤ zasięg]                      — ile firm jest w zasięgu od punktu,
 * E(g) „Gdzie otworzyć”     = Σ_i d_i · f(d_ig) / (f(d_ig) + C_i + A0) — model Huffa.
 
-Rozpad odległości f(d) = exp(−d / zasięg): im dalej, tym mniejsza chęć dotarcia do firmy.
+P i K to sumy w ruchomym oknie (okrąg o promieniu zasięgu przesuwany po mapie): kolor mapy w punkcie to dokładnie ta liczba,
+którą pokazuje dymek po kliknięciu („W promieniu 1,5 km: …”). Wcześniej P i K też miały rozpad z odległością i liczyły ludzi
+do 4 · zasięg — kolor mówił „2 nowe bloki”, a dymek „w promieniu 1 km: 0” (uwaga Marcina, v3.7).
+W modelu Huffa rozpad odległości f(d) = exp(−d / zasięg) zostaje: to jego istota — bliższa firma przyciąga mocniej.
 """
 import math
 
@@ -21,6 +24,7 @@ A0 = math.exp(-1)
 
 CUTOFF = 4          # po przekroczeniu 4·zasięg uznajemy wpływ za zerowy (exp(−4) ≈ 2%)
 BLOCK = 2_000       # tyle punktów siatki liczymy naraz (żeby nie zjeść pamięci)
+MAX_GRID_POINTS = 250_000   # górny limit punktów siatki w okręgu (pomiar: okrąg 240 km, zasięg 1 km — ok. 8 s)
 
 
 def decay(d_m: np.ndarray, reach_m: float) -> np.ndarray:
@@ -29,15 +33,26 @@ def decay(d_m: np.ndarray, reach_m: float) -> np.ndarray:
     return np.where(d > CUTOFF * reach_m, 0.0, np.exp(-d / reach_m))
 
 
-def make_grid(center_xy: np.ndarray, radius_m: float, divisions: int = 90):
+def grid_step(radius_m: float, divisions: int = 90, reach_m: float | None = None, max_points: int = MAX_GRID_POINTS) -> float:
+    """Krok siatki w metrach — zasady opisane w `make_grid`."""
+    cell = max(radius_m / divisions, 50.0)
+    if reach_m:
+        cell = min(cell, max(reach_m / 2, 50.0))
+    return max(cell, math.sqrt(math.pi * radius_m ** 2 / max_points))   # limit liczby punktów w okręgu
+
+
+def make_grid(center_xy: np.ndarray, radius_m: float, divisions: int = 90, reach_m: float | None = None,
+              max_points: int = MAX_GRID_POINTS):
     """Regularna siatka punktów pokrywająca okrąg. Zwraca (xy, maska „w okręgu”, cell_m, nx, ny).
 
-    Krok = promień/`divisions` (domyślnie 90), co najmniej 50 m — zawsze ok. 180 punktów w poprzek okręgu (ok. 25 tys. w okręgu),
-    niezależnie od jego wielkości. Przy dużym obszarze punkty leżą rzadziej (150 km → co ok. 1,7 km), ale czas liczenia zostaje
-    kilka sekund nawet dla całej Polski, a na ekranie okrąg i tak zajmuje kilkaset pikseli. Punkty leżą wierszami od północy
-    (tak jak piksele obrazu), więc tablicę wartości można od razu narysować.
+    Krok = promień/`divisions` (domyślnie 90, czyli ok. 180 punktów w poprzek), co najmniej 50 m — ALE nie większy niż pół zasięgu
+    klienta (`reach_m`): mapa „ilu klientów w zasięgu” sprawdza okrąg o promieniu zasięgu w każdym punkcie siatki, więc punkty muszą
+    leżeć gęściej niż ten okrąg, inaczej między nimi zostają dziury, a kolor nie zgadza się z liczbą w dymku (uwaga Marcina, v3.7:
+    okrąg 240 km, zasięg 1 km, punkty co 2,7 km → w sąsiednich punktach 10, 3 i 1). Punktów w okręgu jest najwyżej `max_points`
+    (czas liczenia) — przy ogromnym obszarze i bardzo małym zasięgu krok jest wtedy większy niż pół zasięgu i serwis podnosi zasięg
+    (patrz `run_surface`). Punkty leżą wierszami od północy (tak jak piksele obrazu), więc tablicę wartości można od razu narysować.
     """
-    cell = max(radius_m / divisions, 50.0)
+    cell = grid_step(radius_m, divisions, reach_m, max_points)
     n = math.ceil(2 * radius_m / cell)
     half = n * cell / 2
     xs = center_xy[0] - half + cell / 2 + np.arange(n) * cell
@@ -70,14 +85,31 @@ def _sum_by_target(grid_xy, source_xy, columns, reach_m) -> np.ndarray:
     return out
 
 
+def window_sum(grid_xy, source_xy, columns, radius_m) -> np.ndarray:
+    """Suma w ruchomym oknie: dla każdego punktu siatki Σ_j w_j po źródłach j w odległości ≤ radius_m (bez rozpadu).
+
+    Tak samo jak `_sum_by_target`: wiele kolumn wag na tych samych parach, punkty porcjami po BLOCK. Zwraca (punkty × kolumny).
+    """
+    out = np.zeros((len(grid_xy), len(columns)))
+    if len(source_xy) == 0 or len(grid_xy) == 0:
+        return out
+    tree = cKDTree(source_xy)
+    for s in range(0, len(grid_xy), BLOCK):
+        part = grid_xy[s:s + BLOCK]
+        pairs = cKDTree(part).sparse_distance_matrix(tree, radius_m, output_type="ndarray")
+        for k, w in enumerate(columns):
+            out[s:s + BLOCK, k] = np.bincount(pairs["i"], weights=w[pairs["j"]], minlength=len(part))
+    return out
+
+
 def demand_potential(grid_xy, demand_xy, demand_w, reach_m) -> np.ndarray:
-    """P(g) = Σ_i d_i · f(d_ig) — ilu klientów jest „w zasięgu”, bliżsi liczą się bardziej."""
-    return _sum_by_target(grid_xy, demand_xy, [np.asarray(demand_w, float)], reach_m)[:, 0]
+    """P(g) = Σ_i d_i · [d_ig ≤ zasięg] — ilu klientów mieszka w zasięgu od punktu g (ta sama liczba co w dymku)."""
+    return window_sum(grid_xy, demand_xy, [np.asarray(demand_w, float)], reach_m)[:, 0]
 
 
 def competition_density(grid_xy, comp_xy, reach_m) -> np.ndarray:
-    """K(g) = Σ_k f(d_kg) — im więcej firm blisko, tym wyższa wartość."""
-    return _sum_by_target(grid_xy, comp_xy, [np.ones(len(comp_xy))], reach_m)[:, 0]
+    """K(g) = Σ_k [d_kg ≤ zasięg] — ile firm jest w zasięgu od punktu g."""
+    return window_sum(grid_xy, comp_xy, [np.ones(len(comp_xy))], reach_m)[:, 0]
 
 
 def competition_availability(demand_xy, comp_xy, reach_m) -> np.ndarray:
@@ -90,7 +122,7 @@ def huff_multi(grid_xy, demand_xy, demand_w, availability, reach_m) -> tuple[np.
 
     Znalezienie par (punkt, źródło) jest najdroższe, a wagi czynników (np. kobiety, mężczyźni, wszyscy) tylko je mnożą,
     więc liczymy je raz. `availability` to C_i z `competition_availability` — niezależne od czynnika, więc w ETL liczone raz na typ.
-    Zwraca (E, P): tablice (punkty × czynniki).
+    Zwraca (E, P): tablice (punkty × czynniki); P to suma w oknie o promieniu zasięgu (jak `demand_potential`).
     """
     demand_w = np.asarray(demand_w, float)
     demand_w = demand_w[:, None] if demand_w.ndim == 1 else demand_w
@@ -107,7 +139,7 @@ def huff_multi(grid_xy, demand_xy, demand_w, availability, reach_m) -> tuple[np.
         share = f / (f + availability[j] + A0)           # szansa, że mieszkaniec j wybierze nową firmę
         for k in range(m):
             out_e[s:s + BLOCK, k] = np.bincount(i, weights=demand_w[j, k] * share, minlength=len(part))
-            out_p[s:s + BLOCK, k] = np.bincount(i, weights=demand_w[j, k] * f, minlength=len(part))
+            out_p[s:s + BLOCK, k] = np.bincount(i, weights=demand_w[j, k] * (pairs["v"] <= reach_m), minlength=len(part))
     return out_e, out_p
 
 
@@ -115,7 +147,7 @@ def demand_potentials(grid_xy, demand_xy, demand_w, reach_m) -> np.ndarray:
     """P(g) dla wielu czynników naraz (kolumny `demand_w`); wynik: punkty × czynniki."""
     demand_w = np.asarray(demand_w, float)
     demand_w = demand_w[:, None] if demand_w.ndim == 1 else demand_w
-    return _sum_by_target(grid_xy, demand_xy, [demand_w[:, k] for k in range(demand_w.shape[1])], reach_m)
+    return window_sum(grid_xy, demand_xy, [demand_w[:, k] for k in range(demand_w.shape[1])], reach_m)
 
 
 def huff_and_potential(grid_xy, demand_xy, demand_w, comp_xy, reach_m) -> tuple[np.ndarray, np.ndarray]:

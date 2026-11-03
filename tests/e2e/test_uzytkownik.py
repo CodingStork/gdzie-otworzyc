@@ -310,6 +310,52 @@ def test_reload_starts_from_factory_settings(app_url, make_page):
     assert len(surface_calls(page)) == 1                 # po odświeżeniu nic nowego się nie liczy
 
 
+# ---------------------------------------------------------------- klienci, zasięg, dymek (v3.7) ----
+
+def test_build_type_offers_only_construction_and_barber_only_people(app_url, make_page):
+    """„Barber + nowe bloki” nie miało sensu (Marcin): budowy są tylko przy „Pracuję przy budowie”, przy innych branżach — ludzie.
+    Przy budowach suwak zasięgu nie schodzi poniżej 1 km, bo tyle i tak liczy serwer (pozwolenie znamy z dokładnością do obrębu)."""
+    page = make_page(app_url + view(*BRZEG, 11))
+    page.select_option("#type-select", "beauty")
+    demands = page.eval_on_selector_all("#demand-select option", "os => os.map(o => o.value)")
+    assert "pop_f" in demands and not any(d.startswith("new_") for d in demands)
+    page.select_option("#type-select", "build")
+    demands = page.eval_on_selector_all("#demand-select option", "os => os.map(o => o.value)")
+    assert set(demands) == {"", "new_sf", "new_mf", "new_all"} and page.input_value("#demand-select") == "new_all"
+    page.eval_on_selector("#reach-input", "s => { s.value = 0; s.dispatchEvent(new Event('input')); }")
+    assert float(page.inner_text("#reach-value").replace(",", ".")) >= 1
+    layers = page.inner_text("#layer-options")
+    assert "Gdzie się buduje" in layers and "Gdzie otworzyć" not in layers
+
+
+def test_map_colour_equals_popup_number_and_reach_dot_changes_reach(app_url, make_page):
+    """„W promieniu 1 km zero nowych bloków, a kolor mówi 2” (Marcin): mapa klientów to liczba w promieniu zasięgu — ta sama
+    co w dymku. Dymek wisi nad okręgiem zasięgu, ma ✕ jak karta, a kropka na okręgu zmienia zasięg (suwak też)."""
+    page = make_page(app_url + view(*BRZEG, 12))
+    page.select_option("#type-select", "beauty")
+    draw_circle(page, 0.5, 0.5)
+    analyze(page)
+    page.click(".tool-button[data-tool=circle]")                          # odznaczamy narzędzie: klik w mapę = szczegóły
+    click_map(page, 0.5, 0.55)
+    page.wait_for_selector(".point-popup .sel-cancel")
+    assert "W promieniu" in page.inner_text(".point-popup")
+    ring = page.locator(".circle-handle.edge.reach").bounding_box()
+    popup = page.locator(".point-popup .leaflet-popup-content-wrapper").bounding_box()
+    assert popup["y"] + popup["height"] < ring["y"] + 5 or popup["x"] > ring["x"] + 5      # dymek nie zasłania kropki zasięgu
+    before = page.inner_text("#reach-value")
+    x, y = center_of(page, ".circle-handle.edge.reach")
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 60, y, steps=8)
+    page.mouse.up()
+    page.wait_for_selector(".point-popup .sel-cancel")
+    page.wait_for_timeout(800)
+    assert page.inner_text("#reach-value") != before
+    page.click(".point-popup .sel-cancel")
+    page.wait_for_selector(".point-popup", state="detached", timeout=3000)   # ✕ zamyka dymek (po animacji)
+    assert page.errors == []
+
+
 # ---------------------------------------------------------------- telefon ----
 
 def test_phone_flow(app_url, make_page):

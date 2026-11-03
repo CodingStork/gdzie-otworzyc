@@ -346,10 +346,18 @@ export function initMap(elementId) {
 
     // Szczegóły punktu: okrąg zasięgu, konkurenci [{lat,lng,name,source}] i dymek (bez heksagonów — laikowi nic nie mówią).
     // Zamknięcie dymku usuwa wszystko, co tu narysowano.
-    showDetails(lat, lng, reachKm, competitors, element) {
+    // Szczegóły punktu: okrąg zasięgu klienta z kropką na krawędzi (przeciągnięcie zmienia zasięg — onReach(km) po puszczeniu),
+    // konkurenci w zasięgu i dymek NAD okręgiem (zaczepiony w jego najdalszym punkcie na północy), żeby go nie zasłaniał.
+    showDetails(lat, lng, reachKm, competitors, element, onReach) {
       map.closePopup();   // stary dymek (jego zamknięcie czyści stare szczegóły) — dopiero potem rysujemy nowe
-      L.polygon(circleRing(lat, lng, reachKm), {
+      let radius = reachKm;
+      const ring = L.polygon(circleRing(lat, lng, radius), {
         renderer: detailsRenderer, interactive: false, color: rectColor(), weight: 1.5, fillOpacity: 0.03,
+      }).addTo(detailsLayer);
+      const size = isTouchUi() ? 28 : 18;
+      const edge = L.marker(destination(lat, lng, radius, 90), {
+        draggable: true, keyboard: false, autoPan: false, title: 'Przeciągnij, żeby zmienić zasięg klienta',
+        icon: L.divIcon({ className: 'circle-handle edge reach', iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
       }).addTo(detailsLayer);
       for (const p of competitors) {
         L.circleMarker([p.lat, p.lng], {
@@ -357,12 +365,18 @@ export function initMap(elementId) {
           bubblingMouseEvents: false,
         }).bindTooltip(plainText(`${p.name || 'bez nazwy'} (${SOURCE_NAMES[p.source] || 'OpenStreetMap'})`)).addTo(detailsLayer);
       }
-      // Przyciski zoomu i „?” zasłaniają lewy margines mapy — dymek ma się mieścić obok nich.
+      // Przyciski zoomu i „?” zasłaniają lewy margines mapy — dymek ma się mieścić obok nich. Zamyka go ✕ z treści (jak kartę).
       const narrow = window.innerWidth < 768;
-      L.popup({
-        className: 'point-popup', maxWidth: narrow ? 220 : 300,
+      const popup = L.popup({
+        className: 'point-popup', maxWidth: narrow ? 220 : 300, closeButton: false, offset: [0, -4],
         autoPanPaddingTopLeft: [60, 10], autoPanPaddingBottomRight: [10, 10],
-      }).setLatLng([lat, lng]).setContent(element).openOn(map);
+      }).setLatLng(destination(lat, lng, radius, 0)).setContent(element).openOn(map);
+      edge.on('drag', (e) => {
+        radius = Math.min(20, Math.max(0.3, map.distance([lat, lng], e.latlng) / 1000));
+        ring.setLatLngs(circleRing(lat, lng, radius));
+        popup.setLatLng(destination(lat, lng, radius, 0));
+      });
+      edge.on('dragend', () => { if (onReach) onReach(radius); });
     },
     closeDetails() { map.closePopup(); },
 

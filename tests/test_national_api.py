@@ -267,7 +267,7 @@ def test_big_circle_is_computed_with_users_reach(client):
     assert near["values"]["open"] != far["values"]["open"]
     s = near["summary"]
     assert s["shape"] == "circle" and s["radius_km"] == 60 and s["competitors"]["total"] == 2 and s["demand_total"] > 0
-    assert near["grid"]["nx"] <= 200                                      # siatka rzednie z obszarem — nie 400 punktów w poprzek
+    assert near["grid"]["cell_m"] <= 250 and far["grid"]["cell_m"] == pytest.approx(60_000 / 90)   # punkty co najwyżej co pół zasięgu
 
 
 def test_big_rect_is_computed_without_ranking(client):
