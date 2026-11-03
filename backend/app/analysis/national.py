@@ -12,7 +12,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from backend.app.analysis.layers import is_trend, layer_months, layers_for, rel_layer
-from backend.app.analysis.service import _haversine_km, _permit_window, _period
+from backend.app.analysis.service import _permit_window, _period, place_name
 from backend.app.analysis.surface import top_points
 from backend.app.catalog import DEFAULT_MONTHS, GAP_SHARE, TYPES, quality_warning
 from backend.app.db import DatabaseMissing, cursor, on_reset
@@ -32,26 +32,6 @@ GAPS_NOTE = ("Szare kreskowanie: większość klientów tego miejsca mieszka tam
              "(≤ ¼ średniej krajowej) — wynik może być skutkiem luki w danych, a nie braku konkurencji. "
              "Takich miejsc nie ma w najlepszych miejscach.")
 NO_LAYER_NOTE = "Dla tego wyboru nie ma gotowej mapy Polski — przybliż mapę, a policzymy ją na żywo."
-
-
-# Nazwa miejsca w dużym widoku: najbliższa miejscowość, ale większa „przyciąga” mocniej (odległość dzielimy przez wagę) —
-# punkt przy rynku miasteczka ma nazywać się jak ono, a nie jak wieś oddalona o 3 km (w `service.nearest_place_name`
-# wygrywa rodzaj miejsca, co dla małego okręgu jest dobre, a dla widoku kraju dawało wsie zamiast miast).
-PLACE_WEIGHT = {"city": 3.0, "town": 2.0, "suburb": 1.0, "village": 1.0, "neighbourhood": 1.0, "quarter": 1.0, "hamlet": 0.5}
-
-
-def place_name(con, lat: float, lng: float, max_km: float = TOP_NAME_MAX_KM, check_table: bool = True) -> str | None:
-    if check_table and not table_exists(con, "places"):
-        return None
-    d = max_km / 110.0
-    rows = con.execute("SELECT name, kind, lat, lng FROM places WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
-                       [lat - d, lat + d, lng - d * 1.7, lng + d * 1.7]).fetchall()
-    best = None
-    for name, kind, plat, plng in rows:
-        dist = _haversine_km(lat, lng, plat, plng)
-        if dist <= max_km and (best is None or dist / PLACE_WEIGHT.get(kind, 1.0) < best[0]):
-            best = (dist / PLACE_WEIGHT.get(kind, 1.0), name)
-    return best[1] if best else None
 
 
 class NationalMissing(Exception):
@@ -228,7 +208,7 @@ def run_national(con, type_id, demand_id, west, south, east, north, px) -> dict:
             plat, plng, shown = _best_cell_position(con, res, order_column, column,
                                                     float(lat[i]), float(lng[i]), spacing, float(v[i]))
             top.append({"lat": plat, "lng": plng, "value": shown,
-                        "name": (place_name(con, plat, plng, check_table=False) if has_places else None) or f"okolice {plat:.2f}, {plng:.2f}"})
+                        "name": (place_name(con, plat, plng, max_km=TOP_NAME_MAX_KM, check_table=False) if has_places else None) or f"okolice {plat:.2f}, {plng:.2f}"})
         response["top"][logical] = top
     if any(layer_months(c) for c in columns):                                    # warstwy z pozwoleń: podajemy okres danych
         window = _permit_window(con, 5, DEFAULT_MONTHS)

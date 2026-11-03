@@ -185,3 +185,16 @@ def test_gap_share_of_beauty_out_of_range():
     con.execute("INSERT INTO gap_share VALUES ('beauty', 9, '891e23c459bffff', 1.0)")     # cała ludność w luce = 100%
     thresholds = dict(SMALL, gap_beauty_share=(0.005, 0.05))
     assert any("lukach" in p for p in check(con, thresholds))
+
+
+def test_missing_density_tables_reported():
+    """„Podobne miejsca” (audyt) potrzebują tabel z kroku `gaps` — stara baza musi go przeliczyć."""
+    con = _good_db(national=False)
+    con.execute("DROP TABLE density_rates")
+    assert any("density_rates" in p for p in check(con, SMALL))
+
+
+def test_density_rates_inconsistent_with_gap_rates_reported():
+    con = _good_db(national=False)
+    con.execute("UPDATE density_rates SET firms = firms + 5 WHERE type_id = 'beauty' AND cls = 0")
+    assert any("density_rates" in p and "beauty" in p for p in check(con, SMALL))

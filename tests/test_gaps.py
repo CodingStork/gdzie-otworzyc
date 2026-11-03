@@ -4,7 +4,7 @@ import h3
 import numpy as np
 
 from etl.aggregate import build_aggregates
-from etl.gaps import build_gaps, gap_flags, share_by_parent
+from etl.gaps import build_gaps, density_classes, firms_by_class, gap_flags, neighbourhood_population, share_by_parent
 from tests.conftest import disk
 from tests.factories import make_db
 
@@ -75,4 +75,40 @@ def test_build_gaps_marks_town_without_firms(tmp_path):
 def test_build_gaps_without_poi_creates_empty_tables(tmp_path):
     con = duckdb.connect(str(make_db(tmp_path / "e.duckdb", pop={c: 10.0 for c in disk(k=1)}, gaps=True)))
     assert con.execute("SELECT COUNT(*) FROM gap_share").fetchone()[0] == 0
+    con.close()
+
+
+# ---------------------------------------------------------------- klasy gęstości („podobne miejsca”) ----
+
+def test_density_classes_split_population_into_fifths():
+    neighbours = np.arange(10, dtype=float)               # 10 komórek o rosnącym zaludnieniu okolicy, po 100 mieszkańców
+    classes = density_classes(neighbours, np.full(10, 100.0))
+    assert classes.tolist() == [0, 0, 1, 1, 2, 2, 3, 3, 4, 4]
+
+
+def test_density_classes_weight_by_population():
+    # jedna gęsta komórka ma 80% ludności — zajmuje cztery górne kwintyle, więc rzadkie komórki są w klasie 0
+    classes = density_classes(np.array([1.0, 2.0, 3.0, 100.0]), np.array([50.0, 50.0, 100.0, 800.0]))
+    assert classes[:3].tolist() == [0, 0, 0] and classes[3] == 4
+
+
+def test_firms_by_class_uses_nearest_populated_cell():
+    pop_xy = np.array([[0.0, 0.0], [10_000.0, 0.0]])
+    firms = np.array([[100.0, 0.0], [9_900.0, 0.0], [10_200.0, 0.0]])
+    assert firms_by_class(pop_xy, np.array([0, 4]), firms).tolist() == [1, 0, 0, 0, 2]
+
+
+def test_neighbourhood_population_counts_cells_within_2_km():
+    xy, w = _town(n_cells=5)                              # komórki co 100 m — wszystkie w promieniu 2 km od siebie
+    assert neighbourhood_population(xy, w).tolist() == [2500.0] * 5
+
+
+def test_build_gaps_writes_density_tables(tmp_path):
+    path, a, b = _two_cities_db(tmp_path / "d.duckdb")
+    con = duckdb.connect(str(path))
+    rows = con.execute("SELECT cls, firms, population, rate FROM density_rates WHERE type_id = 'beauty' ORDER BY cls").fetchall()
+    assert [r[0] for r in rows] == [0, 1, 2, 3, 4] and sum(r[1] for r in rows) == 100
+    assert sum(r[2] for r in rows) == 122_000
+    cells = con.execute("SELECT COUNT(*), SUM(pop_total), MIN(cls), MAX(cls) FROM density_cells").fetchone()
+    assert cells == (122, 122_000.0, 0, 4)
     con.close()

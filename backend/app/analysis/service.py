@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import duckdb
 import h3
 import numpy as np
+from scipy.stats import poisson
 
 from backend.app.analysis.kernel import LocalFrame
 from backend.app.analysis.surface import (
@@ -83,6 +84,27 @@ def nearest_place_name(con: duckdb.DuckDBPyConnection, lat: float, lng: float, m
         key = (PLACE_PRIORITY[kind], dist_km)
         if best is None or key < best[0]:
             best = (key, name)
+    return best[1] if best else None
+
+
+# Nazwa miejsca w dużym widoku (top-5 mapy Polski) i nazwa okręgu w podsumowaniu: najbliższa miejscowość, ale większa
+# „przyciąga” mocniej (odległość dzielimy przez wagę) —
+# punkt przy rynku miasteczka ma nazywać się jak ono, a nie jak wieś oddalona o 3 km (w `service.nearest_place_name`
+# wygrywa rodzaj miejsca, co dla małego okręgu jest dobre, a dla widoku kraju dawało wsie zamiast miast).
+PLACE_WEIGHT = {"city": 3.0, "town": 2.0, "suburb": 1.0, "village": 1.0, "neighbourhood": 1.0, "quarter": 1.0, "hamlet": 0.5}
+
+
+def place_name(con, lat: float, lng: float, max_km: float = 8.0, check_table: bool = True) -> str | None:
+    if check_table and not table_exists(con, "places"):
+        return None
+    d = max_km / 110.0
+    rows = con.execute("SELECT name, kind, lat, lng FROM places WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                       [lat - d, lat + d, lng - d * 1.7, lng + d * 1.7]).fetchall()
+    best = None
+    for name, kind, plat, plng in rows:
+        dist = _haversine_km(lat, lng, plat, plng)
+        if dist <= max_km and (best is None or dist / PLACE_WEIGHT.get(kind, 1.0) < best[0]):
+            best = (dist / PLACE_WEIGHT.get(kind, 1.0), name)
     return best[1] if best else None
 
 
@@ -295,18 +317,50 @@ def gap_rate(con, type_id: str) -> float | None:
     return float(row[0]) if row and row[0] else None
 
 
-def verdict(per_firm: float | None, national: float | None) -> str | None:
-    """„less” = mniej konkurencji niż przeciętnie (na firmę przypada >125% średniej), „more” = więcej (<80%).
+def density_rates(con, type_id: str) -> dict[int, float] | None:
+    """Firm danego typu na mieszkańca w każdej klasie gęstości zaludnienia („podobne miejsca”, krok ETL `gaps`).
 
-    Brak firm w obszarze → „less”; brak średniej krajowej (np. brak danych o pozwoleniach) → None (nie ma z czym porównać).
-    """
-    if per_firm is None:
-        return "less"
-    if national is None:
+    None, gdy baza nie ma tabeli `density_rates` (starsza baza — wtedy porównujemy ze średnią krajową, jak przed audytem)."""
+    if not table_exists(con, "density_rates"):
         return None
-    if per_firm > 1.25 * national:
+    rows = con.execute("SELECT cls, rate FROM density_rates WHERE type_id = ?", [type_id]).fetchall()
+    return {int(cls): float(rate) for cls, rate in rows if rate is not None} or None
+
+
+# Werdykt o konkurencji (audyt przydatności). Liczba firm w obszarze jest losowa: nawet tam, gdzie „powinny” być 3 salony,
+# w ok. 5% przypadków nie ma żadnego, a w 22% jest jeden (rozkład Poissona). Dlatego mówimy „mniej / więcej konkurencji”
+# tylko wtedy, gdy różnica jest i duża, i mało prawdopodobna jako przypadek.
+VERDICT_MIN_EXPECTED = 3      # poniżej 3 oczekiwanych firm nie oceniamy (za małe liczby — jak w lukach, GAP_MIN_EXPECTED)
+VERDICT_P = 0.1               # różnica musi mieć < 10% szans na to, że jest przypadkiem (test Poissona, jednostronny)
+LESS_RATIO, MORE_RATIO = 0.8, 1.25   # i musi być wyraźna: firm najwyżej 80% / co najmniej 125% oczekiwanych
+
+
+def verdict(observed: int, expected: float | None) -> str | None:
+    """Porównanie liczby firm w obszarze z liczbą oczekiwaną (tyle, ile jest średnio w podobnych miejscach).
+
+    „less” = mniej konkurencji niż zwykle, „more” = więcej, „similar” = różnica w granicach przypadku,
+    „few” = za mało oczekiwanych firm, żeby cokolwiek ocenić; None = brak punktu odniesienia.
+    Test Poissona: P(X ≤ observed) dla „less” i P(X ≥ observed) dla „more”, gdzie X ~ Poisson(expected).
+    Prawdziwe firmy skupiają się bardziej niż w rozkładzie Poissona, więc test jest raczej zbyt pobłażliwy niż zbyt surowy.
+    """
+    if expected is None:
+        return None
+    if expected < VERDICT_MIN_EXPECTED:
+        return "few"
+    if observed <= LESS_RATIO * expected and poisson.cdf(observed, expected) < VERDICT_P:
         return "less"
-    return "more" if per_firm < 0.8 * national else "similar"
+    if observed >= MORE_RATIO * expected and poisson.sf(observed - 1, expected) < VERDICT_P:
+        return "more"
+    return "similar"
+
+
+def load_density_cells(con, box: list[float]) -> np.ndarray | None:
+    """Komórki res 9 z ludnością w prostokącie: N×4 (lat, lng, mieszkańcy, klasa gęstości); None bez tabeli `density_cells`."""
+    if not table_exists(con, "density_cells"):
+        return None
+    rows = con.execute("SELECT lat, lng, pop_total, cls FROM density_cells WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                       box).fetchall()
+    return np.array(rows, dtype=float).reshape(-1, 4)
 
 
 def _inside(xy: np.ndarray, radius_m: float, rect) -> np.ndarray:
@@ -326,6 +380,9 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
     summary = {"demand_total": None, "demand_genitive": None, "competitors": None, "type_plural": None,
                "per_firm": None, "national_per_firm": None, "verdict": None, "radius_km": p.radius_km,
                "expected_firms": None, "data_gap": False,
+               # punkt odniesienia werdyktu: „similar_places” (miejsca o podobnej gęstości zaludnienia) albo „national”
+               "benchmark": None, "benchmark_firms": None, "benchmark_per_firm": None,
+               "place_name": None if rect is not None else place_name(con, p.lat, p.lng, max_km=max(3.0, p.radius_km)),
                "shape": ("rect" if p.area == "rect" else "view") if rect is not None else "circle"}
     if rect is not None:                                 # wymiary prostokąta w km (do napisu „12,4 × 8,1 km”)
         summary["width_km"] = round((rect[2] - rect[0]) / 1000, 1)
@@ -350,17 +407,37 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
                         counts[source] += 1
         summary["competitors"] = {"total": counts["osm"] + counts["overture"], **counts}
         summary["type_plural"] = PLURALS[p.type_id]
+    residents = None
+    if p.type_id:
+        # „Podobne miejsca”: ile firm byłoby tu, gdyby każda komórka miała tyle firm na mieszkańca, ile średnio mają w Polsce
+        # komórki o podobnej gęstości zaludnienia okolicy (etl/gaps.py: density_classes). Porównanie ze średnią krajową
+        # zaniżało oczekiwania w miastach (średnią ciągną w dół wsie), więc miasta wychodziły „więcej konkurencji”.
+        rates = density_rates(con, p.type_id)
+        cells = load_density_cells(con, box) if rates else None
+        if cells is not None:
+            inside = _inside(frame.to_metric(cells[:, 0], cells[:, 1]), radius_m, rect) if len(cells) else np.zeros(0, bool)
+            residents = float(cells[inside, 2].sum())
+            expected = sum(pop * rates.get(int(cls), 0.0) for pop, cls in cells[inside][:, 2:4])
+            summary["benchmark"], summary["benchmark_firms"] = "similar_places", round(expected, 1)
     if p.type_id and p.demand_id:
         firms = summary["competitors"]["total"]
         summary["per_firm"] = round(summary["demand_total"] / firms, 1) if firms else None
         national = national_per_firm(con, p.type_id, p.demand_id, p.months)
         summary["national_per_firm"] = round(national, 1) if national else None
-        summary["verdict"] = verdict(summary["per_firm"], national)
+        if summary["benchmark"] is None and national:
+            # starsza baza bez klas gęstości: oczekiwana liczba firm wg średniej krajowej (popyt w obszarze / popyt na firmę w Polsce)
+            summary["benchmark"], summary["benchmark_firms"] = "national", round(summary["demand_total"] / national, 1)
+        if summary["benchmark_firms"]:
+            summary["benchmark_per_firm"] = round(summary["demand_total"] / summary["benchmark_firms"], 1)
+    if p.type_id and summary["benchmark"] is not None:
+        summary["verdict"] = verdict(summary["competitors"]["total"], summary["benchmark_firms"])
     rate = gap_rate(con, p.type_id) if p.type_id else None
     if rate is not None:
         # Ile firm tego typu byłoby w obszarze przy średniej krajowej (mieszkańcy × firm na mieszkańca) — a ile mamy w danych.
-        arr, _, _ = load_demand(con, "pop_total", 9, box, p.months)
-        residents = float(arr[_inside(frame.to_metric(arr[:, 0], arr[:, 1]), radius_m, rect), 2].sum()) if len(arr) else 0.0
+        # Ten próg jest taki sam jak w kreskowaniu na mapie (etl/gaps.py), więc ostrzeżenie i mapa się zgadzają.
+        if residents is None:
+            arr, _, _ = load_demand(con, "pop_total", 9, box, p.months)
+            residents = float(arr[_inside(frame.to_metric(arr[:, 0], arr[:, 1]), radius_m, rect), 2].sum()) if len(arr) else 0.0
         summary["expected_firms"] = round(residents * rate, 1)
         if is_data_gap(residents * rate, summary["competitors"]["total"]):
             summary["data_gap"] = True

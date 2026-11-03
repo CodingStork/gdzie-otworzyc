@@ -28,7 +28,8 @@ THRESHOLDS = {
     "warsaw_top_share": 0.05,         # centrum Warszawy ma wśród punktów Polski popyt w górnych 5% (None = nie sprawdzaj)
 }
 REQUIRED_TABLES = ["hex_pop_r9", "poi", "places", "obreb_geom", "permits_r9", "building_weights",
-                   "poi_counts_r9", "gap_share", "gap_rates", "hex_pop_r5", "poi_counts_r5", "permits_r5"]
+                   "poi_counts_r9", "gap_share", "gap_rates", "hex_pop_r5", "poi_counts_r5", "permits_r5",
+                   "density_cells", "density_rates"]
 
 
 def _scalar(con, sql: str):
@@ -115,6 +116,14 @@ def check(con: duckdb.DuckDBPyConnection, thresholds: dict = THRESHOLDS) -> list
         if not low <= share <= high:
             problems.append(f"Udział ludności w lukach danych o salonach {share:.2%} poza zakresem [{low:.1%}; {high:.0%}] — "
                             "zmieniły się dane o firmach albo źle liczone luki (krok 'gaps')")
+    if has("density_rates") and has("gap_rates"):
+        # „Podobne miejsca” (klasy gęstości) muszą obejmować te same firmy co średnia krajowa — inaczej krok `gaps` się nie dokończył
+        bad = con.execute("""SELECT g.type_id FROM gap_rates g LEFT JOIN
+                               (SELECT type_id, SUM(firms) AS firms FROM density_rates GROUP BY type_id) d USING (type_id)
+                             WHERE COALESCE(d.firms, -1) <> g.firms""").fetchall()
+        if bad:
+            problems.append(f"Klasy gęstości (density_rates) niezgodne z gap_rates dla: {', '.join(r[0] for r in bad)} — "
+                            "uruchom krok 'gaps'")
     problems += _check_national(con, thresholds)
     return problems
 
