@@ -332,7 +332,7 @@ def density_rates(con, type_id: str) -> dict[int, float] | None:
 
 
 # Werdykt o konkurencji (audyt przydatności). Liczba firm w obszarze jest losowa: nawet tam, gdzie „powinny” być 3 salony,
-# w ok. 5% przypadków nie ma żadnego, a w 22% jest jeden (rozkład Poissona). Dlatego mówimy „mniej / więcej konkurencji”
+# w ok. 5% przypadków nie ma żadnego, a w ok. 15% jest jeden (rozkład Poissona). Dlatego mówimy „mniej / więcej konkurencji”
 # tylko wtedy, gdy różnica jest i duża, i mało prawdopodobna jako przypadek.
 VERDICT_MIN_EXPECTED = 3      # poniżej 3 oczekiwanych firm nie oceniamy (za małe liczby — jak w lukach, GAP_MIN_EXPECTED)
 VERDICT_P = 0.1               # różnica musi mieć < 10% szans na to, że jest przypadkiem (test Poissona, jednostronny)
