@@ -16,9 +16,10 @@ const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 
 // ---- Wyjaśnienia pod pytajnikami (teksty ze specyfikacji v3 §5, uzupełnione w v3.1 o drugie źródło firm — Overture) ----
 const HELP = {
-  area: 'Cała Polska: od razu widzisz całą mapę i możesz ją swobodnie przybliżać. Po oddaleniu pokazujemy gotową mapę dla typowego zasięgu branży, ' +
-    'a po przybliżeniu do miasta liczymy ją na żywo z Twoimi ustawieniami. Wybrane miejsce: analiza okręgu wokół jednego miejsca ' +
-    'albo zaznaczonego prostokąta (kliknij mapę albo użyj przycisku »▭ Prostokąt«) z podsumowaniem i porównaniem ze średnią krajową.',
+  tools: 'Okrąg: kliknij mapę w miejscu, które chcesz zbadać — pojawi się okrąg (zawsze ok. 1/5 ekranu, więc po oddaleniu mapy ' +
+    'obejmie nawet województwo). Kropką na krawędzi zmienisz promień, kropką w środku przesuniesz okrąg, a promień możesz też wpisać w km. ' +
+    'Prostokąt: przeciągnij po mapie; za rogi zmienisz jego rozmiar. Obszar do 30 km promienia (60 km boku) liczymy z Twoimi ustawieniami; ' +
+    'większy — z gotowej mapy Polski, policzonej wcześniej dla typowego zasięgu branży.',
   open: 'Ilu klientów mogłaby przyciągnąć nowa firma w danym miejscu. Liczymy to modelem Huffa: każdy mieszkaniec wybiera między firmami, ' +
     'a bliższa firma przyciąga go mocniej. Uwzględniamy konkurentów z OpenStreetMap i Overture Maps oraz »inne możliwości« ' +
     '(firmy, których nie ma w tych bazach, zakupy gdzie indziej). Liczba służy do porównywania miejsc między sobą — to nie prognoza sprzedaży: ' +
@@ -33,11 +34,11 @@ const HELP = {
   reach: 'Jak daleko typowy klient jest gotów dojść lub dojechać. Fryzjer, sklep spożywczy: kilkaset metrów do 2 km; ' +
     'market budowlany, brukarz: 10–20 km. W tej odległości chęć dotarcia spada o ok. 2/3, a dwa razy dalej — o ok. 85%. ' +
     'Najmniejszy zasięg to 0,3 km, bo dane o mieszkańcach mają rozdzielczość ok. 300 m.',
-  radius: 'Jak duży obszar wokół wybranego miejsca przeanalizować. Mniejszy obszar = szybciej i dokładniej.',
-  legend: 'Ciemniejszy kolor = więcej. Skala jest logarytmiczna: o jeden odcień ciemniej to ok. 30–80% więcej, ' +
+  legend: 'Ciemniejszy kolor = więcej. Skala jest logarytmiczna: o jeden odcień ciemniej to ok. 20–80% więcej, ' +
     'więc różnice o kilka–kilkanaście procent prawie nie zmieniają koloru (i dobrze — dane nie są aż tak dokładne). ' +
     'Przezroczyste miejsca mają bardzo małe wartości. Dokładne liczby zobaczysz po kliknięciu mapy. ' +
-    'Na mapie całej Polski skala jest stała (te same kolory znaczą te same liczby w każdym mieście); po przybliżeniu kolory dopasowują się do widoku.',
+    'Kolory dopasowują się do tego, co widać na ekranie: po przybliżeniu do miasta najjaśniejsze i najciemniejsze miejsca są liczone tylko z widocznej części, ' +
+    'więc widać różnice wewnątrz miasta (legenda pokazuje aktualne liczby).',
   gaps: 'Szare kreskowanie: większość klientów tego miejsca mieszka tam, gdzie w danych jest podejrzanie mało firm ' +
     '(najwyżej ¼ tego, co wynika ze średniej krajowej przy takiej liczbie mieszkańców). Wynik może być wtedy skutkiem luki w danych ' +
     '(brak firm w OpenStreetMap i Overture Maps), a nie braku konkurencji. Takich miejsc nie pokazujemy w najlepszych miejscach. ' +
@@ -116,60 +117,45 @@ function setReach(km) {
   return wanted < KM_MIN;
 }
 
-// ---- Promień obszaru: 1–30 km, krok 0,5 km poniżej 5 km, dalej 1 km ----
-export const snapRadius = (km) => {
+// ---- Promień okręgu (pole w karcie przy okręgu): 1–350 km; zaokrąglenie zależne od wielkości ----
+// Do 30 km liczymy na żywo, większy okrąg (do całej Polski) — z gotowej mapy Polski (backend: national.run_area).
+export const RADIUS_MIN_KM = 1;
+export const RADIUS_MAX_KM = 350;
+export function snapRadius(km) {
   const n = Number(km);
   if (!Number.isFinite(n)) return 10;
-  return Math.min(30, Math.max(1, n < 5 ? Math.round(n * 2) / 2 : Math.round(n)));
-};
-export const radiusKm = () => snapRadius($('radius-input').value);
+  const step = n < 5 ? 0.5 : n < 50 ? 1 : 5;
+  return Math.min(RADIUS_MAX_KM, Math.max(RADIUS_MIN_KM, Math.round(n / step) * step));
+}
+// „12,5” albo „12.5” z pola tekstowego → liczba (NaN, gdy to nie liczba).
+export const parseKm = (text) => Number(String(text).trim().replace(',', '.'));
 
-function showRadius() {
-  $('radius-value').textContent = fmt(radiusKm(), 1);
+// ---- Krok 1: narzędzie do zaznaczania obszaru (okrąg / prostokąt), bez domyślnego wyboru ----
+
+export function initTools(onPick) {
+  document.querySelectorAll('.tool-button').forEach((b) => b.addEventListener('click', () => onPick(b.dataset.tool)));
 }
 
-export function setRadius(km) {
-  $('radius-input').value = String(snapRadius(km));
-  showRadius();
+export function setTool(tool, hint) {
+  document.querySelectorAll('.tool-button').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.tool === tool));
+    b.classList.remove('attention');
+  });
+  if (hint) $('tool-hint').textContent = hint;
 }
 
-// Suwak w lewym panelu i suwak na karcie wyboru to dwa widoki jednej wartości: ruch pierwszego woła cb(km).
-export const onRadiusInput = (cb) => $('radius-input').addEventListener('input', () => cb(radiusKm()));
-
-// Lewy panel w trybie prostokąta: zamiast suwaka promienia napis z wymiarami i link „zmień na okrąg” (text = null → suwak).
-export function setRectInfo(text, onToCircle) {
-  $('radius-row').hidden = text !== null;
-  $('radius-input').hidden = text !== null;
-  $('rect-info').hidden = text === null;
-  if (text !== null) $('rect-text').textContent = text;
-  if (onToCircle) $('rect-to-circle').onclick = onToCircle;
+// Pulsująca ramka wokół przycisków narzędzi — gdy ktoś kliknie mapę, zanim wybierze okrąg albo prostokąt.
+export function toolsAttention(on) {
+  document.querySelectorAll('.tool-button').forEach((b) => b.classList.toggle('attention', on));
+  const tab = document.querySelector('#tabs [data-tab=settings]');
+  if (tab) tab.classList.toggle('attention', on);
 }
 
-// ---- Obszar analizy: „Cała Polska” / „Wybrane miejsce” ----
-
-export const currentMode = () => (document.querySelector('input[name=mode]:checked') || { value: 'pl' }).value;
-
-// Ustawia tryb: w „Cała Polska” znikają miejsce, promień i przycisk „Pokaż mapę” (mgła pojawia się sama).
-export function setMode(mode) {
-  const place = mode === 'place';
-  const radio = [...document.querySelectorAll('input[name=mode]')].find((r) => r.value === mode);
-  if (radio) radio.checked = true;
-  $('place-controls').hidden = !place;
-  $('show-button').hidden = !place;
-  $('intro-pl').hidden = place;
-  $('intro-place').hidden = !place;
-  if (place) setReachLocked(false);
-}
-
-export const onModeChange = (cb) => document.querySelectorAll('input[name=mode]')
-  .forEach((r) => r.addEventListener('change', () => r.checked && cb(r.value)));
-
-// Zasięg i okres pozwoleń są zablokowane, gdy widać gotową mapę Polski (liczoną dla typowego zasięgu i 24 miesięcy),
-// a odblokowane przy mapie na żywo.
-export function setReachLocked(locked) {
-  $('reach-input').disabled = locked;
-  $('months-select').disabled = locked;
-  $('reach-hint').hidden = !locked;
+// Pulsujące pola „Typ działalności” i „Twoi klienci to” — gdy obszar jest zaznaczony, a nie ma czego liczyć.
+export function settingsAttention(on) {
+  for (const id of ['type-select', 'demand-select']) $(id).classList.toggle('attention', on);
+  const tab = document.querySelector('#tabs [data-tab=settings]');
+  if (tab) tab.classList.toggle('attention', on);
 }
 
 // ---- Formularz ----
@@ -260,10 +246,7 @@ export function renderCatalog(data, onChange) {
   // Przy przeciąganiu suwaków tylko aktualizujemy podpis; zapytanie idzie po puszczeniu (zdarzenie change).
   $('reach-input').addEventListener('input', showReach);
   $('reach-input').addEventListener('change', onChange);
-  $('radius-input').addEventListener('input', showRadius);
-  $('radius-input').addEventListener('change', () => onChange('radius'));
   setReach(1.5);
-  setRadius(10);
   syncMonthsRow();
   syncLayers();
   syncTypeHints();
@@ -276,7 +259,6 @@ export function selectedParams() {
     type: $('type-select').value,
     demand: demand ? demand.id : '',
     reach_km: reachKm(),
-    radius_km: radiusKm(),
   };
   if (demand && demand.needs_months) params.months = $('months-select').value;
   return params;
@@ -286,13 +268,12 @@ const hasOption = (select, value) => [...select.options].some((o) => o.value ===
 
 // Ustawia formularz z wartości zapisanych w adresie; nieznane wartości (np. ze starego linku) pomijamy.
 // Zwraca true, gdy zasięg z linku był poniżej minimum 0,3 km (został podniesiony — trzeba o tym powiedzieć).
-export function setSelection({ type, demand, reach, months, radius }) {
+export function setSelection({ type, demand, reach, months }) {
   if (type && catalog.aliases && catalog.aliases[type]) type = catalog.aliases[type];   // stary link: paznokcie → salon kosmetyczny
   $('type-select').value = type && hasOption($('type-select'), type) ? type : '';
   if ($('type-select').value) markSuggested(currentType());   // dopiski „sugerowane”, ale bez nadpisywania zapisanych wartości
   $('demand-select').value = demand && hasOption($('demand-select'), demand) ? demand : '';
   const clamped = reach ? setReach(reach) : false;
-  if (radius) setRadius(radius);
   if (months) $('months-select').value = String(months);
   syncMonthsRow();
   syncLayers();
@@ -300,14 +281,11 @@ export function setSelection({ type, demand, reach, months, radius }) {
   return clamped;
 }
 
-// Nazwa wybranego miejsca: podpis pod wyszukiwarką — z wyszukiwarki albo „punkt na mapie”.
-export function setPlaceName(name) {
-  $('place-hint').textContent = name ? `Wybrane: ${name}` : 'albo kliknij mapę';
+// Czy jest co liczyć (branża albo klienci)? Bez tego karta przy obszarze nie pokazuje przycisku „Analizuj”.
+export function hasSettings() {
+  const p = selectedParams();
+  return !!(p.type || p.demand);
 }
-
-export const hideIntro = () => { $('intro').hidden = true; };
-export const showIntro = () => { $('intro').hidden = false; };
-export const onShowClick = (cb) => $('show-button').addEventListener('click', cb);
 
 // ---- Warstwy mapy: wybór w lewym panelu (radio), tylko dostępne dla bieżących ustawień ----
 // typ + klienci → „Gdzie otworzyć”, „Gdzie są klienci”; sam popyt → „Gdzie są klienci”; sama branża → „Gdzie są {firmy}”;
@@ -594,72 +572,41 @@ export function renderTop(list, layer, permits, onClick, inView = false, emptyTe
 // Wymiary prostokąta, np. „12,4 × 8,1 km”.
 export const sizeText = (widthKm, heightKm) => `${fmt(widthKm, 1)} × ${fmt(heightKm, 1)} km`;
 
-// Karta przy zaznaczonym prostokącie: wymiary (albo komunikat o przekroczonym limicie), ✓ i ✕.
-// Zwraca { el, setSize(tekst, problem) } — gdy `problem` jest niepustym tekstem, ✓ jest nieaktywny.
-export function rectCard({ onConfirm, onCancel }) {
+// ---- Karta przy zaznaczonym obszarze (okrąg albo prostokąt) ----
+// Okrąg: pole „Promień: [12,5] km” (zmiana pola → onRadius(km)). Prostokąt: wymiary i ewentualny problem (za duży / za mały).
+// Dopóki nie wybrano branży ani klientów, karta NIE ma przycisku „Analizuj” — mówi, co trzeba zrobić (setReady(false)).
+// Zwraca { el, setRadius(km), setSize(tekst, problem), setReady(gotowe) }.
+export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel }) {
   const el = document.createElement('div');
   el.className = 'selection-card';
   const head = document.createElement('div');
   head.className = 'sel-title';
-  const hint = document.createElement('div');
-  hint.className = 'sel-body';
-  hint.textContent = 'Przeciągnij róg, żeby zmienić rozmiar.';
-  const buttons = document.createElement('div');
-  buttons.className = 'sel-buttons';
-  const ok = document.createElement('button');
-  ok.type = 'button';
-  ok.className = 'sel-ok';
-  ok.textContent = '✓ Analizuj obszar';
-  ok.addEventListener('click', onConfirm);
-  const cancel = document.createElement('button');
-  cancel.type = 'button';
-  cancel.className = 'sel-cancel';
-  cancel.textContent = '✕';
-  cancel.title = 'Anuluj';
-  cancel.setAttribute('aria-label', 'Anuluj wybór');
-  cancel.addEventListener('click', onCancel);
-  buttons.append(ok, cancel);
-  el.append(head, hint, buttons);
-  return {
-    el,
-    setSize(text, problem) {
-      head.textContent = problem || text;
-      head.classList.toggle('bad', !!problem);
-      hint.textContent = problem ? `Zaznaczono ${text}.` : 'Przeciągnij róg, żeby zmienić rozmiar.';
-      ok.disabled = !!problem;
-    },
-  };
-}
-
-// ---- Karta wyboru obszaru (po kliknięciu w mapę): liczby punktu, suwak promienia, ✓ i ✕ ----
-
-// Zwraca { el, setBody(element | tekst), setRadius(km) }. Treść z /api/point (ui.pointPopup) wstawia się po przyjściu odpowiedzi.
-// onRadius(km): ruch suwaka; onConfirm: ✓ Analizuj obszar; onCancel: ✕.
-export function selectionCard({ title, radiusKm: radius, onRadius, onConfirm, onCancel }) {
-  const el = document.createElement('div');
-  el.className = 'selection-card';
-  const head = document.createElement('div');
-  head.className = 'sel-title';
-  head.textContent = title;
+  head.textContent = kind === 'circle' ? 'Zaznaczony okrąg' : 'Zaznaczony prostokąt';
+  const size = document.createElement('div');
+  size.className = 'sel-size';
+  let input = null;
+  if (kind === 'circle') {
+    const label = document.createElement('label');
+    label.className = 'sel-radius';
+    input = document.createElement('input');
+    input.type = 'text';
+    input.inputMode = 'decimal';
+    input.className = 'sel-km';
+    input.setAttribute('aria-label', 'Promień w kilometrach');
+    label.append('Promień: ', input, ' km');
+    const apply = () => {
+      const km = parseKm(input.value);
+      if (Number.isFinite(km) && km > 0) onRadius(snapRadius(km));
+      else input.value = fmt(radius, radius < 10 ? 1 : 0);
+    };
+    input.addEventListener('change', apply);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); input.blur(); } });
+    size.append(label);
+  }
+  const note = document.createElement('div');
+  note.className = 'sel-note';
   const body = document.createElement('div');
   body.className = 'sel-body';
-  body.textContent = 'Ładuję liczby…';
-  const label = document.createElement('label');
-  label.className = 'sel-radius';
-  const value = document.createElement('b');
-  const slider = document.createElement('input');
-  slider.type = 'range';
-  slider.min = '1';
-  slider.max = '30';
-  slider.step = '0.5';
-  const show = (km) => { slider.value = String(km); value.textContent = fmt(km, 1); };
-  show(radius);
-  label.append('Obszar analizy: ', value, ' km', slider);
-  slider.addEventListener('input', () => {
-    const km = snapRadius(slider.value);
-    show(km);
-    onRadius(km);
-  });
   const buttons = document.createElement('div');
   buttons.className = 'sel-buttons';
   const ok = document.createElement('button');
@@ -672,15 +619,39 @@ export function selectionCard({ title, radiusKm: radius, onRadius, onConfirm, on
   cancel.className = 'sel-cancel';
   cancel.textContent = '✕';
   cancel.title = 'Anuluj';
-  cancel.setAttribute('aria-label', 'Anuluj wybór');
+  cancel.setAttribute('aria-label', 'Anuluj zaznaczenie');
   cancel.addEventListener('click', onCancel);
   buttons.append(ok, cancel);
-  el.append(head, body, label, buttons);
-  return {
-    el,
-    setBody(content) { body.replaceChildren(content); },
-    setRadius: show,
+  el.append(head, size, note, body, buttons);
+  let problem = '';
+  let ready = false;
+  const refresh = () => {
+    ok.hidden = !ready;                                  // bez branży i klientów nie ma czego analizować — nie udajemy, że jest
+    ok.disabled = !!problem;
+    body.textContent = ready ? '' : 'Najpierw wybierz w panelu po lewej typ działalności albo klientów — wtedy przeanalizujemy ten obszar.';
+    body.classList.toggle('need', !ready);
   };
+  const card = {
+    el,
+    setRadius(km) {
+      radius = km;
+      if (input && document.activeElement !== input) input.value = fmt(km, km < 10 ? 1 : 0);
+      // Powyżej 30 km nie liczymy na żywo — mówimy to od razu, zanim ktoś kliknie „Analizuj”.
+      note.textContent = km > 30 ? 'Duży obszar: użyjemy mapy policzonej wcześniej dla typowego zasięgu branży.' : '';
+    },
+    // big: dłuższy bok > 60 km (wtedy nie liczymy na żywo — patrz setRadius)
+    setSize(text, why = '', big = false) {
+      problem = why;
+      size.textContent = why || text;
+      size.classList.toggle('bad', !!why);
+      note.textContent = !why && big ? 'Duży obszar: użyjemy mapy policzonej wcześniej dla typowego zasięgu branży.' : '';
+      refresh();
+    },
+    setReady(value) { ready = value; refresh(); },
+  };
+  if (kind === 'circle') card.setRadius(radius);
+  refresh();
+  return card;
 }
 
 // ---- Dymek klikniętego punktu (dokładne liczby z /api/point, spec v3 §4) ----
@@ -691,7 +662,7 @@ const dist = (m) => (m >= 1000 ? `${fmt(m / 1000, 1)} km` : `${fmt(m)} m`);
 // Zwraca element DOM (tekst wstawiamy przez textContent — nazwy firm nie są HTML-em).
 // onSetCenter: wywoływane po kliknięciu przycisku pod dymkiem (podpis: actionLabel).
 // compact: wersja do karty wyboru — bez listy najbliższych firm (ta jest w szczegółach po analizie), żeby karta nie zasłaniała mapy.
-export function pointPopup(d, onSetCenter, actionLabel = 'Ustaw tu środek obszaru', { compact = false } = {}) {
+export function pointPopup(d, onSetCenter, actionLabel = 'Zaznacz tu nowy okrąg', { compact = false } = {}) {
   const box = document.createElement('div');
   const add = (text, bold = false) => {
     const p = document.createElement('div');
@@ -728,6 +699,12 @@ export function pointPopup(d, onSetCenter, actionLabel = 'Ustaw tu środek obsza
       ul.append(li);
     }
     box.append(ul);
+  }
+  if (d.map_value) {
+    // Kolor mapy to inna wielkość niż liczba w okręgu powyżej: liczy klientów także spoza okręgu, a bliższych mocniej —
+    // podajemy ją, żeby było widać, skąd bierze się kolor (dwie liczby „mężczyzn” obok siebie nie mogą być zagadką).
+    add(`Kolor mapy w tym miejscu: ok. ${fmt(roundEstimate(d.map_value.value))} (${d.map_value.label}; ` +
+      'liczymy też klientów spoza okręgu, a bliższych mocniej — dlatego to inna liczba niż wyżej).').className = 'note';
   }
   for (const note of d.notes || []) add(note).className = 'note';
   if (onSetCenter) {
