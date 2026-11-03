@@ -39,11 +39,7 @@ const FORM_DEBOUNCE_MS = 300;
 const VIEW_DEBOUNCE_MS = 150;
 const MAP_POINT = 'punkt na mapie';   // nazwa miejsca wskazanego kliknięciem
 const NEED_TOOL = 'Najpierw wybierz z lewej, jak zaznaczyć obszar: ◯ Okrąg albo ▭ Prostokąt.';
-const TOOL_HINTS = {
-  circle: 'Kliknij mapę w miejscu, które chcesz zbadać. Kropką na krawędzi zmienisz promień, kropką w środku przesuniesz okrąg.',
-  rect: 'Przeciągnij po mapie, żeby zaznaczyć prostokąt. Za rogi zmienisz jego rozmiar.',
-};
-const RECT_AGAIN_HINT = 'Za rogi zmienisz rozmiar prostokąta. Żeby narysować nowy, kliknij jeszcze raz »▭ Prostokąt« albo mapę poza nim.';
+const SEARCH_RADIUS_KM = 2.5;          // miejscowość z wyszukiwarki: okrąg o średnicy 5 km
 
 // Odległość po kuli w km (haversine).
 function distanceKm(lat1, lng1, lat2, lng2) {
@@ -69,12 +65,36 @@ const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2
 
 function chooseTool(tool, { silent = false } = {}) {
   state.tool = tool;
-  ui.setTool(tool, TOOL_HINTS[tool]);
+  ui.setTool(tool);
   ui.toolsAttention(false);
   ui.showInfo('');
   if (tool === 'rect' && !silent) map.startRectDraw(); else map.stopRectDraw();
   if (isMobile() && !silent) ui.collapseSheet();     // arkusz z ustawieniami zasłaniałby mapę, na której trzeba teraz zaznaczyć
   if (!silent) intro.toolChosen(tool);
+}
+
+// Drugie kliknięcie wybranego narzędzia je odznacza: przy prostokącie lewy przycisk rysuje, więc żeby najpierw znaleźć
+// fragment mapy, trzeba móc wrócić do zwykłego przesuwania (uwaga Marcina). Zaznaczony obszar zostaje.
+function dropTool() {
+  state.tool = null;
+  ui.setTool(null);
+  map.stopRectDraw();
+  ui.showInfo('');
+}
+
+// Zmiana narzędzia przy zaznaczonym obszarze: ten sam fragment mapy w drugim kształcie — okrąg → kwadrat opisany na nim,
+// prostokąt → okrąg o promieniu połowy krótszego boku (np. po wpisaniu miejscowości wystarczy kliknąć „Prostokąt”).
+function convertSelection(tool) {
+  const s = state.selection;
+  if (tool === 'rect' && s.kind === 'circle') {
+    const dlat = s.radiusKm / 110.54;
+    const dlng = s.radiusKm / (111.32 * Math.cos(s.lat * Math.PI / 180));
+    beginRect({ west: s.lng - dlng, south: s.lat - dlat, east: s.lng + dlng, north: s.lat + dlat });
+  } else if (tool === 'circle' && s.kind === 'rect') {
+    const size = rectSizeKm(s.bounds);
+    const c = rectCenter(s.bounds);
+    beginCircle(c.lat, c.lng, MAP_POINT, ui.snapRadius(Math.min(size.width, size.height) / 2));
+  }
 }
 
 // ---- Krok 2: zaznaczenie obszaru (karta z ✓ dopiero, gdy jest co liczyć) ----
@@ -87,11 +107,11 @@ function clearSelection() {
 }
 
 // Okrąg po kliknięciu: promień tak dobrany, żeby okrąg zajmował ok. 1/5 ekranu (przy oddalonej mapie — województwo, w mieście — osiedla),
-// a mapa płynnie przesuwa się tak, żeby okrąg był na środku.
-function beginCircle(lat, lng, name = MAP_POINT) {
+// a mapa płynnie przesuwa się tak, żeby okrąg był na środku. radiusKm podany wprost: z wyszukiwarki albo z zamiany prostokąta.
+function beginCircle(lat, lng, name = MAP_POINT, radiusKm = null) {
   discardPoint();
   clearSelection();
-  const radiusKm = ui.snapRadius(map.kmForScreenFraction(lat, lng, CIRCLE_SCREEN_FRACTION));
+  radiusKm = radiusKm ?? ui.snapRadius(map.kmForScreenFraction(lat, lng, CIRCLE_SCREEN_FRACTION));
   state.selection = { kind: 'circle', lat, lng, radiusKm, name };
   state.card = ui.areaCard({
     kind: 'circle', radiusKm, onRadius: (km) => setCircleRadius(km, { fromInput: true }), onConfirm: confirmSelection, onCancel: clearSelection,
@@ -125,7 +145,7 @@ function beginRect(bounds) {
   state.selection = { kind: 'rect', bounds };
   state.card = ui.areaCard({ kind: 'rect', onConfirm: confirmSelection, onCancel: clearSelection });
   map.showRect(bounds, state.card.el, (b) => { state.selection.bounds = b; updateRectCard(); });
-  ui.setTool('rect', RECT_AGAIN_HINT);
+  ui.setTool('rect');
   if (isMobile()) ui.collapseSheet();
   updateRectCard();
   updateCardReady();
@@ -395,7 +415,7 @@ function applyViewHash() {
 
 map.onMapClick(onMapClick);
 map.onRectDrawn(beginRect);
-map.onDrawCancel(() => ui.setTool('rect', RECT_AGAIN_HINT));
+map.onDrawCancel(() => ui.setTool('rect'));
 // Ruch mapy po analizie: tylko przemalowanie mgły (skala z widocznych wartości), bez zapytań do serwera.
 let viewTimer = null;
 map.onViewChange(() => {
@@ -415,7 +435,12 @@ function onFormChange() {
 
 const intro = initIntro(map.leaflet.getContainer());
 ui.initTools((tool) => {
-  if (tool === state.tool && tool === 'rect') { map.startRectDraw(); ui.setTool('rect', TOOL_HINTS.rect); return; }   // nowy prostokąt
+  if (tool === state.tool) { dropTool(); return; }
+  if (state.selection) {                                 // jest zaznaczenie: zamieniamy jego kształt zamiast rysować od nowa
+    chooseTool(tool, { silent: true });
+    convertSelection(tool);
+    return;
+  }
   chooseTool(tool);
 });
 map.onHelpClick(() => intro.show(state.tool));
@@ -427,11 +452,11 @@ $('opacity-input').addEventListener('input', () => map.setFogOpacity(Number($('o
 
 ui.initTabs(() => map.invalidateSize());
 ui.renderHelp();
-// Wyszukiwarka: mapa przelatuje do miejsca i zaznacza tam okrąg (analiza dopiero po ✓).
+// Wyszukiwarka: mapa przelatuje do miejsca i zaznacza tam okrąg o średnicy 5 km (analiza dopiero po ✓).
 ui.initSearch((place) => {
   chooseTool('circle', { silent: true });
-  map.leaflet.once('moveend', () => beginCircle(place.lat, place.lng, place.name.split(',')[0]));
-  map.safeFlyTo(place.lat, place.lng, 12);
+  map.leaflet.once('moveend', () => beginCircle(place.lat, place.lng, place.name.split(',')[0], SEARCH_RADIUS_KM));
+  map.flyToCircle(place.lat, place.lng, SEARCH_RADIUS_KM);
 });
 
 getMeta().then(ui.renderFooter).catch(() => { /* stopka jest dodatkiem — brak metadanych nie przeszkadza */ });

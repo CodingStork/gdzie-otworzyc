@@ -156,6 +156,43 @@ def test_centre_dot_moves_circle(app_url, make_page):
     assert abs(ey - ny) < 3 and ex > nx                     # kropka krawędzi przesunęła się razem z okręgiem
 
 
+def test_second_click_on_tool_drops_it_and_map_pans_again(app_url, make_page):
+    """Przy prostokącie lewy przycisk rysuje — drugie kliknięcie „Prostokąt” odznacza narzędzie i mapę znów się przesuwa (Marcin)."""
+    page = make_page(app_url + view(*BRZEG, 11))
+    page.click(".tool-button[data-tool=rect]")
+    assert page.get_attribute(".tool-button[data-tool=rect]", "aria-pressed") == "true"
+    page.click(".tool-button[data-tool=rect]")
+    assert page.locator(".tool-button[aria-pressed=true]").count() == 0
+    before = page.evaluate("window.gdzieOtworzyc.map.getCenter().lng")
+    b = map_box(page)
+    page.mouse.move(b["x"] + b["width"] * 0.6, b["y"] + b["height"] * 0.5)
+    page.mouse.down()
+    page.mouse.move(b["x"] + b["width"] * 0.3, b["y"] + b["height"] * 0.5, steps=10)
+    page.mouse.up()
+    assert page.locator(".rect-handle").count() == 0
+    assert page.evaluate("window.gdzieOtworzyc.map.getCenter().lng") > before + 0.01      # mapa przesunęła się
+
+
+def test_typed_town_gets_5km_circle_and_rect_button_turns_it_into_square(app_url, make_page):
+    """Miejscowość z wyszukiwarki: okrąg o średnicy 5 km; kliknięcie „Prostokąt” daje prostokąt podobnych wymiarów w tym miejscu."""
+    page = make_page(app_url)
+    page.route("**/api/geocode**", lambda r: r.fulfill(
+        json=[{"name": "Brzeg, powiat brzeski, opolskie", "lat": BRZEG[0], "lng": BRZEG[1]}]))
+    assert page.get_attribute("#search-input", "placeholder") == "lub wpisz miejscowość ręcznie"
+    page.fill("#search-input", "Brzeg")
+    page.click("#search-results li")
+    page.wait_for_selector(".circle-handle.edge")
+    page.wait_for_timeout(500)
+    assert page.input_value(".sel-km") == "2,5"
+    page.click(".tool-button[data-tool=rect]")
+    page.wait_for_selector(".rect-handle")
+    assert page.locator(".circle-handle").count() == 0
+    page.wait_for_timeout(300)
+    assert page.locator(".selection-card").count() == 1                 # stara karta okręgu zniknęła
+    card = page.inner_text(".selection-card")
+    assert "5 × 5 km" in card, card
+
+
 # ---------------------------------------------------------------- analiza ----
 
 def test_analysis_runs_once_and_fog_only_inside_circle(app_url, make_page):

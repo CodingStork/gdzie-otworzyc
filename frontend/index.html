@@ -22,9 +22,8 @@
         <button type="button" class="tool-button" data-tool="circle" aria-pressed="false">◯ Okrąg</button>
         <button type="button" class="tool-button" data-tool="rect" aria-pressed="false">▭ Prostokąt</button>
       </div>
-      <div id="tool-hint" class="hint">Wybierz okrąg albo prostokąt, a potem wskaż na mapie miejsce, które chcesz zbadać.</div>
       <div id="search-wrap">
-        <input id="search-input" type="search" placeholder="…albo wpisz miejscowość lub adres" autocomplete="off"
+        <input id="search-input" type="search" placeholder="lub wpisz miejscowość ręcznie" autocomplete="off"
                aria-label="Miejscowość lub adres">
         <ul id="search-results" hidden></ul>
       </div>
@@ -36,9 +35,6 @@
       <legend>2. Co otwierasz i kim są klienci</legend>
       <label for="type-select">Typ działalności</label>
       <select id="type-select" autocomplete="off"></select>
-      <!-- Pod wyborem branży: zastrzeżenie „czego mapa nie widzi” dla wybranej branży albo (bez branży) podpowiedź dla rzemieślników -->
-      <div id="type-hint" class="hint" hidden></div>
-      <div id="craft-hint" class="hint">Pracujesz u klienta (brukarz, instalator, ogrodnik)? Zostaw branżę pustą i wybierz klientów »Nowe domy« — zobaczysz, gdzie się buduje.</div>
 
       <label for="demand-select">Twoi klienci to</label>
       <select id="demand-select" autocomplete="off"></select>

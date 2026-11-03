@@ -17,6 +17,8 @@ const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 const HELP = {
   tools: 'Okrąg: kliknij mapę w miejscu, które chcesz zbadać — pojawi się okrąg (zawsze ok. 1/5 ekranu, więc po oddaleniu mapy ' +
     'obejmie nawet województwo). Kropką na krawędzi zmienisz promień, kropką w środku przesuniesz okrąg, a promień możesz też wpisać w km. ' +
+    'Wpisana miejscowość dostaje okrąg o średnicy 5 km; przełączenie na drugie narzędzie zamienia zaznaczenie w tym samym miejscu. ' +
+    'Kliknij jeszcze raz wybrane narzędzie, żeby je odznaczyć i swobodnie przesuwać mapę. ' +
     'Prostokąt: przeciągnij po mapie; za rogi zmienisz jego rozmiar. Każdy obszar, nawet cała Polska, liczymy z Twoimi ustawieniami.',
   open: 'Ilu klientów mogłaby przyciągnąć nowa firma w danym miejscu. Liczymy to modelem Huffa: każdy mieszkaniec wybiera między firmami, ' +
     'a bliższa firma przyciąga go mocniej. Uwzględniamy konkurentów z OpenStreetMap i Overture Maps oraz »inne możliwości« ' +
@@ -133,12 +135,12 @@ export function initTools(onPick) {
   document.querySelectorAll('.tool-button').forEach((b) => b.addEventListener('click', () => onPick(b.dataset.tool)));
 }
 
-export function setTool(tool, hint) {
+// tool = null: żadne narzędzie nie jest wybrane (mapę przesuwa się myszą).
+export function setTool(tool) {
   document.querySelectorAll('.tool-button').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.tool === tool));
     b.classList.remove('attention');
   });
-  if (hint) $('tool-hint').textContent = hint;
 }
 
 // Pulsująca ramka wokół przycisków narzędzi — gdy ktoś kliknie mapę, zanim wybierze okrąg albo prostokąt.
@@ -199,18 +201,9 @@ function markSuggested(type) {
 
 // Pod wyborem branży: bez branży — podpowiedź dla rzemieślników; z branżą — jedno zdanie o tym, czego mapa dla niej NIE widzi
 // (zastrzeżenie z katalogu) i ewentualne ostrzeżenie o niepełnych danych. Mówimy to raz, w miejscu decyzji, a nie pod mapą.
-function syncTypeHints() {
-  const type = currentType();
-  $('craft-hint').hidden = !!type;
-  const text = type ? [type.caveat, type.warning].filter(Boolean).join(' ') : '';
-  $('type-hint').textContent = text;
-  $('type-hint').hidden = !text;
-}
-
 // Po zmianie typu: czynniki sugerowane dla typu dostają dopisek, domyślny jest zaznaczony,
 // a suwak „zasięg klienta” wraca do wartości typowej dla branży. Brak typu niczego nie zmienia.
 function onTypeChange() {
-  syncTypeHints();
   const type = currentType();
   if (!type) return;
   markSuggested(type);
@@ -246,7 +239,6 @@ export function renderCatalog(data, onChange) {
   setReach(1.5);
   syncMonthsRow();
   syncLayers();
-  syncTypeHints();
 }
 
 // Parametry formularza; puste = brak wyboru (backend wymaga co najmniej jednego z: type, demand).

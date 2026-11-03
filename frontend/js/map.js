@@ -368,6 +368,12 @@ export function initMap(elementId) {
       const bounds = L.latLngBounds(circleRing(lat, lng, radiusKm, 36));
       if (!map.getBounds().contains(bounds)) map.flyToBounds(bounds, { padding: [40, 40], duration: 0.6 });
     },
+    // Płynny lot do okręgu (np. miejscowość z wyszukiwarki); w tle — bez animacji. Po dolocie Leaflet wysyła „moveend”.
+    flyToCircle(lat, lng, radiusKm) {
+      const bounds = L.latLngBounds(circleRing(lat, lng, radiusKm, 36));
+      if (document.hidden) map.fitBounds(bounds, { animate: false, padding: [40, 40] });
+      else map.flyToBounds(bounds, { padding: [40, 40], duration: 1 });
+    },
     // Dopasowanie widoku do okręgu o danym promieniu (bez animacji) — np. przy otwarciu linku.
     fitCircle(lat, lng, radiusKm) {
       map.fitBounds(L.latLngBounds(circleRing(lat, lng, radiusKm, 36)), { animate: false, padding: [40, 40] });
