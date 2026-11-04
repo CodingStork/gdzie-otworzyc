@@ -105,6 +105,30 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 
 ## 6. Co dalej (otwarte)
 
+### ZADANIE W TOKU (zlecone 2026-11-04, przed kompaktowaniem kontekstu) — wersja na telefon w pionie
+
+Marcin: „możesz zrobić wersję tę samą, ale żeby na telefonie otwieranym w pozycji pionowej dało się z tego korzystać?”.
+Pokazuje aplikację na zajęciach przez publiczny adres (§6 pkt 7) — ludzie otworzą go na telefonach. Funkcje mają zostać **te same**; zmienia się tylko układ.
+
+Stan wyjściowy: od v3.1 jest układ telefonu (`@media (max-width: 767px)` w `css/style.css`: mapa na górze, arkusz na dole z zakładkami
+„Ustawienia” / „Wnioski”, `ui.setTab`, `ui.collapseSheet`, `body.sheet-collapsed`), ale **nikt go nie sprawdzał po v3.7–v3.8** (nowe: ✕ kart poza dymkiem
+`right:-50px`, kropka zasięgu, dymek nad okręgiem, `flyToCircle` z `CARD_ROOM_PX = 200`, przycisk ☾/☀, suwak pod klientami, pozycja „Pracuję przy budowie”).
+Jeden stary test E2E: `tests/e2e/test_uzytkownik.py::test_phone_flow` (375×812).
+
+Jak to zrobić:
+1. Uruchom serwer weryfikacyjny `app8001` (preview_start) i w panelu przeglądarki `resize_window` preset `mobile` (375×812), jasny i ciemny motyw.
+   Przeklikaj pełny scenariusz jak użytkownik: start (animacja), wybór okręgu, klik w mapę, karta (pole km, ✕, „Analizuj”), wybór branży i klientów
+   w arkuszu, analiza, zakładka „Wnioski” (legenda, dwie liczby, źródła), klik w zbadany obszar (dymek, ✕, kropka zasięgu — przeciąganie palcem),
+   wyszukiwarka miejscowości (okrąg 5 km + karta muszą się zmieścić), prostokąt (rysowanie palcem, rogi, kropka w środku), „Pracuję przy budowie”, ☾/☀.
+   Zrób zrzuty i wypisz wszystko, co się nie mieści, zasłania mapę, jest za małe do palca (< 40 px) albo wymaga poziomego przewijania.
+2. Popraw układ (CSS i drobny JS): karty i dymki w granicach ekranu (✕ poza kartą może wyjść poza ekran — na telefonie ✕ w rogu karty),
+   arkusz nie zasłania zaznaczanego obszaru, przy wyszukiwaniu `CARD_ROOM_PX` zależny od wysokości ekranu, duże cele dotyku, legenda czytelna.
+   Zasada Marcina: **prostota** — bez nowych napisów i podpowiedzi.
+3. Rozszerz `test_phone_flow` / dopisz testy E2E na telefon dla tego, co poprawisz (`make_page(..., mobile=True)`).
+4. Sprawdź na publicznym adresie (`https://desktop-hbk3bne.taildf583c.ts.net`, serwer = `pokaz.bat` w karcie terminala) w emulacji telefonu.
+5. Commit + push na gałąź PR #2, zaktualizuj README (sekcja „Jak używać”: telefon), ściągę (krótko) i ten plik; streszczenie dla Marcina ze zrzutami
+   z telefonu (SendUserFile). Po zmianach frontendu wystarczy Ctrl+F5, po zmianach backendu restart `pokaz.bat`.
+
 1. **Testy Marcina po v3.8**, potem scalenie PR #2 do `main`.
 2. **Zasięg klienta zależny od gęstości** (wieś > miasto) — na wsi model zawyża liczbę klientów, bo nie widzi firm w mieście dalej niż 4 × zasięg.
    Wymaga kalibracji na prawdziwej bazie (suma E nowych firm w klasie gęstości vs liczba firm). `docs/audyt-przydatnosci.md`, sekcja B4.
