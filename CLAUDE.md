@@ -58,6 +58,7 @@ Poprzeczka: **„czy osoba, która naprawdę otwiera salon albo firmę brukarsk�
 | v3.5 | Audyt: werdykt wg **podobnych miejsc** + test Poissona, top-5 z lokalnych szczytów, paznokcie w salonie (`TYPE_ALIASES`) | Średnia krajowa zaniżana przez wsie; werdykt przy 1–2 firmach był szumem |
 | v3.6 | **Jedna droga**: narzędzie (bez domyślnego) → obszar → „Analizuj”; okrąg = 20% ekranu z kropkami; kolory z widocznej części; testy E2E | Mapa liczyła się sama po wyborze klientów; tryb „Cała Polska” usunięty |
 | v3.8 | **Mapa = dymek**: „Gdzie są klienci” / „Gdzie są firmy” / trend = **suma w ruchomym oknie** o promieniu zasięgu (`surface.window_sum`; Huff z rozpadem bez zmian); siatka **ułożona jak piksele mgły** (`service.map_grid`: kolumny równo w długości, wiersze w Merkatorze, `grid.projection = "mercator"`) i **gęstsza niż pół zasięgu** (`surface.grid_step`, limit `MAX_GRID_POINTS = 250_000`, inaczej serwer podnosi zasięg i zwraca go w `reach_km`); branża **„Pracuję przy budowie / wykończeniu”** (pseudo-typ `build` we frontendzie: `type=''` + klienci z pozwoleń), przy innych branżach tylko ludzie; zasięg pod klientami, minimum 1 km przy budowach (`ui.syncReachMin`); kropka na okręgu zasięgu w szczegółach (`map.showDetails(…, onReach)` → `app.changeReachFromMap`); dymek nad okręgiem z ✕ jak karta; krótsze nazwy „Nowe bloki”, „Nowe domy i bloki” | Kolor „2 nowe bloki”, dymek „w promieniu 1 km: 0”; suwak 0,3 km przy liczeniu 1 km; „barber + nowe bloki”; dymek zasłaniał okrąg; przy 240 km mgła była przesunięta i próbkowana co 2,7 km (zweryfikowane: mapa = dymek w losowych punktach 8/150/300 km, 2026-11-03) |
+| v3.9 | **Telefon w pionie** (te same funkcje, 375×812): ✕ kart i dymków w rogu (`@media` w style.css, `float: right`); po zmianie rozmiaru mapy (arkusz) `map.keepSelectionVisible` dopasowuje widok do zaznaczenia z kartą; `flyToCircle` z miejscem na kartę ≤ 35% wysokości mapy; wyszukiwarka najpierw zwija arkusz; atrybucja w jednej linii (pełna po stuknięciu); przyciski przy mapie 40 px, pytajniki 28 px; „po lewej” → „poniżej” / „w „Ustawieniach”” na telefonie; „Wnioski” rozwijają się tylko po „Analizuj” (`state.openInsights`), nie po przeliczeniu kropką zasięgu; kolor zaznaczenia zmienia się z motywem; testy `test_phone_*` (przeciąganie palcem przez CDP) | Sprawdzone w emulacji telefonu (Playwright, jasny i ciemny motyw) i na publicznym adresie 2026-11-04: ✕ dymku wypadał za ekran, karta uciekała nad ekran po otwarciu „Ustawień”, atrybucja zajmowała 3 linie |
 | v3.7 | **Prostota + Lokalizator**: każdy obszar (do całej Polski) liczony z zasięgiem użytkownika (siatka rzednie: krok = promień/90); po prawej tylko klienci i firmy + źródła; bez werdyktu, rankingu, notatek i podpowiedzi; dymek z „na 1 firmę” przy ≥ 2 firmach; odświeżenie = ustawienia fabryczne; drugi klik narzędzia je odznacza; miejscowość → okrąg 5 km; zmiana narzędzia zamienia kształt; ✕ karty poza dymkiem; wyszukiwarka bez powtórzeń; **tryb nocny** (Esri Dark Gray, paleta magma) | Uwagi Marcina z testów v3.6 (zweryfikowane w przeglądarce 2026-11-03, czeka na jego testy) |
 
 Odrzucone świadomie: heksagony jako główna warstwa; ciągłe przeliczanie przy ruchu mapy; mapa bivariate; Leaflet.heat; tęczowe palety; zasięg < 0,3 km;
@@ -84,7 +85,7 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 - **Tryb nocny:** zmienne CSS w `:root` / `:root[data-theme="dark"]`; `index.html` ustawia motyw przed pierwszą klatką z `prefers-color-scheme`;
   przycisk ☾/☀ w pasku przy mapie, wybór niezapamiętywany (odświeżenie = ustawienia fabryczne). Obrysy mapy z `--area` / `--rect`.
 - **Nieużywane, do decyzji:** krok ETL `national` i `/api/national` (gotowa mapa Polski) — od v3.7 frontend ich nie woła; `sanity` nadal sprawdza tabele `national_*`.
-- **Testy:** ok. 290 jednostkowych + 19 E2E (`uv run pytest -q`, ok. 5 min). E2E bez Chromium pomijają się same.
+- **Testy:** ok. 290 jednostkowych + 22 E2E (4 na telefon) (`uv run pytest -q`, ok. 5 min). E2E bez Chromium pomijają się same.
 - **Gotowa mapa Polski (`national`) liczy jeszcze P i K starą metodą (rozpad)** — nieużywana w UI; przy jej usuwaniu albo przywracaniu trzeba to wyrównać.
 - **Komendy:** `uv sync` · `uv run pytest -v` · `uv run python -m etl.run_all [--only kroki] [--force]` (kroki: …, `aggregate`, `gaps`, `national`) ·
   `uv run python -m etl.sanity` · `start.bat` (port 8000). Po zmianie danych o firmach/ludności: `--only aggregate,gaps,national --force`.
@@ -105,31 +106,11 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 
 ## 6. Co dalej (otwarte)
 
-### ZADANIE W TOKU (zlecone 2026-11-04, przed kompaktowaniem kontekstu) — wersja na telefon w pionie
+**Telefon w pionie zrobiony (v3.9, 2026-11-04)** — opis w tabeli §4. Do sprawdzenia scenariusza na telefonie: skrypt w stylu
+`test_phone_*` (Playwright, `is_mobile=True, has_touch=True`, przeciąganie palcem przez CDP `Input.dispatchTouchEvent`); panel przeglądarki
+w aplikacji przy emulacji telefonu gubi układ współrzędnych kliknięć — lepiej Playwright i zrzuty.
 
-Marcin: „możesz zrobić wersję tę samą, ale żeby na telefonie otwieranym w pozycji pionowej dało się z tego korzystać?”.
-Pokazuje aplikację na zajęciach przez publiczny adres (§6 pkt 7) — ludzie otworzą go na telefonach. Funkcje mają zostać **te same**; zmienia się tylko układ.
-
-Stan wyjściowy: od v3.1 jest układ telefonu (`@media (max-width: 767px)` w `css/style.css`: mapa na górze, arkusz na dole z zakładkami
-„Ustawienia” / „Wnioski”, `ui.setTab`, `ui.collapseSheet`, `body.sheet-collapsed`), ale **nikt go nie sprawdzał po v3.7–v3.8** (nowe: ✕ kart poza dymkiem
-`right:-50px`, kropka zasięgu, dymek nad okręgiem, `flyToCircle` z `CARD_ROOM_PX = 200`, przycisk ☾/☀, suwak pod klientami, pozycja „Pracuję przy budowie”).
-Jeden stary test E2E: `tests/e2e/test_uzytkownik.py::test_phone_flow` (375×812).
-
-Jak to zrobić:
-1. Uruchom serwer weryfikacyjny `app8001` (preview_start) i w panelu przeglądarki `resize_window` preset `mobile` (375×812), jasny i ciemny motyw.
-   Przeklikaj pełny scenariusz jak użytkownik: start (animacja), wybór okręgu, klik w mapę, karta (pole km, ✕, „Analizuj”), wybór branży i klientów
-   w arkuszu, analiza, zakładka „Wnioski” (legenda, dwie liczby, źródła), klik w zbadany obszar (dymek, ✕, kropka zasięgu — przeciąganie palcem),
-   wyszukiwarka miejscowości (okrąg 5 km + karta muszą się zmieścić), prostokąt (rysowanie palcem, rogi, kropka w środku), „Pracuję przy budowie”, ☾/☀.
-   Zrób zrzuty i wypisz wszystko, co się nie mieści, zasłania mapę, jest za małe do palca (< 40 px) albo wymaga poziomego przewijania.
-2. Popraw układ (CSS i drobny JS): karty i dymki w granicach ekranu (✕ poza kartą może wyjść poza ekran — na telefonie ✕ w rogu karty),
-   arkusz nie zasłania zaznaczanego obszaru, przy wyszukiwaniu `CARD_ROOM_PX` zależny od wysokości ekranu, duże cele dotyku, legenda czytelna.
-   Zasada Marcina: **prostota** — bez nowych napisów i podpowiedzi.
-3. Rozszerz `test_phone_flow` / dopisz testy E2E na telefon dla tego, co poprawisz (`make_page(..., mobile=True)`).
-4. Sprawdź na publicznym adresie (`https://desktop-hbk3bne.taildf583c.ts.net`, serwer = `pokaz.bat` w karcie terminala) w emulacji telefonu.
-5. Commit + push na gałąź PR #2, zaktualizuj README (sekcja „Jak używać”: telefon), ściągę (krótko) i ten plik; streszczenie dla Marcina ze zrzutami
-   z telefonu (SendUserFile). Po zmianach frontendu wystarczy Ctrl+F5, po zmianach backendu restart `pokaz.bat`.
-
-1. **Testy Marcina po v3.8**, potem scalenie PR #2 do `main`.
+1. **Testy Marcina po v3.8 i v3.9 (także na telefonie)**, potem scalenie PR #2 do `main`.
 2. **Zasięg klienta zależny od gęstości** (wieś > miasto) — na wsi model zawyża liczbę klientów, bo nie widzi firm w mieście dalej niż 4 × zasięg.
    Wymaga kalibracji na prawdziwej bazie (suma E nowych firm w klasie gęstości vs liczba firm). `docs/audyt-przydatnosci.md`, sekcja B4.
 3. **CEIDG** jako trzecie źródło firm (brukarze, ogrodnicy, kosmetyczki bez lokalu). PKD 2025: fryzjerstwo 96.21.Z, kosmetyka 96.22.Z (dawniej 96.02.Z — szukać w obu).

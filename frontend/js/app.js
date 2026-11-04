@@ -27,7 +27,7 @@ window.gdzieOtworzyc = { get state() { return state; }, get map() { return map.l
 // area: przeanalizowany obszar (ten sam kształt co selection); result: odpowiedź /api/surface; used: ustawienia, dla których ją policzono.
 const state = {
   tool: null, selection: null, card: null, area: null, result: null, used: null,
-  controller: null, requestId: 0, loading: false, reopenPoint: null,
+  controller: null, requestId: 0, loading: false, reopenPoint: null, openInsights: false,
 };
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
@@ -38,7 +38,7 @@ const NO_CIRCLE = 1e9;                // „promień” maski mgły bez okręgu 
 const FORM_DEBOUNCE_MS = 300;
 const VIEW_DEBOUNCE_MS = 150;
 const MAP_POINT = 'punkt na mapie';   // nazwa miejsca wskazanego kliknięciem
-const NEED_TOOL = 'Najpierw wybierz z lewej, jak zaznaczyć obszar: ◯ Okrąg albo ▭ Prostokąt.';
+const NEED_TOOL = 'Najpierw wybierz, jak zaznaczyć obszar: ◯ Okrąg albo ▭ Prostokąt.';
 const SEARCH_RADIUS_KM = 2.5;          // miejscowość z wyszukiwarki: okrąg o średnicy 5 km
 
 // Odległość po kuli w km (haversine).
@@ -187,6 +187,7 @@ function confirmSelection() {
     : { kind: 'circle', lat: s.lat, lng: s.lng, radiusKm: s.radiusKm, name: s.name };
   clearSelection();
   map.closeDetails();
+  state.openInsights = true;                             // telefon: po wyniku pokaż „Wnioski” (tylko po „Analizuj”)
   run({ fit: false });                                   // mapa już pokazuje obszar (okrąg jest na środku ekranu)
 }
 
@@ -327,7 +328,10 @@ function showResult(result, used, fit) {
   drawLayer();
   ui.renderSummary(result.summary, { demandId: used.demand, permitsPeriod: result.permits_period });
   ui.renderWarnings(withoutTypeWarning(result.warnings, used.type));
-  if (isMobile()) ui.setTab('insights');                 // na telefonie po analizie od razu wnioski
+  // Na telefonie po „Analizuj” od razu wnioski; przeliczenie po zmianie zasięgu kropką czy ustawień nie rozwija arkusza,
+  // bo zasłoniłby mapę, na którą użytkownik właśnie patrzy.
+  if (isMobile() && state.openInsights) ui.setTab('insights');
+  state.openInsights = false;
 }
 
 // Ostrzeżenie o niepełnych danych dla branży jest już pod wyborem branży (lewy panel) — nie powtarzamy go pod mapą.
@@ -415,6 +419,7 @@ function onMapClick(lat, lng) {
   } else {
     ui.showInfo(NEED_TOOL);
     ui.toolsAttention(true);
+    if (isMobile()) ui.setTab('settings');               // na telefonie przyciski narzędzi są w arkuszu — trzeba go pokazać
   }
 }
 
@@ -495,6 +500,7 @@ ui.renderHelp();
 // Wyszukiwarka: mapa przelatuje do miejsca i zaznacza tam okrąg o średnicy 5 km (analiza dopiero po ✓).
 ui.initSearch((place) => {
   chooseTool('circle', { silent: true });
+  if (isMobile()) { ui.collapseSheet(); map.invalidateSize(); }   // lot liczony dla mapy na cały ekran, bez arkusza
   map.leaflet.once('moveend', () => beginCircle(place.lat, place.lng, place.name.split(',')[0], SEARCH_RADIUS_KM));
   map.flyToCircle(place.lat, place.lng, SEARCH_RADIUS_KM);
 });

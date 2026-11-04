@@ -188,6 +188,10 @@ Do v3.5 aplikacja miała dwa tryby: „Cała Polska” (mgła od razu po wybrani
 
 **Interfejs:** budowy są osobną pozycją „Pracuję przy budowie / wykończeniu” (klienci = nowe domy i bloki, bez konkurencji), przy innych branżach klientami są tylko ludzie; zasięg jest pod klientami i nie schodzi poniżej tego, co liczy serwer (budowy: 1 km); po kliknięciu okrąg zasięgu ma kropkę (zmienia zasięg), a dymek wisi nad okręgiem z ✕ jak karta.
 
+## 32. Telefon w pionie (v3.9): ten sam program, inny układ
+
+Funkcje są te same; zmienia się tylko układ, i to głównie w CSS (`@media (max-width: 767px)` — *responsive design*). Mapa zajmuje ekran, a panele są zakładkami arkusza na dole. Poprawki po testach w emulacji telefonu (Playwright, 375×812, dotyk): ✕ karty wisiał poza dymkiem i wypadał za ekran — na telefonie jest w rogu (`float: right`); arkusz zabiera pół ekranu, więc `ResizeObserver` na kontenerze mapy po każdej zmianie rozmiaru woła `invalidateSize` i `keepSelectionVisible` (`map.js`: `fitBounds` zaznaczenia z miejscem na kartę u góry, bez przybliżania); cele dotyku ok. 40 px; atrybucja w jednej linii; napisy „po lewej” zamienione na „poniżej” / „w Ustawieniach”; arkusz „Wnioski” rozwija się tylko po „Analizuj”, nie po każdym przeliczeniu. Przeciąganie palcem działa bez osobnego kodu dzięki Pointer Events (sekcja 24). Testy: `test_phone_*` w `tests/e2e/test_uzytkownik.py` przeciągają palcem przez zdarzenia dotyku (CDP `Input.dispatchTouchEvent`).
+
 ## Pytania, które może zadać prowadzący
 
 **1. Dlaczego heksagony, a nie kwadraty albo gminy — i czemu w v3 już ich nie widać na mapie?**
@@ -281,6 +285,9 @@ Bo użytkownik porównuje kolor z liczbą w dymku — muszą być tą samą licz
 
 **31. Skąd wiesz, że mgła leży tam, gdzie powinna, przy obszarze 300 km?**
 Siatka jest ułożona tak jak piksele obrazu na mapie (kolumny równo w długości, wiersze równo w Merkatorze), a test API sprawdza, że wartość w środku komórki równa się liczbie z `/api/point` w tym samym miejscu. Wcześniej siatka była regularna w metrach i na brzegach dużego obszaru mgła była przesunięta. Sekcja 31.
+
+**32. Jak zrobiłeś wersję na telefon?**
+Tym samym kodem: CSS z regułą `@media (max-width: 767px)` zmienia układ (mapa na górze, panele jako zakładki na dole), a JS tylko pilnuje, żeby po rozwinięciu arkusza zaznaczony obszar został widoczny (`ResizeObserver` + `fitBounds`). Palec obsługują Pointer Events, więc rysowanie prostokąta i przeciąganie kropek działa tak samo jak myszą. Sprawdziłem to testami w emulowanym telefonie. Sekcja 32.
 
 **29. Po co tryb nocny i czemu ma inną paletę?**
 Wygoda (praca wieczorem) — ale paleta nie może być ta sama: na ciemnym tle ciemnoczerwony „najwięcej” by zniknął. Magma odwraca kierunek jasności (więcej = jaśniej) i jest równomierna percepcyjnie, więc różnice wyglądają tak samo w każdej części skali.

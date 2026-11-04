@@ -358,20 +358,114 @@ def test_map_colour_equals_popup_number_and_reach_dot_changes_reach(app_url, mak
 
 # ---------------------------------------------------------------- telefon ----
 
+PHONE_W, PHONE_H = 375, 812
+
+
+def on_screen(page, selector, bottom=PHONE_H):
+    """Element cały na ekranie telefonu (nad `bottom`, np. nad arkuszem z ustawieniami)."""
+    b = page.locator(selector).first.bounding_box()
+    return b["x"] >= 0 and b["y"] >= 0 and b["x"] + b["width"] <= PHONE_W and b["y"] + b["height"] <= bottom
+
+
+def finger_drag(page, x0, y0, x1, y1, steps=12):
+    """Przeciągnięcie palcem (zdarzenia dotyku, nie myszy) — tak, jak na telefonie."""
+    cdp = page.context.new_cdp_session(page)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x0, "y": y0}]})
+    for i in range(1, steps + 1):
+        point = {"x": x0 + (x1 - x0) * i / steps, "y": y0 + (y1 - y0) * i / steps}
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [point]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+
+
 def test_phone_flow(app_url, make_page):
     """Telefon 375×812: narzędzie w zakładce „Ustawienia” (arkusz zwija się, żeby było widać mapę), karta mieści się na ekranie,
-    zakładka „Ustawienia” pulsuje, gdy trzeba wybrać klientów, a po „Analizuj” otwierają się „Wnioski”."""
+    zakładka „Ustawienia” pulsuje, gdy trzeba wybrać klientów, a po „Analizuj” otwierają się „Wnioski”.
+    v3.9: karta mówi „w Ustawieniach” (nie „po lewej”), a po rozwinięciu arkusza okrąg z kartą zostają widoczne nad nim."""
     page = make_page(app_url + view(*BRZEG, 11), mobile=True)
-    page.click(".tool-button[data-tool=circle]")
+    page.tap(".tool-button[data-tool=circle]")
     assert page.locator("#sidebar").is_hidden()            # arkusz zwinięty — mapa na cały ekran
     click_map(page, 0.5, 0.5)
     page.wait_for_selector(".selection-card")
-    card = page.locator(".selection-card").bounding_box()
-    assert card["x"] >= 0 and card["x"] + card["width"] <= 375
+    assert on_screen(page, ".selection-popup .leaflet-popup-content-wrapper") and on_screen(page, ".selection-card .sel-cancel")
+    assert "w „Ustawieniach”" in page.inner_text(".selection-card")
     assert page.locator("#tabs [data-tab=settings].attention").count() == 1
-    page.click("#tabs [data-tab=settings]")
+    page.tap("#tabs [data-tab=settings]")
+    page.wait_for_timeout(300)
+    sheet_top = page.locator("#sidebar").bounding_box()["y"]
+    assert on_screen(page, ".selection-popup .leaflet-popup-content-wrapper", bottom=sheet_top)
+    assert on_screen(page, ".circle-handle.edge", bottom=sheet_top)
     page.select_option("#demand-select", "pop_f")
-    page.click("#tabs [data-tab=settings]")                # zwija arkusz z powrotem
-    page.click(".sel-ok")
+    page.tap("#tabs [data-tab=settings]")                  # zwija arkusz z powrotem
+    page.tap(".sel-ok")
     page.wait_for_selector("#summary-box:not([hidden])")
     assert page.get_attribute("body", "data-tab") == "insights"
+    assert page.evaluate("document.documentElement.scrollWidth") <= PHONE_W   # bez przewijania w poziomie
+    assert page.errors == []
+
+
+def test_phone_point_popup_fits_and_reach_dot_works_with_finger(app_url, make_page):
+    """Dymek punktu na telefonie: ✕ w rogu dymku (poza nim wypadał za ekran), zasięg zmienia się palcem,
+    a przeliczenie nie rozwija arkusza „Wnioski” na pół mapy."""
+    page = make_page(app_url + view(*BRZEG, 12), mobile=True)
+    page.select_option("#type-select", "beauty")
+    page.tap(".tool-button[data-tool=circle]")
+    click_map(page, 0.5, 0.5)
+    page.wait_for_selector(".sel-ok")
+    page.wait_for_timeout(900)
+    page.tap(".sel-ok")
+    page.wait_for_selector("#summary-box:not([hidden])")
+    page.tap("#tabs [data-tab=insights]")                  # zwija „Wnioski” — mapa na cały ekran
+    click_map(page, 0.5, 0.55)                             # stuknięcie w zbadany obszar = szczegóły punktu
+    page.wait_for_selector(".point-popup .sel-cancel")
+    assert on_screen(page, ".point-popup .leaflet-popup-content-wrapper") and on_screen(page, ".point-popup .sel-cancel")
+    assert page.locator(".point-popup .sel-cancel").bounding_box()["width"] >= 36   # cel dla palca
+    before = page.inner_text("#reach-value")
+    x, y = center_of(page, ".circle-handle.edge.reach")
+    finger_drag(page, x, y, x + 50, y)
+    page.wait_for_selector(".point-popup .sel-cancel")
+    page.wait_for_timeout(800)
+    assert page.inner_text("#reach-value") != before
+    assert "sheet-collapsed" in page.get_attribute("body", "class")
+    page.tap(".point-popup .sel-cancel")
+    page.wait_for_selector(".point-popup", state="detached", timeout=3000)
+    assert page.errors == []
+
+
+def test_phone_typed_town_and_rectangle_drawn_with_finger(app_url, make_page):
+    """Telefon: miejscowość z wyszukiwarki — okrąg i karta mieszczą się nad arkuszem; prostokąt rysuje się palcem."""
+    page = make_page(app_url, mobile=True)
+    page.route("**/api/geocode**", lambda r: r.fulfill(
+        json=[{"name": "Brzeg, powiat brzeski, opolskie", "lat": BRZEG[0], "lng": BRZEG[1]}]))
+    page.fill("#search-input", "Brzeg")
+    page.tap("#search-results li")
+    page.wait_for_selector(".circle-handle.edge")
+    page.wait_for_timeout(1500)
+    assert on_screen(page, ".selection-popup .leaflet-popup-content-wrapper") and on_screen(page, ".circle-handle.edge")
+    page.tap(".selection-card .sel-cancel")
+    page.wait_for_selector(".selection-card", state="detached")
+    page.tap("#tabs [data-tab=settings]")
+    page.tap(".tool-button[data-tool=rect]")
+    b = map_box(page)
+    finger_drag(page, b["x"] + b["width"] * 0.25, b["y"] + b["height"] * 0.35, b["x"] + b["width"] * 0.75, b["y"] + b["height"] * 0.6)
+    page.wait_for_selector(".rect-handle")
+    page.wait_for_timeout(500)
+    assert "×" in page.inner_text(".selection-card")
+    assert on_screen(page, ".selection-popup .leaflet-popup-content-wrapper")
+    assert page.errors == []
+
+
+def test_phone_intro_says_below_attribution_is_one_line_and_buttons_fit_finger(app_url, make_page):
+    """Telefon: animacja nie każe szukać przycisków „po lewej”, atrybucja źródeł nie zabiera mapie trzech linii (pełna po
+    stuknięciu), przyciski przy mapie mają ok. 40 px."""
+    page = make_page(app_url, intro=True, mobile=True)
+    page.wait_for_selector("#app-intro:not([hidden])")
+    caption = page.inner_text(".intro-caption p")
+    assert "poniżej" in caption and "po lewej" not in caption
+    page.tap(".intro-ok")
+    attribution = ".leaflet-control-attribution"
+    one_line = page.locator(attribution).bounding_box()["height"]
+    assert one_line < 22
+    page.tap(attribution, position={"x": 200, "y": 5})
+    assert page.locator(attribution).bounding_box()["height"] > one_line
+    for sel in (".leaflet-control-zoom-in", ".intro-button", ".theme-button"):
+        assert page.locator(sel).bounding_box()["height"] >= 40, sel

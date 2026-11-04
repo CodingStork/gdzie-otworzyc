@@ -538,14 +538,16 @@ export function areaCard({ kind, radiusKm: radius, onRadius, onConfirm, onCancel
   cancel.setAttribute('aria-label', 'Anuluj zaznaczenie');
   cancel.addEventListener('click', onCancel);
   buttons.append(ok);
-  // ✕ wisi poza kartą, po prawej, na wysokości tytułu (Marcin: pod treścią karty wyglądał źle).
+  // ✕ wisi poza kartą, po prawej, na wysokości tytułu (Marcin: pod treścią karty wyglądał źle); na telefonie — w rogu karty (style.css).
   el.append(cancel, head, size, body, buttons);
   let problem = '';
   let ready = false;
   const refresh = () => {
     ok.hidden = !ready;                                  // bez branży i klientów nie ma czego analizować — nie udajemy, że jest
     ok.disabled = !!problem;
-    body.textContent = ready ? '' : 'Wybierz po lewej branżę lub klientów.';
+    // Na telefonie ustawienia są w zakładce „Ustawienia” pod mapą (pulsuje), a nie po lewej.
+    const where = window.matchMedia('(max-width: 767px)').matches ? 'w „Ustawieniach”' : 'po lewej';
+    body.textContent = ready ? '' : `Wybierz ${where} branżę lub klientów.`;
     body.classList.toggle('need', !ready);
   };
   const card = {

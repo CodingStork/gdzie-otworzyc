@@ -12,7 +12,7 @@ const CURSOR_SVG = '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden=
   '<path d="M3 2 L3 19 L8 14.5 L11.5 22 L14.5 20.6 L11 13.2 L18 13 Z" fill="#fff" stroke="#222" stroke-width="1.6" stroke-linejoin="round"/></svg>';
 
 const CAPTIONS = {
-  tools: 'Zacznij od wyboru po lewej: <b>◯ Okrąg</b> albo <b>▭ Prostokąt</b>. Potem zaznaczysz na mapie obszar, który chcesz zbadać.',
+  tools: 'Zacznij od wyboru {gdzie}:<b>◯ Okrąg</b> albo <b>▭ Prostokąt</b>. Potem zaznaczysz na mapie obszar, który chcesz zbadać.',
   circle: 'Kliknij mapę w miejscu, które chcesz zbadać — pojawi się okrąg. <b>Kropką na krawędzi</b> zmienisz promień (możesz go też ' +
     'wpisać w km), <b>kropką w środku</b> przesuniesz okrąg.',
   rect: 'Przeciągnij po mapie, żeby zaznaczyć prostokąt. Za <b>rogi</b> zmienisz jego rozmiar.',
@@ -79,7 +79,9 @@ export function initIntro(mapEl) {
   function show(tool = null) {
     step = tool || 'tools';
     overlay.dataset.step = step;
-    overlay.querySelector('.intro-caption p').innerHTML = CAPTIONS[step];
+    // Na telefonie przyciski narzędzi są w arkuszu pod mapą, a nie w lewym panelu.
+    const phone = window.matchMedia('(max-width: 767px)').matches;
+    overlay.querySelector('.intro-caption p').innerHTML = CAPTIONS[step].replace('{gdzie}', phone ? 'poniżej' : 'po lewej');
     layout();
     // Ponowne odtworzenie animacji CSS: element musi się „odświeżyć”, inaczej przeglądarka nie zacznie jej od początku.
     overlay.hidden = true;

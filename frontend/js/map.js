@@ -162,7 +162,25 @@ export function initMap(elementId) {
   const FADE_MS = 250;   // czas przenikania starej mgły w nową (musi się zgadzać z transition w style.css)
 
   // Gdy zmieni się rozmiar kontenera mapy (np. zwinięcie panelu na telefonie), Leaflet musi przeliczyć rozmiar.
-  new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById(elementId));
+  // Na telefonie arkusz z ustawieniami zabiera połowę ekranu — zaznaczony obszar razem z kartą nad nim ma zostać widoczny.
+  const isPhone = () => window.matchMedia('(max-width: 767px)').matches;
+  new ResizeObserver(() => {
+    map.invalidateSize();
+    if (isPhone()) keepSelectionVisible();
+  }).observe(document.getElementById(elementId));
+
+  // Przesuwa (i w razie potrzeby oddala) mapę tak, żeby okrąg albo prostokąt wyboru i karta nad nim mieściły się na ekranie.
+  function keepSelectionVisible() {
+    const shape = selectionCircle || rectShape;
+    if (!shape || !selectionPopup) return;
+    const card = selectionPopup.getElement();
+    const top = (card ? card.offsetHeight : 120) + 24;
+    map.fitBounds(shape.getBounds(), { paddingTopLeft: [16, top], paddingBottomRight: [16, 16], maxZoom: map.getZoom(), animate: false });
+  }
+
+  // Atrybucja źródeł na telefonie: jedna linia (style.css), stuknięcie rozwija pełną treść.
+  const attribution = map.attributionControl.getContainer();
+  attribution.addEventListener('click', (e) => { if (!e.target.closest('a')) attribution.classList.toggle('open'); });
 
   let clickCb = null;
   let suppressClickUntil = 0;                          // po narysowaniu prostokąta przeglądarka wysyła jeszcze „click” — ignorujemy go
@@ -398,8 +416,10 @@ export function initMap(elementId) {
     // Płynny lot do okręgu (np. miejscowość z wyszukiwarki); w tle — bez animacji. Po dolocie Leaflet wysyła „moveend”.
     flyToCircle(lat, lng, radiusKm) {
       const bounds = L.latLngBounds(circleRing(lat, lng, radiusKm, 36));
-      // U góry zostawiamy miejsce na kartę zaznaczenia, która wisi nad okręgiem — okrąg i karta mają się zmieścić razem.
-      const padding = { paddingTopLeft: [40, CARD_ROOM_PX], paddingBottomRight: [40, 40] };
+      // U góry zostawiamy miejsce na kartę zaznaczenia, która wisi nad okręgiem — okrąg i karta mają się zmieścić razem
+      // (na niskiej mapie, np. telefon z otwartym arkuszem, najwyżej 35% wysokości, żeby został ekran na okrąg).
+      const room = Math.min(CARD_ROOM_PX, Math.round(map.getSize().y * 0.35));
+      const padding = { paddingTopLeft: [40, room], paddingBottomRight: [40, 40] };
       if (document.hidden) map.fitBounds(bounds, { animate: false, ...padding });
       else map.flyToBounds(bounds, { ...padding, duration: 1 });
     },
@@ -477,6 +497,9 @@ export function initMap(elementId) {
       labelsLayer.setUrl(labelsUrl(dark));
       themeButton.textContent = dark ? '☀' : '☾';
       themeButton.title = dark ? 'Tryb dzienny' : 'Tryb nocny';
+      // Zaznaczony okrąg albo prostokąt dostaje kolor nowego motywu (data-theme jest już ustawione).
+      if (selectionCircle) selectionCircle.setStyle({ color: areaColor(), fillColor: areaColor() });
+      if (rectShape) rectShape.setStyle({ color: rectColor(), fillColor: rectColor() });
     },
     onRectDrawn(cb) { rectDrawnCb = cb; },
     onDrawCancel(cb) { drawCancelCb = cb; },
