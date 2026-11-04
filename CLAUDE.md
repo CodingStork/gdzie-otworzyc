@@ -113,7 +113,9 @@ Szczegóły (metoda, wzory, źródła, licencje, architektura, instalacja): **`R
 4. **Zamożność i ludność dzienna:** GUS BDL (dochody gmin z PIT, dzieci 0–6, budynki oddane) i przepływy do pracy — dla kawiarni, restauracji, siłowni, przedszkoli.
 5. **Sprzątanie po v3.7:** czy usunąć krok `national` / `/api/national` (oszczędność ok. 60 MB bazy i ok. 15 min ETL) albo werdykt/top-5 w backendzie — zapytać Marcina.
 6. Atrakcyjność sieci w Huffie (`brand`), przedszkola z RSPO, liczba mieszkań z kubatury (GUNB), kropki wszystkich firm na wyniku.
-7. **Tailscale** (dostęp z uczelni) — instrukcja w README; dopiero po testach Marcina.
+7. **Hosting na pokaz (zrobione 2026-11-04):** komputer Marcina + **Tailscale Funnel** — publiczny adres `https://desktop-hbk3bne.taildf583c.ts.net`
+   (konto Tailscale Marcina, Funnel włączony, konfiguracja `funnel --bg 8000` trwała). Start: `pokaz.bat` (Funnel + uvicorn na 127.0.0.1:8000).
+   Poprawka = zmiana kodu + restart `pokaz.bat` (adres się nie zmienia). Marcin chce „darmowo i łatwo”, tylko na zajęcia — **nie proponuj VPS**.
 8. Drobne: deduplikacja „jeden do wielu”, `/api/poi` bez `ORDER BY` przy limicie 5 000, brak pliku `.release` → „Overture Maps nieznane”.
 9. Przy każdej nowej wersji: **zaktualizuj ten plik** (tabela §4, stan §5–6), README i ściągę.
 

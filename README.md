@@ -131,13 +131,14 @@ start.bat                                 # serwer: http://localhost:8000
 - ULDK (GUGiK) po godzinie intensywnych zapytań potrafi zablokować połączenie — odczekaj i dokończ: `uv run python -m etl.run_all --only geocode,permits_hex,aggregate --force`.
 - Testy: `uv run pytest -v`. Testy „jak użytkownik” (`tests/e2e`) wymagają jednorazowo `uv run playwright install chromium` — bez tego pomijają się same.
 
-## Dostęp z innego urządzenia przez Tailscale
+## Pokaz na zajęciach: publiczny adres przez Tailscale Funnel
 
-1. Zainstaluj Tailscale na komputerze z aplikacją i na laptopie (https://tailscale.com/download), zaloguj oba tym samym kontem.
-2. Na komputerze z aplikacją zezwól na ruch na port 8000 (PowerShell jako administrator):
-   `New-NetFirewallRule -DisplayName "Lokalizator 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private`
-3. Uruchom `start.bat` i na laptopie wejdź na `http://<nazwa-komputera>:8000` (nazwa w aplikacji Tailscale).
-4. Opcjonalnie publiczny link dla prowadzącego: `tailscale funnel 8000` (wyłącz po pokazie).
+Aplikacja działa na komputerze domowym, a **Tailscale Funnel** daje jej stały, publiczny adres https (darmowo, bez otwierania portów w zaporze) — otwiera go każdy, także prowadzący, bez instalowania czegokolwiek.
+
+1. Raz: zainstaluj Tailscale (`winget install --id Tailscale.Tailscale -e`), zaloguj się (`tailscale up`) i włącz Funnel w panelu Tailscale (link pokaże się przy pierwszym `tailscale funnel`).
+2. Przed pokazem: komputer włączony i nieuśpiony, uruchom **`pokaz.bat`** — włącza Funnel na port 8000 i serwer aplikacji (tylko na `127.0.0.1`, z zewnątrz wchodzi się wyłącznie przez Funnel). Adres wypisuje `tailscale funnel status`.
+3. Poprawka po pokazie: zmień kod, zatrzymaj serwer (Ctrl+C w oknie `pokaz.bat`) i uruchom `pokaz.bat` jeszcze raz — adres się nie zmienia, przeglądarki widzą nową wersję po odświeżeniu (Ctrl+F5).
+4. Wyłączenie publicznego adresu: `tailscale funnel reset`.
 
 ## Ograniczenia
 
