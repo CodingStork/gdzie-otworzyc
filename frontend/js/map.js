@@ -36,7 +36,8 @@ const smoothstep = (f) => f * f * (3 - 2 * f);
 // Piksele poza okręgiem są przezroczyste (krawędź wygładzona na 1 piksel). Zwraca data URL obrazu PNG.
 // `gap` (opcjonalnie): ta sama siatka co `t`, 1 = „mało danych o firmach”. Na takich komórkach rysujemy ukośne szare paski
 // (okres `hatch.period` i grubość `hatch.width` w pikselach obrazu); kolor mgły pod paskami zostaje bez zmian.
-function renderFog(grid, t, radiusKm, colorOf, gap = null, hatch = { period: 10, width: 3 }) {
+// `center` = położenie środka okręgu przycinania jako ułamek szerokości i wysokości obrazu (domyślnie środek obrazu).
+function renderFog(grid, t, radiusKm, colorOf, gap = null, hatch = { period: 10, width: 3 }, center = { x: 0.5, y: 0.5 }) {
   const { nx, ny, cell_m: cell } = grid;
   const w = nx * UPSCALE;
   const h = ny * UPSCALE;
@@ -47,8 +48,8 @@ function renderFog(grid, t, radiusKm, colorOf, gap = null, hatch = { period: 10,
   const image = ctx.createImageData(w, h);
   const lut = Array.from({ length: 256 }, (_, i) => colorOf(i / 255));
   const radiusPx = radiusKm * 1000 / cell * UPSCALE;
-  const cx = w / 2;
-  const cy = h / 2;
+  const cx = w * center.x;
+  const cy = h * center.y;
   for (let py = 0; py < h; py++) {
     const gy = (py + 0.5) / UPSCALE - 0.5;
     const y0 = Math.floor(gy);
@@ -95,24 +96,42 @@ function renderFog(grid, t, radiusKm, colorOf, gap = null, hatch = { period: 10,
 }
 
 // Pierścień współrzędnych okręgu o promieniu w km (przybliżenie płaskie — wystarcza dla ≤ 30 km).
-const RECT_COLOR = '#253494';
+const CARD_ROOM_PX = 200;           // miejsce nad okręgiem na kartę zaznaczenia (przy dopasowaniu widoku po wyszukaniu)
+// Kolory obrysów z CSS (--area, --rect): w trybie nocnym jaśniejsze, żeby było je widać na ciemnym podkładzie.
+const cssColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const areaColor = () => cssColor('--area');
+const rectColor = () => cssColor('--rect');
+const isDarkTheme = () => document.documentElement.dataset.theme === 'dark';
+// Podkład Esri Canvas: jasnoszary albo ciemnoszary (tryb nocny); etykiety osobno, nad mgłą.
+const baseUrl = (dark) => `${ESRI}World_${dark ? 'Dark' : 'Light'}_Gray_Base/MapServer/tile/{z}/{y}/{x}`;
+const labelsUrl = (dark) => `${ESRI}World_${dark ? 'Dark' : 'Light'}_Gray_Reference/MapServer/tile/{z}/{y}/{x}`;
 const RECT_BAD_COLOR = '#e00000';   // prostokąt poza limitami (za duży / za mały)
 const boundsObject = (b) => ({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() });
 
-function circleRing(lat, lng, radiusKm, points = 120) {
-  const dlat = radiusKm / 110.54;
-  const dlng = radiusKm / (111.32 * Math.cos(lat * Math.PI / 180));
-  return Array.from({ length: points }, (_, i) => {
-    const a = (i / points) * 2 * Math.PI;
-    return [lat + dlat * Math.sin(a), lng + dlng * Math.cos(a)];
-  });
+// Punkt odległy o `km` od (lat, lng) w kierunku `bearing` (stopnie, 0 = północ, 90 = wschód) — wzór na kuli o promieniu 6371 km.
+// Dla okręgu o promieniu setek km (całe województwo) przybliżenie płaskie dawałoby wyraźnie spłaszczony kształt.
+export function destination(lat, lng, km, bearing) {
+  const r = Math.PI / 180;
+  const d = km / 6371;
+  const b = bearing * r;
+  const p1 = lat * r;
+  const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b));
+  const l2 = lng * r + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+  return [p2 / r, l2 / r];
 }
+
+function circleRing(lat, lng, radiusKm, points = 120) {
+  return Array.from({ length: points }, (_, i) => destination(lat, lng, radiusKm, (i / points) * 360));
+}
+
+// Pozycja Y w rzucie Mercatora (mapa Leaflet) — do ustawienia środka okręgu na obrazie mgły z siatki w Mercatorze.
+const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2));
 
 export function initMap(elementId) {
   const map = L.map(elementId, { maxZoom: MAX_ZOOM, minZoom: MIN_ZOOM }).setView([52.07, 19.48], 6);
 
   // Podkład bez etykiet, żeby mgła leżała pod napisami miast.
-  L.tileLayer(ESRI + 'World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+  const baseLayer = L.tileLayer(baseUrl(isDarkTheme()), {
     attribution: ATTRIBUTION, maxZoom: MAX_ZOOM,
   }).addTo(map);
 
@@ -124,12 +143,10 @@ export function initMap(elementId) {
   const labels = map.createPane('labels');
   labels.style.zIndex = 450;
   labels.style.pointerEvents = 'none';
-  map.createPane('top').style.zIndex = 470;
-  L.tileLayer(ESRI + 'World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+  const labelsLayer = L.tileLayer(labelsUrl(isDarkTheme()), {
     pane: 'labels', maxZoom: MAX_ZOOM,
   }).addTo(map);
 
-  const topLayer = L.layerGroup().addTo(map);
   const areaLayer = L.layerGroup().addTo(map);
   const detailsLayer = L.layerGroup().addTo(map);
   // Okrąg, welon i szczegóły: SVG (nie canvas) i nieinteraktywne, żeby nie przechwytywały kliknięć w mapę.
@@ -137,14 +154,33 @@ export function initMap(elementId) {
   const detailsRenderer = L.svg({ pane: 'details' });
   const selectionRenderer = L.svg({ pane: 'selection' });
   const selectionLayer = L.layerGroup().addTo(map);   // pinezka, okrąg podglądu / prostokąt i uchwyty wyboru
-  let selectionCircle = null;                          // okrąg podglądu (zmieniany suwakiem)
+  let selectionCircle = null;                          // obrys okręgu wyboru
+  let circleControl = null;                            // zmiana promienia okręgu wyboru z zewnątrz (pole km w karcie)
   let selectionPopup = null;                           // karta wyboru (własny popup: nie zamyka go kliknięcie w mapę)
   let fogOverlay = null;
   let opacity = 0.85;
   const FADE_MS = 250;   // czas przenikania starej mgły w nową (musi się zgadzać z transition w style.css)
 
   // Gdy zmieni się rozmiar kontenera mapy (np. zwinięcie panelu na telefonie), Leaflet musi przeliczyć rozmiar.
-  new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById(elementId));
+  // Na telefonie arkusz z ustawieniami zabiera połowę ekranu — zaznaczony obszar razem z kartą nad nim ma zostać widoczny.
+  const isPhone = () => window.matchMedia('(max-width: 767px)').matches;
+  new ResizeObserver(() => {
+    map.invalidateSize();
+    if (isPhone()) keepSelectionVisible();
+  }).observe(document.getElementById(elementId));
+
+  // Przesuwa (i w razie potrzeby oddala) mapę tak, żeby okrąg albo prostokąt wyboru i karta nad nim mieściły się na ekranie.
+  function keepSelectionVisible() {
+    const shape = selectionCircle || rectShape;
+    if (!shape || !selectionPopup) return;
+    const card = selectionPopup.getElement();
+    const top = (card ? card.offsetHeight : 120) + 24;
+    map.fitBounds(shape.getBounds(), { paddingTopLeft: [16, top], paddingBottomRight: [16, 16], maxZoom: map.getZoom(), animate: false });
+  }
+
+  // Atrybucja źródeł na telefonie: jedna linia (style.css), stuknięcie rozwija pełną treść.
+  const attribution = map.attributionControl.getContainer();
+  attribution.addEventListener('click', (e) => { if (!e.target.closest('a')) attribution.classList.toggle('open'); });
 
   let clickCb = null;
   let suppressClickUntil = 0;                          // po narysowaniu prostokąta przeglądarka wysyła jeszcze „click” — ignorujemy go
@@ -160,34 +196,31 @@ export function initMap(elementId) {
   };
   const isTouchUi = () => window.matchMedia('(pointer: coarse), (max-width: 767px)').matches;
 
-  // ---- Prostokąt: przycisk „▭ Prostokąt”, rysowanie przeciągnięciem (Pointer Events: mysz, dotyk i rysik jednym kodem) ----
-  // Po kliknięciu przycisku mapa przestaje się przesuwać (dragging.disable) i przeciągnięcie rysuje ramkę; po puszczeniu tryb się
-  // wyłącza i przesuwanie wraca. Dzięki przyciskowi zwykłe przeciągnięcie (także palcem na telefonie) nadal przesuwa mapę.
+  // ---- Prostokąt: rysowanie przeciągnięciem (Pointer Events: mysz, dotyk i rysik jednym kodem) ----
+  // Tryb rysowania włącza wybór narzędzia „▭ Prostokąt” w lewym panelu (app.js): mapa przestaje się wtedy przesuwać
+  // (dragging.disable) i przeciągnięcie rysuje ramkę; po puszczeniu tryb się wyłącza i przesuwanie wraca.
   let drawing = false;
-  let drawStartCb = null;
   let rectDrawnCb = null;
   let drawFrom = null;                                 // { latlng, x, y } — początek przeciągnięcia
   let drawPreview = null;
-  const rectButton = L.DomUtil.create('a', 'rect-button');
-  rectButton.id = 'rect-button';
-  rectButton.href = '#';
-  rectButton.setAttribute('role', 'button');
-  rectButton.textContent = '▭ Prostokąt';
-  rectButton.title = 'Zaznacz obszar na mapie przeciągnięciem';
   const helpButton = L.DomUtil.create('a', 'intro-button');   // „?” — pokazuje animację wprowadzającą jeszcze raz
   helpButton.href = '#';
   helpButton.setAttribute('role', 'button');
   helpButton.textContent = '?';
-  helpButton.title = 'Jak wybrać obszar na mapie?';
+  helpButton.title = 'Jak zaznaczyć obszar na mapie?';
   let helpCb = null;
+  const themeButton = L.DomUtil.create('a', 'theme-button');   // ☾ / ☀ — tryb nocny / dzienny
+  themeButton.href = '#';
+  themeButton.setAttribute('role', 'button');
+  let themeCb = null;
   const toolbar = L.Control.extend({
     options: { position: 'topleft' },
     onAdd() {
       const bar = L.DomUtil.create('div', 'leaflet-bar rect-bar');
-      bar.append(rectButton, helpButton);
+      bar.append(helpButton, themeButton);
       L.DomEvent.disableClickPropagation(bar);
-      L.DomEvent.on(rectButton, 'click', (e) => { L.DomEvent.preventDefault(e); drawing ? stopDraw() : startDraw(); });
       L.DomEvent.on(helpButton, 'click', (e) => { L.DomEvent.preventDefault(e); if (helpCb) helpCb(); });
+      L.DomEvent.on(themeButton, 'click', (e) => { L.DomEvent.preventDefault(e); if (themeCb) themeCb(); });
       return bar;
     },
   });
@@ -195,16 +228,13 @@ export function initMap(elementId) {
 
   function startDraw() {
     drawing = true;
-    rectButton.classList.add('active');
     map.dragging.disable();
     map.getContainer().classList.add('drawing');
-    if (drawStartCb) drawStartCb();
   }
   function stopDraw() {
     drawing = false;
     drawFrom = null;
     if (drawPreview) { drawPreview.remove(); drawPreview = null; }
-    rectButton.classList.remove('active');
     map.dragging.enable();
     map.getContainer().classList.remove('drawing');
   }
@@ -215,7 +245,7 @@ export function initMap(elementId) {
     drawFrom = { latlng: map.mouseEventToLatLng(e), x: e.clientX, y: e.clientY };
     try { container.setPointerCapture(e.pointerId); } catch (err) { /* bez przechwycenia też działa, tylko ruch poza mapą nie jest widziany */ }   // ruch i puszczenie dochodzą do mapy także poza jej krawędzią
     drawPreview = L.rectangle([drawFrom.latlng, drawFrom.latlng], {
-      renderer: selectionRenderer, interactive: false, color: RECT_COLOR, weight: 2, dashArray: '6 4', fillColor: RECT_COLOR, fillOpacity: 0.08,
+      renderer: selectionRenderer, interactive: false, color: rectColor(), weight: 2, dashArray: '6 4', fillColor: rectColor(), fillOpacity: 0.08,
     }).addTo(selectionLayer);
     e.preventDefault();
   });
@@ -234,7 +264,8 @@ export function initMap(elementId) {
     if (rectDrawnCb) rectDrawnCb(boundsObject(bounds));
   });
   container.addEventListener('pointercancel', () => { drawFrom = null; if (drawPreview) { drawPreview.remove(); drawPreview = null; } });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawing) stopDraw(); });
+  let drawCancelCb = null;
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawing) { stopDraw(); if (drawCancelCb) drawCancelCb(); } });
 
   // Prostokąt wyboru: ramka + 4 uchwyty w rogach (przeciągnięcie rogu zmienia prostokąt, przeciwległy róg stoi) + karta.
   let rectShape = null;
@@ -267,14 +298,20 @@ export function initMap(elementId) {
     // Mgła: t = pozycje 0–1 na skali (NaN poza okręgiem), grid z /api/surface.
     // colorOf: funkcja t → [r,g,b,a]; domyślnie paleta żółto-czerwona (dla trendu: paleta rozbieżna).
     // gap: opcjonalna tablica (1 = mało danych o firmach) na tej samej siatce — rysowana jako szare kreskowanie.
-    setFog(grid, t, radiusKm, colorOf = fogColor, gap = null) {
+    // center: { lat, lng } środka okręgu przycinania (tylko gdy siatka nie jest wyśrodkowana na okręgu — siatka gotowej mapy w Mercatorze).
+    setFog(grid, t, radiusKm, colorOf = fogColor, gap = null, center = null) {
       const bounds = [[grid.south, grid.west], [grid.north, grid.east]];
       const old = fogOverlay;
       // Paski mają mieć ok. 8 px NA EKRANIE, a obraz jest gęstszy niż ekran — przeliczamy okres na piksele obrazu.
       const screenW = Math.abs(map.latLngToContainerPoint([grid.south, grid.east]).x - map.latLngToContainerPoint([grid.south, grid.west]).x);
       const perScreenPx = (grid.nx * UPSCALE) / Math.max(1, screenW);
       const hatch = { period: Math.max(5, Math.round(8 * perScreenPx)), width: Math.max(2, Math.round(2.5 * perScreenPx)) };
-      const overlay = L.imageOverlay(renderFog(grid, t, radiusKm, colorOf, gap, hatch), bounds, {
+      let frac = { x: 0.5, y: 0.5 };
+      if (center && grid.projection === 'mercator') {
+        frac = { x: (center.lng - grid.west) / (grid.east - grid.west),
+          y: (mercY(grid.north) - mercY(center.lat)) / (mercY(grid.north) - mercY(grid.south)) };
+      }
+      const overlay = L.imageOverlay(renderFog(grid, t, radiusKm, colorOf, gap, hatch, frac), bounds, {
         pane: 'fog', interactive: false, opacity: 0,
       }).addTo(map);
       fogOverlay = overlay;
@@ -287,7 +324,6 @@ export function initMap(elementId) {
     clearFog() {
       if (fogOverlay) { fogOverlay.remove(); fogOverlay = null; }
     },
-    // Tryb „Cała Polska” nie ma pinezki, okręgu ani welonu.
     clearArea() { areaLayer.clearLayers(); },
     // Widoczny fragment mapy (do zapytań o gotową mapę i mapę na żywo) i szerokość mapy w pikselach.
     viewBounds() {
@@ -314,7 +350,7 @@ export function initMap(elementId) {
         }).addTo(areaLayer);
       }
       const circle = L.polygon(ring, {
-        renderer: areaRenderer, interactive: false, color: '#800026', weight: 1.5,
+        renderer: areaRenderer, interactive: false, color: areaColor(), weight: 1.5,
         dashArray: veil ? null : '6 4', fill: false,
       }).addTo(areaLayer);
       L.marker([lat, lng], {
@@ -328,81 +364,158 @@ export function initMap(elementId) {
 
     // Szczegóły punktu: okrąg zasięgu, konkurenci [{lat,lng,name,source}] i dymek (bez heksagonów — laikowi nic nie mówią).
     // Zamknięcie dymku usuwa wszystko, co tu narysowano.
-    showDetails(lat, lng, reachKm, competitors, element) {
+    // Szczegóły punktu: okrąg zasięgu klienta z kropką na krawędzi (przeciągnięcie zmienia zasięg — onReach(km) po puszczeniu),
+    // konkurenci w zasięgu i dymek NAD okręgiem (zaczepiony w jego najdalszym punkcie na północy), żeby go nie zasłaniał.
+    showDetails(lat, lng, reachKm, competitors, element, onReach) {
       map.closePopup();   // stary dymek (jego zamknięcie czyści stare szczegóły) — dopiero potem rysujemy nowe
-      L.polygon(circleRing(lat, lng, reachKm), {
-        renderer: detailsRenderer, interactive: false, color: '#253494', weight: 1.5, fillOpacity: 0.03,
+      let radius = reachKm;
+      const ring = L.polygon(circleRing(lat, lng, radius), {
+        renderer: detailsRenderer, interactive: false, color: rectColor(), weight: 1.5, fillOpacity: 0.03,
+      }).addTo(detailsLayer);
+      const size = isTouchUi() ? 28 : 18;
+      const edge = L.marker(destination(lat, lng, radius, 90), {
+        draggable: true, keyboard: false, autoPan: false, title: 'Przeciągnij, żeby zmienić zasięg klienta',
+        icon: L.divIcon({ className: 'circle-handle edge reach', iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
       }).addTo(detailsLayer);
       for (const p of competitors) {
         L.circleMarker([p.lat, p.lng], {
-          renderer: detailsRenderer, radius: 4, color: '#fff', weight: 1, fillColor: '#253494', fillOpacity: 0.95,
+          renderer: detailsRenderer, radius: 4, color: '#fff', weight: 1, fillColor: rectColor(), fillOpacity: 0.95,
           bubblingMouseEvents: false,
         }).bindTooltip(plainText(`${p.name || 'bez nazwy'} (${SOURCE_NAMES[p.source] || 'OpenStreetMap'})`)).addTo(detailsLayer);
       }
-      // Przyciski zoomu i »▭ Prostokąt« zasłaniają lewy margines mapy — dymek ma się mieścić obok nich.
+      // Przyciski zoomu i „?” zasłaniają lewy margines mapy — dymek ma się mieścić obok nich. Zamyka go ✕ z treści (jak kartę).
       const narrow = window.innerWidth < 768;
-      L.popup({
-        className: 'point-popup', maxWidth: narrow ? 220 : 300,
-        autoPanPaddingTopLeft: [105, 10], autoPanPaddingBottomRight: [10, 10],
-      }).setLatLng([lat, lng]).setContent(element).openOn(map);
+      const popup = L.popup({
+        className: 'point-popup', maxWidth: narrow ? 220 : 300, closeButton: false, offset: [0, -4],
+        autoPanPaddingTopLeft: [60, 10], autoPanPaddingBottomRight: [10, 10],
+      }).setLatLng(destination(lat, lng, radius, 0)).setContent(element).openOn(map);
+      edge.on('drag', (e) => {
+        radius = Math.min(20, Math.max(0.3, map.distance([lat, lng], e.latlng) / 1000));
+        ring.setLatLngs(circleRing(lat, lng, radius));
+        popup.setLatLng(destination(lat, lng, radius, 0));
+      });
+      edge.on('dragend', () => { if (onReach) onReach(radius); });
     },
     closeDetails() { map.closePopup(); },
 
-    // Wybór kliknięciem: pinezka + przerywany okrąg podglądu + karta (element DOM z ui.selectionCard) przy punkcie.
-    // Karta jest własnym popupem (autoClose / closeOnClick wyłączone), żeby kliknięcie w mapę jej nie zamykało — o tym decyduje app.js.
-    showSelection(lat, lng, radiusKm, cardEl) {
+    // Ile km ma odcinek `fraction` krótszego boku mapy, odmierzony poziomo od punktu (lat, lng) — okrąg po kliknięciu ma zawsze
+    // ten sam rozmiar NA EKRANIE (ok. 1/5), niezależnie od przybliżenia: po oddaleniu obejmie województwo, w mieście — osiedla.
+    kmForScreenFraction(lat, lng, fraction) {
+      const size = map.getSize();
+      const px = fraction * Math.min(size.x, size.y);
+      const p = map.latLngToContainerPoint([lat, lng]);
+      return map.distance([lat, lng], map.containerPointToLatLng([p.x + px, p.y])) / 1000;
+    },
+    // Płynne przesunięcie mapy tak, żeby punkt był na środku ekranu (bez zmiany przybliżenia).
+    panTo(lat, lng) { map.panTo([lat, lng], { animate: !document.hidden, duration: 0.6 }); },
+    // Gdy okrąg nie mieści się na ekranie (np. wpisano większy promień), mapa płynnie oddala się, żeby było go widać.
+    fitCircleIfNeeded(lat, lng, radiusKm) {
+      const bounds = L.latLngBounds(circleRing(lat, lng, radiusKm, 36));
+      if (!map.getBounds().contains(bounds)) map.flyToBounds(bounds, { padding: [40, 40], duration: 0.6 });
+    },
+    // Płynny lot do okręgu (np. miejscowość z wyszukiwarki); w tle — bez animacji. Po dolocie Leaflet wysyła „moveend”.
+    flyToCircle(lat, lng, radiusKm) {
+      const bounds = L.latLngBounds(circleRing(lat, lng, radiusKm, 36));
+      // U góry zostawiamy miejsce na kartę zaznaczenia, która wisi nad okręgiem — okrąg i karta mają się zmieścić razem
+      // (na niskiej mapie, np. telefon z otwartym arkuszem, najwyżej 35% wysokości, żeby został ekran na okrąg).
+      const room = Math.min(CARD_ROOM_PX, Math.round(map.getSize().y * 0.35));
+      const padding = { paddingTopLeft: [40, room], paddingBottomRight: [40, 40] };
+      if (document.hidden) map.fitBounds(bounds, { animate: false, ...padding });
+      else map.flyToBounds(bounds, { ...padding, duration: 1 });
+    },
+    // Dopasowanie widoku do okręgu o danym promieniu (bez animacji) — np. przy otwarciu linku.
+    fitCircle(lat, lng, radiusKm) {
+      map.fitBounds(L.latLngBounds(circleRing(lat, lng, radiusKm, 36)), { animate: false, padding: [40, 40] });
+    },
+
+    // Okrąg wyboru: obrys, kropka w środku (przeciągnięcie przesuwa okrąg), kropka na krawędzi (przeciągnięcie zmienia promień)
+    // i karta (element DOM z ui.areaCard) nad okręgiem. on.move(lat, lng) / on.radius(km) wołają się przy każdym ruchu kropek.
+    // Karta jest własnym popupem (autoClose / closeOnClick wyłączone), żeby kliknięcie w mapę jej nie zamykało.
+    showCircle(lat, lng, radiusKm, cardEl, on) {
       this.clearSelection();
-      selectionCircle = L.polygon(circleRing(lat, lng, radiusKm), {
-        renderer: selectionRenderer, interactive: false, color: '#800026', weight: 2, dashArray: '6 4',
-        fillColor: '#800026', fillOpacity: 0.06,
+      let center = [lat, lng];
+      let radius = radiusKm;
+      selectionCircle = L.polygon(circleRing(lat, lng, radius), {
+        renderer: selectionRenderer, interactive: false, color: areaColor(), weight: 2, dashArray: '6 4',
+        fillColor: areaColor(), fillOpacity: 0.06,
       }).addTo(selectionLayer);
-      L.marker([lat, lng], {
-        icon: L.divIcon({ className: 'place-pin', iconSize: [14, 14], iconAnchor: [7, 7] }),
-        pane: 'selection', interactive: false, keyboard: false,
-      }).addTo(selectionLayer);
+      const size = isTouchUi() ? 28 : 18;                // na dotyk kropka jest większa, żeby dało się ją złapać palcem
+      const handleIcon = (cls) => L.divIcon({ className: `circle-handle ${cls}`, iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
+      const middle = L.marker(center, { draggable: true, keyboard: false, autoPan: false, icon: handleIcon('center'), title: 'Przeciągnij, żeby przesunąć okrąg' })
+        .addTo(selectionLayer);
+      const edge = L.marker(destination(lat, lng, radius, 90), { draggable: true, keyboard: false, autoPan: false, icon: handleIcon('edge'),
+        title: 'Przeciągnij, żeby zmienić promień' }).addTo(selectionLayer);
       selectionPopup = L.popup({
         className: 'selection-popup', closeButton: false, autoClose: false, closeOnClick: false,
-        ...cardWidth(), offset: [0, -8],
-        autoPanPaddingTopLeft: [105, 10], autoPanPaddingBottomRight: [10, 10],   // 105 px z lewej: przyciski zoomu i »▭ Prostokąt«
-      }).setLatLng([lat, lng]).setContent(cardEl);
+        ...cardWidth(), offset: [0, -6], autoPan: false,   // karta nad okręgiem; mapa jest już wyśrodkowana na okręgu
+      }).setLatLng(destination(lat, lng, radius, 0)).setContent(cardEl);
+      const redraw = () => {
+        selectionCircle.setLatLngs(circleRing(center[0], center[1], radius));
+        selectionPopup.setLatLng(destination(center[0], center[1], radius, 0));
+      };
+      middle.on('drag', (e) => {
+        center = [e.latlng.lat, e.latlng.lng];
+        edge.setLatLng(destination(center[0], center[1], radius, 90));
+        redraw();
+        on.move(center[0], center[1]);
+      });
+      edge.on('drag', (e) => {
+        radius = Math.min(on.maxKm, Math.max(on.minKm, map.distance(center, e.latlng) / 1000));
+        redraw();
+        on.radius(radius, false);
+      });
+      // Po puszczeniu app.js zaokrągla promień (on.radius(…, true) → setCircleRadius), a kropka wraca na wschodni punkt okręgu.
+      edge.on('dragend', () => on.radius(radius, true));
+      circleControl = {
+        setRadius(km) { radius = km; redraw(); edge.setLatLng(destination(center[0], center[1], radius, 90)); },
+      };
       map.addLayer(selectionPopup);
     },
-    // Dopasowanie widoku do okręgu o danym promieniu (bez animacji).
-    fitCircle(lat, lng, radiusKm) {
-      map.fitBounds(L.latLng(lat, lng).toBounds(radiusKm * 2000), { animate: false, padding: [40, 40] });
-    },
-    // Suwak promienia: zmiana okręgu podglądu na żywo, bez zapytań do serwera.
-    updateSelectionRadius(lat, lng, radiusKm) {
-      if (selectionCircle) selectionCircle.setLatLngs(circleRing(lat, lng, radiusKm));
-    },
+    // Promień z pola w karcie (albo zaokrąglony po przeciągnięciu kropki) — bez zapytań do serwera.
+    setCircleRadius(km) { if (circleControl) circleControl.setRadius(km); },
     // Po dołożeniu treści do karty (odpowiedź serwera) popup musi przeliczyć rozmiar i położenie.
     refreshSelectionCard() { if (selectionPopup) selectionPopup.update(); },
     clearSelection() {
       if (selectionPopup) { map.removeLayer(selectionPopup); selectionPopup = null; }
       selectionLayer.clearLayers();
       selectionCircle = null;
+      circleControl = null;
       rectShape = null;
       rectHandles = [];
     },
 
-    // Przycisk „▭ Prostokąt”: onDrawStart — użytkownik włączył rysowanie; onRectDrawn({west, south, east, north}) — skończył.
-    onDrawStart(cb) { drawStartCb = cb; },
+    // Narzędzie „▭ Prostokąt” z lewego panelu: startRectDraw włącza rysowanie; onRectDrawn({west, south, east, north}) — narysowano;
+    // onDrawCancel — Escape przerwał rysowanie.
+    startRectDraw() { if (!drawing) startDraw(); },
+    stopRectDraw() { if (drawing) stopDraw(); },
+    isDrawing() { return drawing; },
     onHelpClick(cb) { helpCb = cb; },
+    onThemeClick(cb) { themeCb = cb; },
+    // Tryb nocny: ciemny podkład i etykiety, ikona przycisku pokazuje, na co się przełączy.
+    setTheme(dark) {
+      baseLayer.setUrl(baseUrl(dark));
+      labelsLayer.setUrl(labelsUrl(dark));
+      themeButton.textContent = dark ? '☀' : '☾';
+      themeButton.title = dark ? 'Tryb dzienny' : 'Tryb nocny';
+      // Zaznaczony okrąg albo prostokąt dostaje kolor nowego motywu (data-theme jest już ustawione).
+      if (selectionCircle) selectionCircle.setStyle({ color: areaColor(), fillColor: areaColor() });
+      if (rectShape) rectShape.setStyle({ color: rectColor(), fillColor: rectColor() });
+    },
     onRectDrawn(cb) { rectDrawnCb = cb; },
-    stopDraw() { if (drawing) stopDraw(); },
+    onDrawCancel(cb) { drawCancelCb = cb; },
 
     // Prostokąt wyboru z uchwytami w rogach i kartą (cardEl). onChange(bounds) woła się przy każdym ruchu uchwytu.
     showRect(bounds, cardEl, onChange) {
       this.clearSelection();
       let box = L.latLngBounds([bounds.south, bounds.west], [bounds.north, bounds.east]);
       rectShape = L.rectangle(box, {
-        renderer: selectionRenderer, interactive: false, color: RECT_COLOR, weight: 2, dashArray: '6 4', fillColor: RECT_COLOR, fillOpacity: 0.06,
+        renderer: selectionRenderer, interactive: false, color: rectColor(), weight: 2, dashArray: '6 4', fillColor: rectColor(), fillOpacity: 0.06,
       }).addTo(selectionLayer);
       const size = isTouchUi() ? 28 : 18;                // na dotyk uchwyt jest większy, żeby dało się go złapać palcem
       selectionPopup = L.popup({
         className: 'selection-popup', closeButton: false, autoClose: false, closeOnClick: false,
         ...cardWidth(), offset: [0, -8],
-        autoPanPaddingTopLeft: [105, 10], autoPanPaddingBottomRight: [10, 10],
+        autoPanPaddingTopLeft: [60, 10], autoPanPaddingBottomRight: [10, 10],
       }).setLatLng(cardAnchor(box)).setContent(cardEl);
       // Rogi 0–3: NW, NE, SE, SW. Uchwyt i przeciwległy róg (i + 2) są względem siebie „przekątną”; dwa pozostałe dzielą z uchwytem
       // szerokość albo długość geograficzną — dlatego po przeciągnięciu za przeciwległy róg prostokąt się odwraca, a nie psuje.
@@ -433,11 +546,32 @@ export function initMap(elementId) {
         });
         return handle;
       });
+      // Kropka w środku: przeciągnięcie przesuwa cały prostokąt (jak kropka w środku okręgu).
+      let start = null;
+      const middle = L.marker(box.getCenter(), {
+        draggable: true, keyboard: false, autoPan: false, title: 'Przeciągnij, żeby przesunąć prostokąt',
+        icon: L.divIcon({ className: 'rect-handle center', iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+      }).addTo(selectionLayer);
+      middle.on('dragstart', () => { start = { box, at: middle.getLatLng() }; selectionPopup.options.autoPan = false; });
+      middle.on('drag', (e) => {
+        const dLat = e.latlng.lat - start.at.lat;
+        const dLng = e.latlng.lng - start.at.lng;
+        const sw = start.box.getSouthWest();
+        const ne = start.box.getNorthEast();
+        box = L.latLngBounds([sw.lat + dLat, sw.lng + dLng], [ne.lat + dLat, ne.lng + dLng]);
+        rectShape.setBounds(box);
+        rectHandles.forEach((h, j) => h.setLatLng(cornerLatLngs(box)[j]));
+        selectionPopup.setLatLng(cardAnchor(box));
+        onChange(boundsObject(box));
+      });
+      middle.on('dragend', () => { selectionPopup.options.autoPan = true; selectionPopup.update(); });
+      // Rogi przesuwają też środek.
+      rectHandles.forEach((h) => h.on('drag', () => middle.setLatLng(box.getCenter())));
       map.addLayer(selectionPopup);
     },
     // Czerwona ramka, gdy prostokąt jest poza limitami.
     setRectInvalid(bad) {
-      if (rectShape) rectShape.setStyle({ color: bad ? RECT_BAD_COLOR : RECT_COLOR, weight: bad ? 3 : 2 });
+      if (rectShape) rectShape.setStyle({ color: bad ? RECT_BAD_COLOR : rectColor(), weight: bad ? 3 : 2 });
     },
 
     // Wynik dla prostokąta: obramowanie i (z `veil`) przygaszenie wszystkiego poza nim; `fit` dopasowuje mapę (bez animacji).
@@ -451,20 +585,9 @@ export function initMap(elementId) {
         }).addTo(areaLayer);
       }
       L.rectangle(box, {
-        renderer: areaRenderer, interactive: false, color: '#800026', weight: 1.5, dashArray: veil ? null : '6 4', fill: false,
+        renderer: areaRenderer, interactive: false, color: areaColor(), weight: 1.5, dashArray: veil ? null : '6 4', fill: false,
       }).addTo(areaLayer);
       if (fit) map.fitBounds(box, { animate: false, padding: [20, 20] });
-    },
-
-    // Numerowane znaczniki top-5 (DOM, nie canvas): klik w znacznik wywołuje onClick(place, i).
-    setTopMarkers(list, onClick) {
-      topLayer.clearLayers();
-      list.forEach((place, i) => {
-        const icon = L.divIcon({ className: 'top-pin', html: String(i + 1), iconSize: [22, 22], iconAnchor: [11, 11] });
-        L.marker([place.lat, place.lng], { icon, pane: 'top', keyboard: false, bubblingMouseEvents: false })
-          .on('click', () => onClick(place, i))
-          .addTo(topLayer);
-      });
     },
   };
 }

@@ -10,7 +10,7 @@ RAW_DIR = DATA_DIR / "raw"        # surowe pobrane pliki (ZIP, PBF, CSV)
 DB_PATH = DATA_DIR / "app.duckdb"  # jedna baza z gotowymi tabelami (heksagony H3)
 FRONTEND_DIR = ROOT / "frontend"
 
-USER_AGENT = "GdzieOtworzyc/0.1 (projekt studencki)"
+USER_AGENT = "Lokalizator/0.2 (projekt studencki)"
 
 ATTRIBUTION = (
     "© OpenStreetMap contributors © Esri | "

@@ -3,93 +3,66 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gdzie otworzyć?</title>
+  <title>Lokalizator — gdzie otworzyć firmę</title>
+  <!-- Tryb nocny od pierwszej klatki (bez mignięcia bieli): na start jak w systemie; przełącznik ☾/☀ przy mapie (app.js). -->
+  <script>document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';</script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body data-tab="settings">
   <!-- Lewa strona: WYŁĄCZNIE ustawienia. Na telefonie to zakładka „Ustawienia” arkusza na dole ekranu. -->
   <aside id="sidebar">
-    <h1>Gdzie otworzyć?</h1>
+    <h1>Lokalizator <small>gdzie otworzyć firmę</small></h1>
 
-    <!-- Obszar analizy: cała Polska (mgła od razu, przybliżanie do miasta liczy na żywo) albo okrąg wokół jednego miejsca -->
-    <fieldset id="mode-choice">
-      <legend>Obszar analizy
-        <button type="button" class="help" data-help="area" aria-label="Co oznacza obszar analizy?">?</button>
+    <!-- Krok 1 (v3.6): narzędzie do zaznaczenia obszaru. Bez domyślnego wyboru — dopóki użytkownik go nie wybierze,
+         kliknięcie w mapę tylko podpowiada, co zrobić (app.js: chooseTool, onMapClick). -->
+    <fieldset id="tool-choice" class="step">
+      <legend>1. Zaznacz obszar na mapie
+        <button type="button" class="help" data-help="tools" aria-label="Jak zaznaczyć obszar?">?</button>
       </legend>
-      <label><input type="radio" name="mode" value="pl" checked> Cała Polska</label>
-      <label><input type="radio" name="mode" value="place"> Wybrane miejsce</label>
-    </fieldset>
-
-    <!-- Karta instrukcji: widoczna do pierwszego wyniku; treść zależy od trybu (ui.js: setMode) -->
-    <div id="intro" class="info">
-      <ol id="intro-pl">
-        <li>Wybierz branżę (i/lub klientów) — mapa Polski pojawi się od razu.</li>
-        <li>Przybliż mapę do swojego miasta.</li>
-        <li>Kliknij miejsce na mapie albo zaznacz obszar przyciskiem »▭ Prostokąt« i potwierdź ✓ — dostaniesz szczegółową analizę.</li>
-      </ol>
-      <ol id="intro-place" hidden>
-        <li>Wybierz branżę (i/lub klientów).</li>
-        <li>Kliknij miejsce na mapie (albo zaznacz obszar przyciskiem »▭ Prostokąt«) i potwierdź ✓ — albo wpisz miejscowość poniżej.</li>
-        <li>Ustaw promień i kliknij »Pokaż mapę«.</li>
-      </ol>
-    </div>
-
-    <label for="type-select">Typ działalności</label>
-    <select id="type-select"></select>
-    <!-- Pod wyborem branży: zastrzeżenie „czego mapa nie widzi” dla wybranej branży albo (bez branży) podpowiedź dla rzemieślników -->
-    <div id="type-hint" class="hint" hidden></div>
-    <div id="craft-hint" class="hint">Pracujesz u klienta (brukarz, instalator, ogrodnik)? Zostaw branżę pustą i wybierz klientów »Nowe domy« — zobaczysz, gdzie się buduje.</div>
-
-    <label for="demand-select">Twoi klienci to</label>
-    <select id="demand-select"></select>
-
-    <div id="months-row" hidden>
-      <label for="months-select">Okres pozwoleń</label>
-      <select id="months-select">
-        <option value="12">ostatnie 12 miesięcy</option>
-        <option value="24" selected>ostatnie 24 miesiące</option>
-        <option value="36">ostatnie 36 miesięcy</option>
-      </select>
-    </div>
-
-    <div class="label-row">
-      <label for="reach-input">Zasięg klienta: <b id="reach-value">1,5</b> km</label>
-      <button type="button" class="help" data-help="reach" aria-label="Co to jest zasięg klienta?">?</button>
-    </div>
-    <!-- Suwak logarytmiczny: pozycja 0–100 odpowiada 0,3–20 km (wzór w ui.js) -->
-    <input id="reach-input" type="range" min="0" max="100" step="1" value="50">
-    <div id="reach-hint" class="hint" hidden>Mapa całej Polski jest policzona dla typowego zasięgu (i 24 miesięcy pozwoleń). Przybliż mapę, żeby użyć swoich ustawień.</div>
-
-    <!-- Tylko w trybie „Wybrane miejsce” -->
-    <div id="place-controls" hidden>
-      <label for="search-input">Miejsce</label>
+      <div class="tool-buttons">
+        <button type="button" class="tool-button" data-tool="circle" aria-pressed="false">◯ Okrąg</button>
+        <button type="button" class="tool-button" data-tool="rect" aria-pressed="false">▭ Prostokąt</button>
+      </div>
       <div id="search-wrap">
-        <input id="search-input" type="search" placeholder="Wpisz miejscowość lub adres" autocomplete="off"
+        <input id="search-input" type="search" placeholder="lub wpisz miejscowość ręcznie" autocomplete="off"
                aria-label="Miejscowość lub adres">
         <ul id="search-results" hidden></ul>
       </div>
-      <div id="place-hint" class="hint">albo kliknij mapę</div>
+    </fieldset>
 
-      <div class="label-row" id="radius-row">
-        <label for="radius-input">Promień obszaru: <b id="radius-value">10</b> km</label>
-        <button type="button" class="help" data-help="radius" aria-label="Co to jest promień obszaru?">?</button>
+    <!-- Krok 2: branża i klienci. Dopóki nic tu nie wybrano, karta przy obszarze nie ma przycisku „Analizuj”,
+         a te pola pulsują (ui.settingsAttention). -->
+    <fieldset id="settings-box" class="step">
+      <legend>2. Co otwierasz i kim są klienci</legend>
+      <label for="type-select">Typ działalności</label>
+      <select id="type-select" autocomplete="off"></select>
+
+      <label for="demand-select">Twoi klienci to</label>
+      <select id="demand-select" autocomplete="off"></select>
+      <div class="label-row">
+        <label for="reach-input">Zasięg klienta: <b id="reach-value">1,5</b> km</label>
+        <button type="button" class="help" data-help="reach" aria-label="Co to jest zasięg klienta?">?</button>
       </div>
-      <input id="radius-input" type="range" min="1" max="30" step="0.5" value="10">
-      <!-- Zamiast promienia, gdy analizujemy zaznaczony prostokąt -->
-      <div id="rect-info" class="hint" hidden>
-        <span id="rect-text"></span>
-        <button type="button" id="rect-to-circle" class="link-button">zmień na okrąg</button>
+      <!-- Zasięg pod klientami (v3.7): suwak logarytmiczny 0,3–20 km, przy budowach od 1 km (ui.js: syncReachMin) -->
+      <input id="reach-input" type="range" min="0" max="100" step="1" value="50" autocomplete="off">
+
+      <div id="months-row" hidden>
+        <label for="months-select">Okres pozwoleń</label>
+        <select id="months-select" autocomplete="off">
+          <option value="12">ostatnie 12 miesięcy</option>
+          <option value="24" selected>ostatnie 24 miesiące</option>
+          <option value="36">ostatnie 36 miesięcy</option>
+        </select>
       </div>
-    </div>
+
+    </fieldset>
 
     <!-- Warstwy do wyboru zależą od ustawień powyżej (ui.js: syncLayers) -->
     <fieldset id="layer-choice">
       <legend>Co pokazać na mapie</legend>
       <div id="layer-options"></div>
     </fieldset>
-
-    <button id="show-button" type="button" hidden>Pokaż mapę</button>
 
     <div id="info" class="info" role="status" hidden></div>
     <div id="error" role="alert" hidden></div>
@@ -102,7 +75,7 @@
   <aside id="insights" hidden>
     <div id="legend" hidden></div>
     <label class="opacity">Przezroczystość mgły
-      <input id="opacity-input" type="range" min="0.2" max="1" step="0.05" value="0.85">
+      <input id="opacity-input" type="range" min="0.2" max="1" step="0.05" value="0.85" autocomplete="off">
     </label>
 
     <section id="summary-box" hidden>
@@ -113,12 +86,7 @@
       <div id="summary"></div>
     </section>
 
-    <h2 id="top-title" hidden>Najlepsze miejsca</h2>
-    <ol id="top-list"></ol>
-    <p id="top-note" class="hint" hidden></p>
-
     <div id="warnings" hidden></div>
-    <div id="notes" hidden></div>
     <footer id="meta-footer"></footer>
   </aside>
 

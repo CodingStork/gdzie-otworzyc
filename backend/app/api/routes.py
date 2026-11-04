@@ -50,7 +50,8 @@ def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
     return min_lng, min_lat, max_lng, max_lat
 
 
-RADIUS_KM = (1, 30)
+RADIUS_KM = (1, 350)      # okrąg: od 1 km do całej Polski — zawsze liczony z ustawieniami użytkownika (siatka rzednie z obszarem)
+TOP_RADIUS_KM = 30        # najlepsze miejsca tylko do tego promienia (60 km boku): na dużym obszarze ranking mieszałby miasta ze wsiami
 REACH_KM = (0.1, 20)
 
 
@@ -77,25 +78,27 @@ def _check_in_poland(lat: float, lng: float, what: str) -> None:
         raise _bad_request(f"{what} poza Polską")
 
 
-VIEW_MAX_KM = 60       # największy bok „widocznego obszaru” liczonego na żywo
+VIEW_MAX_KM = 60       # największy bok „widocznego obszaru”; zaznaczony prostokąt o większym boku — bez najlepszych miejsc
+RECT_MAX_KM = 700      # największy bok zaznaczonego prostokąta
 RECT_MIN_KM = 0.6      # najmniejszy bok zaznaczonego prostokąta (dane o ludności mają ok. 300 m rozdzielczości)
 
 
-def _view_params(west: float, south: float, east: float, north: float, area: str = "view") -> tuple[float, float, tuple]:
-    """Prostokąt widoku → (lat środka, lng środka, bbox); bok większy niż 60 km albo poza Polską → 422.
-    Zaznaczony prostokąt (`area=rect`) musi mieć też bok co najmniej 0,6 km."""
+def _view_params(west: float, south: float, east: float, north: float, area: str = "view") -> tuple[float, float, tuple, float]:
+    """Prostokąt → (lat środka, lng środka, bbox, dłuższy bok w km); poza Polską albo za duży → 422.
+    Widok mapy (`area=view`) ma bok najwyżej 60 km; zaznaczony prostokąt (`area=rect`) 0,6–700 km."""
     if not all(math.isfinite(v) for v in (west, south, east, north)) or not (west < east and south < north):
         raise _bad_request("Nieprawidłowy prostokąt widoku")
     mid_lat, mid_lng = (south + north) / 2, (west + east) / 2
     _check_in_poland(mid_lat, mid_lng, "Widok")
     width_km = (east - west) * 111.32 * math.cos(math.radians(mid_lat))
     height_km = (north - south) * 110.54
-    if max(width_km, height_km) > VIEW_MAX_KM:
-        what = "Zaznaczony obszar" if area == "rect" else "Widoczny obszar"
-        raise _bad_request(f"{what} może mieć bok najwyżej {VIEW_MAX_KM} km" + ("" if area == "rect" else " — przybliż mapę"))
+    if area == "rect" and max(width_km, height_km) > RECT_MAX_KM:
+        raise _bad_request(f"Zaznaczony obszar może mieć bok najwyżej {RECT_MAX_KM} km")
+    if area != "rect" and max(width_km, height_km) > VIEW_MAX_KM:
+        raise _bad_request(f"Widoczny obszar może mieć bok najwyżej {VIEW_MAX_KM} km — przybliż mapę")
     if area == "rect" and min(width_km, height_km) < RECT_MIN_KM:
         raise _bad_request(f"Zaznaczony obszar może mieć bok najmniej {str(RECT_MIN_KM).replace('.', ',')} km")
-    return mid_lat, mid_lng, (west, south, east, north)
+    return mid_lat, mid_lng, (west, south, east, north), max(width_km, height_km)
 
 
 @router.get("/surface")
@@ -112,9 +115,12 @@ def surface(
     east: float | None = Query(default=None),
     north: float | None = Query(default=None),
     area: str = Query(default="view"),
+    px: int = Query(default=1000),
 ) -> dict:
-    """Mapa okolicy: wartości na siatce w okręgu wokół miejsca (`lat`, `lng`, `radius_km`) albo w prostokącie widoku mapy
-    (`west`, `south`, `east`, `north`, bok ≤ 60 km; `area=view` to widok mapy, `area=rect` — prostokąt zaznaczony przez użytkownika). Puste `type` / `demand` = brak wyboru."""
+    """Mapa obszaru: wartości na siatce w okręgu wokół miejsca (`lat`, `lng`, `radius_km`) albo w prostokącie
+    (`west`, `south`, `east`, `north`; `area=view` — widok mapy, `area=rect` — prostokąt zaznaczony przez użytkownika).
+    Okrąg do 30 km i prostokąt do 60 km boku liczymy na żywo; większe (v3.6) — z gotowej mapy Polski (`px` = szerokość mapy
+    w pikselach, steruje rozdzielczością). Puste `type` / `demand` = brak wyboru."""
     type_id = _canonical(type_id)
     _check_selection(type_id, demand, months)
     if not REACH_KM[0] <= reach_km <= REACH_KM[1]:
@@ -126,19 +132,25 @@ def surface(
     if any(v is not None for v in view):
         if any(v is None for v in view):
             raise _bad_request("Podaj wszystkie cztery granice widoku: west, south, east, north")
-        lat, lng, bbox = _view_params(*view, area)
+        lat, lng, bbox, side_km = _view_params(*view, area)
         radius_km = 1.0                     # promień okręgu opisanego policzy serwis z prostokąta
+        big = side_km > VIEW_MAX_KM
     else:
         if lat is None or lng is None or radius_km is None:
             raise _bad_request("Podaj miejsce (lat, lng) i promień obszaru albo granice widoku")
         _check_in_poland(lat, lng, "Miejsce")
         if not RADIUS_KM[0] <= radius_km <= RADIUS_KM[1]:
-            raise _bad_request("Promień obszaru musi mieścić się w zakresie 1–30 km")
+            raise _bad_request(f"Promień obszaru musi mieścić się w zakresie {RADIUS_KM[0]}–{RADIUS_KM[1]} km")
+        big = radius_km > TOP_RADIUS_KM
     params = SurfaceParams(type_id or None, demand or None, lat, lng, radius_km, reach_km, months, bbox, area)
     try:
-        return cached_surface(params)
+        result = cached_surface(params)
+        # Duży obszar liczymy tak samo (z zasięgiem użytkownika), ale bez rankingu najlepszych miejsc (audyt v3.5, B4).
+        return {**result, "top": {}, "top_edge": {}, "area": "big"} if big else result
     except DatabaseMissing:
         raise HTTPException(status_code=503, detail=DB_MISSING_MESSAGE)
+    except NationalMissing:
+        raise HTTPException(status_code=503, detail=NATIONAL_MISSING_MESSAGE)
 
 
 @router.get("/national")

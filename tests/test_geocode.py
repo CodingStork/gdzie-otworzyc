@@ -37,13 +37,22 @@ def test_geocode_maps_fields_and_params():
     assert out[0] == {"name": "Opole, województwo opolskie, Polska", "lat": 50.6683, "lng": 17.9231}
     assert isinstance(out[0]["lat"], float) and len(out) == 2
     params, user_agent = seen[0]
-    assert params == {"q": "Opole", "format": "jsonv2", "countrycodes": "pl", "limit": "5", "accept-language": "pl"}
+    assert params == {"q": "Opole", "format": "jsonv2", "countrycodes": "pl", "limit": "10", "accept-language": "pl"}
     assert user_agent == USER_AGENT
 
 
 def test_geocode_returns_at_most_five():
     many = [{"display_name": f"M{i}", "lat": "50", "lon": "17"} for i in range(8)]
     assert len(_geocoder(lambda req: httpx.Response(200, json=many)).search("Miasto")) == 5
+
+
+def test_geocode_skips_repeated_names():
+    """Nominatim zwraca Brzeg dwa razy (granica miasta i punkt) — na liście ma być raz."""
+    twice = [{"display_name": "Brzeg, powiat brzeski, województwo opolskie, Polska", "lat": "50.86", "lon": "17.47"},
+             {"display_name": "Brzeg, powiat brzeski, województwo opolskie, Polska", "lat": "50.85", "lon": "17.46"},
+             {"display_name": "Brzeg, gmina Pęczniew, Polska", "lat": "51.86", "lon": "18.76"}]
+    out = _geocoder(lambda req: httpx.Response(200, json=twice)).search("Brzeg")
+    assert [o["name"] for o in out] == [twice[0]["display_name"], twice[2]["display_name"]] and out[0]["lat"] == 50.86
 
 
 def test_geocode_cache():

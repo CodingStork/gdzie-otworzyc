@@ -247,3 +247,35 @@ def test_national_without_rel_layer_has_no_gap(gap_client):
     reset_connection()
     j = national(gap_client, **BOTH).json()
     assert "gap" not in j and not any("kreskowanie" in n for n in j["notes"]) and j["top"]["open"]
+
+
+# ---------------------------------------------------------------- duży obszar w /api/surface ----
+# Od poprawki po v3.6: każdy zaznaczony obszar (aż do całej Polski) liczymy z zasięgiem użytkownika — siatka rzednie z obszarem.
+# Gotowa mapa Polski (/api/national) nie jest już używana dla zaznaczonego obszaru.
+
+def big_surface(client, **kw):
+    params = dict(type="beauty", demand="pop_f", lat=LAT, lng=LNG, radius_km=60, reach_km=1.5)
+    params.update(kw)
+    return client.get("/api/surface", params={k: v for k, v in params.items() if v is not None})
+
+
+def test_big_circle_is_computed_with_users_reach(client):
+    """Okrąg 60 km: liczony z ustawieniami użytkownika (zmiana zasięgu zmienia mapę), z podsumowaniem, ale bez rankingu."""
+    near, far = big_surface(client, reach_km=0.5).json(), big_surface(client, reach_km=10).json()
+    assert near["area"] == "big" and near["layers"] == ["open", "demand"] and near.get("mode") != "national"
+    assert near["top"] == {} and near["top_edge"] == {}
+    assert near["values"]["open"] != far["values"]["open"]
+    s = near["summary"]
+    assert s["shape"] == "circle" and s["radius_km"] == 60 and s["competitors"]["total"] == 2 and s["demand_total"] > 0
+    assert near["grid"]["cell_m"] <= 250 and far["grid"]["cell_m"] == pytest.approx(60_000 / 90)   # punkty co najwyżej co pół zasięgu
+
+
+def test_big_rect_is_computed_without_ranking(client):
+    j = big_surface(client, lat=None, lng=None, radius_km=None, area="rect",
+                    west=LNG - 0.6, south=LAT - 0.4, east=LNG + 0.6, north=LAT + 0.4).json()
+    assert j["area"] == "big" and j["top"] == {} and j["summary"]["shape"] == "rect" and j["summary"]["width_km"] > 60
+
+
+def test_small_circle_has_ranking(client):
+    j = big_surface(client, radius_km=30).json()
+    assert "area" not in j and j["top"]["open"]

@@ -1,5 +1,7 @@
 # Audyt przydatności „Gdzie otworzyć?” (2026-11-03, wersja 3.5)
 
+> **Aktualizacja v3.6 (2026-11-03):** po testach Marcina usunięto tryb „Cała Polska” (mapa liczyła się bez kliknięcia „Analizuj”); gotowa mapa Polski służy teraz do analizy dużych obszarów. Szczegóły: `docs/zadania-dla-agenta-lokalnego.md`.
+
 Pytanie audytu: **czy osoba, która naprawdę otwiera salon, kawiarnię, przedszkole albo firmę brukarską, podejmie na podstawie tej mapy lepszą decyzję niż bez niej?** Jeśli mapa może ją wprowadzić w błąd, to błąd krytyczny — ważniejszy niż brakująca funkcja.
 
 ## Streszczenie dla właściciela
@@ -177,6 +179,8 @@ Piramida „maksimum z dzieci” sprawia, że po oddaleniu prawie cały kraj jes
 ### B9. Skala kolorów (naprawione)
 
 Skala p5–p99 w Brzegu to 310–600: różnica 1,9× dostawała całą paletę, więc 20% różnicy wyglądało jak biel kontra czerwień. Teraz skala obejmuje **co najmniej 10×** (`colors.js: MIN_RATIO`, `national._scale_json`); o jeden odcień ciemniej = ok. 30–80% więcej. Pytajnik legendy nie mówi już nieprawdy („każdy krok to podwojenie”).
+
+**Aktualizacja v3.6:** minimum zmienione na **4×**, a skala liczy się z komórek widocznych na ekranie — tester pokazał, że przy 10× w centrum Bydgoszczy punkty z 4 700 i 7 400 mężczyznami w okręgu miały prawie ten sam kolor (sekcja 29 ściągi).
 
 ---
 

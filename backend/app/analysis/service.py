@@ -20,7 +20,7 @@ from scipy.stats import poisson
 
 from backend.app.analysis.kernel import LocalFrame
 from backend.app.analysis.surface import (
-    competition_availability, competition_density, demand_potential, huff_multi, make_grid, peaks_and_edge,
+    competition_availability, competition_density, demand_potential, grid_step, huff_multi, peaks_and_edge,
     round_significant, top_points,
 )
 from backend.app.catalog import DEMANDS, GAP_RADIUS_KM, GAP_SHARE, PLURALS, TYPES, is_data_gap, quality_warning
@@ -362,9 +362,32 @@ def load_density_cells(con, box: list[float]) -> np.ndarray | None:
     """Komórki res 9 z ludnością w prostokącie: N×4 (lat, lng, mieszkańcy, klasa gęstości); None bez tabeli `density_cells`."""
     if not table_exists(con, "density_cells"):
         return None
-    rows = con.execute("SELECT lat, lng, pop_total, cls FROM density_cells WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
-                       box).fetchall()
-    return np.array(rows, dtype=float).reshape(-1, 4)
+    # fetchnumpy zamiast fetchall: dla dużego obszaru (np. województwo) to setki tysięcy komórek — bez list krotek w Pythonie
+    cols = con.execute("SELECT lat, lng, pop_total, cls FROM density_cells WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                       box).fetchnumpy()
+    return np.column_stack([np.asarray(cols[c], dtype=float) for c in ("lat", "lng", "pop_total", "cls")]).reshape(-1, 4)
+
+
+def map_grid(frame: LocalFrame, lat: float, lng: float, radius_m: float, cell_m: float):
+    """Siatka punktów ułożona tak jak piksele mgły na ekranie: kolumny równo w długości geograficznej, wiersze równo w rzucie
+    Merkatora (jak kafelki Leaflet), od północy. Odległości liczymy dalej w metrach (współrzędne `xy` w lokalnym układzie).
+
+    Do v3.6 siatka była regularna w metrach, a przeglądarka rozciągała obraz między narożnikami w stopniach — przy promieniu
+    ≤ 30 km różnica była niewidoczna, ale przy obszarze 150–350 km mgła na brzegach leżała kilka–kilkanaście km obok swojego
+    miejsca, więc kolor nie zgadzał się z liczbą w dymku. Krok `cell_m` dotyczy środka obszaru.
+    Zwraca (xy, lat, lng, granice {west, east, south, north}, nx, ny).
+    """
+    south, north, west, east = _box(lat, lng, radius_m / 1000 * 1.02)       # 2% zapasu: okrąg na północy jest „szerszy” w stopniach
+    merc = lambda a: np.log(np.tan(np.pi / 4 + np.radians(a) / 2))          # noqa: E731
+    nx = math.ceil((east - west) * 111_320 * math.cos(math.radians(lat)) / cell_m)
+    ny = math.ceil((north - south) * 110_540 / cell_m)
+    lngs = west + (np.arange(nx) + 0.5) * (east - west) / nx
+    ys = merc(north) - (np.arange(ny) + 0.5) * (merc(north) - merc(south)) / ny
+    lats = np.degrees(2 * np.arctan(np.exp(ys)) - np.pi / 2)
+    lng_grid, lat_grid = np.meshgrid(lngs, lats)
+    lat_flat, lng_flat = lat_grid.ravel(), lng_grid.ravel()
+    return (frame.to_metric(lat_flat, lng_flat), lat_flat, lng_flat,
+            {"west": west, "east": east, "south": south, "north": north}, nx, ny)
 
 
 def _inside(xy: np.ndarray, radius_m: float, rect) -> np.ndarray:
@@ -381,10 +404,11 @@ def _area_name(con, p: SurfaceParams) -> str | None:
             or place_name(con, p.lat, p.lng, max_km=radius))
 
 
-def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
-    """Liczby dla całego obszaru analizy (okrąg albo widoczny prostokąt): popyt, firmy (OSM / Overture), ile klientów na firmę, porównanie z Polską.
+def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None, res: int = 9) -> dict:
+    """Liczby dla całego obszaru analizy (okrąg albo prostokąt): popyt, firmy (OSM / Overture), ile klientów na firmę, porównanie.
 
-    Popyt liczymy z komórek res 9, których środek leży w obszarze; firmy — punkty `poi` w obszarze.
+    Popyt liczymy z komórek H3 (domyślnie res 9; dla dużych obszarów res 7 — błąd na brzegu ok. 1 km przy setkach km jest
+    pomijalny, a komórek jest 50 razy mniej), których środek leży w obszarze; firmy — punkty `poi` w obszarze.
     """
     radius_m = p.radius_km * 1000
     box = _box(p.lat, p.lng, p.radius_km)
@@ -399,7 +423,7 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
         summary["width_km"] = round((rect[2] - rect[0]) / 1000, 1)
         summary["height_km"] = round((rect[3] - rect[1]) / 1000, 1)
     if p.demand_id:
-        arr, _, _ = load_demand(con, p.demand_id, 9, box, p.months)
+        arr, _, _ = load_demand(con, p.demand_id, res, box, p.months)
         total = 0.0
         if len(arr):
             xy = frame.to_metric(arr[:, 0], arr[:, 1])
@@ -447,7 +471,7 @@ def area_summary(con, p: SurfaceParams, frame: LocalFrame, rect=None) -> dict:
         # Ile firm tego typu byłoby w obszarze przy średniej krajowej (mieszkańcy × firm na mieszkańca) — a ile mamy w danych.
         # Ten próg jest taki sam jak w kreskowaniu na mapie (etl/gaps.py), więc ostrzeżenie i mapa się zgadzają.
         if residents is None:
-            arr, _, _ = load_demand(con, "pop_total", 9, box, p.months)
+            arr, _, _ = load_demand(con, "pop_total", res, box, p.months)
             residents = float(arr[_inside(frame.to_metric(arr[:, 0], arr[:, 1]), radius_m, rect), 2].sum()) if len(arr) else 0.0
         summary["expected_firms"] = round(residents * rate, 1)
         if is_data_gap(residents * rate, summary["competitors"]["total"]):
@@ -475,13 +499,22 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
         warnings.append(quality_warning(btype.osm_quality))
     notes += _reach_notes(p.demand_id, p.reach_km)
 
-    center = np.zeros(2)
     # Widok na żywo liczy się po każdym przybliżeniu mapy, więc siatka jest rzadsza (promień/60 zamiast /90): to ~2× mniej punktów,
     # a mgła i tak jest wygładzana ×4 przy rysowaniu. Zaznaczony prostokąt liczymy raz, na życzenie — dlatego gęściej jak okrąg.
     divisions = 60 if rect is not None and p.area != "rect" else 90
-    grid_xy, mask, cell_m, nx, ny = make_grid(center, radius_m, divisions=divisions)
-    if rect is not None:
-        mask = _inside(grid_xy, radius_m, rect)
+    cell_m = grid_step(radius_m, divisions, reach_m)
+    if cell_m > reach_m:
+        # Ogromny obszar i bardzo mały zasięg (np. cała Polska i 0,3 km): limit punktów nie pozwala na siatkę gęstszą niż zasięg,
+        # więc mapa nie pokazałaby uczciwie „ilu klientów w zasięgu”. Podnosimy zasięg do kroku siatki (w górę do 0,1 km) i oddajemy
+        # go w odpowiedzi (`reach_km`) — suwak w przeglądarce pokaże wartość, z którą naprawdę liczyliśmy.
+        reach_km = math.ceil(cell_m / 100) / 10
+        reach_m = reach_km * 1000
+    grid_xy, grid_lat, grid_lng, bounds, nx, ny = map_grid(frame, p.lat, p.lng, radius_m, cell_m)
+    if rect is not None:                                 # prostokąt zaznaczony na mapie — maska w stopniach, jak na ekranie
+        west, south, east, north = p.bbox
+        mask = (grid_lat >= south) & (grid_lat <= north) & (grid_lng >= west) & (grid_lng <= east)
+    else:
+        mask = np.hypot(grid_xy[:, 0], grid_xy[:, 1]) <= radius_m
     g = grid_xy[mask]                                    # liczymy tylko punkty w okręgu
 
     # Źródła popytu: okrąg + bufor 4·zasięg (dalej rozpad i tak daje zero).
@@ -546,14 +579,9 @@ def run_surface(con: duckdb.DuckDBPyConnection, p: SurfaceParams) -> dict:
                        "name": street_label(con, float(a), float(b))}
                       for i, a, b in zip(picks, lat, lng)]
 
-    # Prostokąt obrazu w stopniach: krawędzie kwadratu siatki (przy promieniu ≤ 30 km zniekształcenie jest pomijalne).
-    half = nx * cell_m / 2
-    edges = frame.to_latlng(np.array([[center[0] - half, center[1]], [center[0] + half, center[1]],
-                                [center[0], center[1] - half], [center[0], center[1] + half]]))
     response = {"layers": layers, "reach_km": reach_km,
-                "grid": {"west": float(edges[1][0]), "east": float(edges[1][1]),
-                         "south": float(edges[0][2]), "north": float(edges[0][3]),
-                         "nx": nx, "ny": ny, "cell_m": cell_m},
+                "grid": {**{k: float(v) for k, v in bounds.items()}, "nx": nx, "ny": ny, "cell_m": cell_m,
+                         "projection": "mercator"},
                 "values": values, "top": top, "top_edge": top_edge, "notes": notes, "warnings": warnings,
                 "summary": area_summary(con, p, frame, rect)}
     if gap is not None:

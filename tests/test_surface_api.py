@@ -106,8 +106,8 @@ def test_surface_large_reach_fast(client):
 def test_surface_validation(client):
     assert surface(client, lat=10).status_code == 422                   # poza Polską
     assert surface(client, radius_km=0.5).status_code == 422
-    assert surface(client, radius_km=31).status_code == 422
-    assert "1–30" in surface(client, radius_km=31).json()["detail"]
+    assert surface(client, radius_km=351).status_code == 422             # do 350 km (cała Polska)
+    assert "1–350" in surface(client, radius_km=351).json()["detail"]
     assert surface(client, reach_km=0.01).status_code == 422
     assert surface(client, type="xxx").status_code == 422
     assert surface(client, demand="xxx").status_code == 422
@@ -182,7 +182,8 @@ def test_surface_rect_summary_has_size_and_denser_grid(client):
 
 
 def test_surface_rect_limits(client):
-    assert rect_surface(client, east=LNG + 1).status_code == 422                 # bok > 60 km
+    assert rect_surface(client, west=LNG - 6, east=LNG + 6).status_code == 422    # bok > 700 km (v3.6: 60–700 km z gotowej mapy)
+    assert rect_surface(client, area=None, east=LNG + 1).status_code == 422      # widok mapy: bok > 60 km
     tiny = rect_surface(client, west=LNG - 0.002, east=LNG + 0.002, south=LAT - 0.002, north=LAT + 0.002)
     assert tiny.status_code == 422 and "najmniej" in tiny.json()["detail"]       # bok < 0,6 km
     assert rect_surface(client, area="x").status_code == 422
@@ -204,4 +205,33 @@ def test_top_skips_slope_at_edge_and_says_better_place_is_outside(make_client):
     j = make_client(pop=pop).get("/api/surface", params=dict(demand="pop_total", lat=LAT, lng=LNG, radius_km=2,
                                                               reach_km=1.5)).json()
     assert j["top_edge"]["demand"] is True
-    assert all(t["lat"] < LAT + 0.015 for t in j["top"]["demand"])         # nic z samej północnej krawędzi (2 km = 0,018°)
+    # Od v3.7 mapa klientów to suma w okręgu zasięgu (płaskie stopnie), więc wartości > 0 są tylko w pasie przy krawędzi;
+    # szczyt musi mieć wszystkich sąsiadów w obszarze, więc punkty z samej krawędzi (2 km = 0,018°) nie trafiają do rankingu.
+    assert all(t["lat"] < LAT + 0.0178 for t in j["top"]["demand"])
+
+
+def test_map_value_equals_point_details(client):
+    """Kolor mapy „Gdzie są klienci” w punkcie siatki = liczba w dymku po kliknięciu tam (ten sam okrąg zasięgu).
+    Siatka jest ułożona jak piksele mgły (kolumny równo w długości, wiersze równo w Merkatorze), więc środek komórki to
+    dokładnie to miejsce na mapie, którego dotyczy kolor. Komórki testowe leżą idealnie regularnie, więc czasem któraś wypada
+    dokładnie na granicy okręgu (mapa i dymek liczą odległość różnie o metry) — dopuszczamy wtedy różnicę jednej komórki."""
+    import math
+    for reach in (0.5, 1.5):
+        j = surface(client, type=None, reach_km=reach).json()
+        g, values = j["grid"], j["values"]["demand"]
+        assert g["projection"] == "mercator"
+        merc = lambda a: math.log(math.tan(math.pi / 4 + math.radians(a) / 2))          # noqa: E731
+        checked, exact = 0, 0
+        for idx in range(0, g["nx"] * g["ny"], 997):
+            if not values[idx]:
+                continue
+            row, col = divmod(idx, g["nx"])
+            lng = g["west"] + (col + 0.5) * (g["east"] - g["west"]) / g["nx"]
+            y = merc(g["north"]) - (row + 0.5) * (merc(g["north"]) - merc(g["south"])) / g["ny"]
+            lat = math.degrees(2 * math.atan(math.exp(y)) - math.pi / 2)
+            point = client.get("/api/point", params=dict(lat=lat, lng=lng, demand="pop_total", reach_km=reach)).json()
+            diff = abs(values[idx] - point["demand"])
+            assert diff <= 1000 + 0.01 * point["demand"]                  # najwyżej jedna komórka (1000 osób) na granicy
+            exact += diff <= 0.01 * point["demand"] + 0.5
+            checked += 1
+        assert checked >= 3 and exact >= 0.75 * checked

@@ -6,8 +6,13 @@
 // Dlaczego przezroczystość: małe wartości znikają, więc zostaje efekt „mgły” zagęszczającej się tam, gdzie jest ważnie.
 
 export const YLORRD = ['#ffffcc', '#ffeda0', '#fed976', '#feb24c', '#fd8d3c', '#fc4e2a', '#e31a1c', '#bd0026', '#800026'];
+// Tryb nocny: na ciemnym podkładzie ciemnoczerwony „najwięcej” by zniknął, więc kierunek jasności się odwraca —
+// paleta magma (matplotlib, równomierna percepcyjnie): od fioletu do jasnożółtego, „więcej” = jaśniej.
+export const MAGMA = ['#3b0f70', '#641a80', '#8c2981', '#b73779', '#de4968', '#f7705c', '#fe9f6d', '#fecf92', '#fcfdbf'];
 
-const RGB = YLORRD.map((hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)));
+const toRgb = (palette) => palette.map((hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)));
+let RGB = toRgb(YLORRD);
+export function setDarkPalette(dark) { RGB = toRgb(dark ? MAGMA : YLORRD); }
 
 // Przezroczystość w zależności od pozycji t na skali: 0 poniżej 0,05, potem liniowo do 0,85 przy t = 0,5 i 0,85 powyżej.
 export function fogAlpha(t) {
@@ -35,10 +40,11 @@ function quantile(sorted, q) {
 
 // Skala z wartości > 0 (null = poza okręgiem): górna granica = percentyl 99, dolna = percentyl 5, ale nie niżej niż
 // hi/100 — skala obejmuje najwyżej 2 rzędy wielkości. Wcześniej rozciągała się na 4 rzędy (0,04–320) i prawie
-// wszystko było czerwone. I NAJMNIEJ jeden rząd (MIN_RATIO, audyt przydatności): w Brzegu wartości 310–600 dostawały
-// całą paletę, więc różnica 20% wyglądała jak przepaść między bielą a czerwienią — a dane nie są aż tak dokładne.
-// Teraz o jeden odcień ciemniej to ok. 30–80% więcej. Zwraca { lo, hi } albo null, gdy nie ma żadnej dodatniej wartości.
-export const MIN_RATIO = 10;
+// wszystko było czerwone. I NAJMNIEJ 4-krotną różnicę (MIN_RATIO): w Brzegu wartości 310–600 dostawały całą paletę,
+// więc różnica 20% wyglądała jak przepaść między bielą a czerwienią (audyt v3.5), a przy minimum 10× (v3.5) w centrum miasta
+// różnica 4 700 vs 7 400 mieściła się w jednym odcieniu (uwaga Marcina, v3.6). Przy 4× o jeden odcień ciemniej to ok. 20–80% więcej:
+// 20% różnicy = ledwie inny odcień, 60% = wyraźnie inny. Zwraca { lo, hi } albo null, gdy nie ma żadnej dodatniej wartości.
+export const MIN_RATIO = 4;
 export function logScale(values) {
   const positive = values.filter((v) => v > 0).sort((a, b) => a - b);
   if (!positive.length) return null;

@@ -94,8 +94,8 @@ DEMANDS: dict[str, Demand] = {d.id: d for d in (
     _census("pop_1564", "Osoby 15–64 lata", "pop_1564", "osób w wieku 15–64 lata"),
     _census("pop_ge65", "Seniorzy (65+)", "pop_ge65", "seniorów"),
     _permits("new_sf", "Nowe domy jednorodzinne", ("sf",), "nowych domów jednorodzinnych"),
-    _permits("new_mf", "Nowe bloki (liczba budynków, nie mieszkań)", ("mf",), "nowych budynków wielorodzinnych"),
-    _permits("new_all", "Nowe budynki mieszkalne (dom i blok liczą się tak samo)", ("sf", "mf"), "nowych budynków mieszkalnych"),
+    _permits("new_mf", "Nowe bloki", ("mf",), "nowych budynków wielorodzinnych"),
+    _permits("new_all", "Nowe domy i bloki", ("sf", "mf"), "nowych budynków mieszkalnych"),
 )}
 
 
@@ -272,7 +272,8 @@ def catalog_json() -> dict:
         ]
         groups.append({"id": group_id, "name": group_name, "types": types})
     demands = [
-        {"id": d.id, "name": d.name, "source": d.source, "needs_months": d.needs_months, "genitive": d.genitive}
+        {"id": d.id, "name": d.name, "source": d.source, "needs_months": d.needs_months, "genitive": d.genitive,
+         "default_reach_km": d.default_reach_km}
         for d in DEMANDS.values()
     ]
     return {

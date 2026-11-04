@@ -152,7 +152,7 @@ def _run_step(step: str, con, raw: dict, force: bool, data_dir: Path) -> object:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="ETL aplikacji „Gdzie otworzyć?”")
+    parser = argparse.ArgumentParser(description="ETL aplikacji Lokalizator")
     parser.add_argument("--only", help=f"kroki oddzielone przecinkami, z: {', '.join(STEPS)}")
     parser.add_argument("--force", action="store_true", help="wykonaj kroki mimo istniejących wyników")
     args = parser.parse_args()
